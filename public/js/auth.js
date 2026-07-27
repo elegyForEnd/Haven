@@ -69,11 +69,8 @@
       const titleEl = document.getElementById('server-title');
       if (titleEl) titleEl.textContent = d.server_title;
     }
-    // Tab branding for the login page (issue #5284). Mirrors what the
-    // authenticated app does so multi-server tabs stay distinguishable
-    // even before signing in.
     if (d.server_name && d.server_name.toLowerCase() !== 'haven') {
-      document.title = `Haven: ${d.server_name}`;
+      document.title = `CiaCord: ${d.server_name} — Login`;
     }
     if (d.server_icon) {
       let link = document.querySelector('link[rel="icon"]');

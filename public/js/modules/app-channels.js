@@ -2789,12 +2789,12 @@ _updateTabTitle() {
     if (mutedSet.has(k)) return s;
     return s + v;
   }, 0);
-  // Include the server's display name so multiple Haven tabs are easy to tell
+  // Include the server's display name so multiple CiaCord tabs are easy to tell
   // apart at a glance (issue #5284).
   const serverName = (this.serverSettings && this.serverSettings.server_name) || '';
   const base = serverName && serverName.toLowerCase() !== 'haven'
-    ? `Haven: ${serverName}`
-    : 'Haven';
+    ? `CiaCord: ${serverName}`
+    : 'CiaCord';
   document.title = total > 0 ? `(${total}) ${base}` : base;
 },
 

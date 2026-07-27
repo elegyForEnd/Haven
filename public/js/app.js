@@ -311,9 +311,6 @@ class HavenApp {
     this._setupOnlineOverlay();
     this._setupModalExpand();
     this._checkForUpdates();
-    this._initDesktopAppBanner();
-    this._initAndroidBetaBanner();
-    this._initWelcomePopups();
     this._initMoveMessages();
 
     // CSP-safe image error handling (no inline onerror attributes)
