@@ -70,7 +70,7 @@
       if (titleEl) titleEl.textContent = d.server_title;
     }
     if (d.server_name && d.server_name.toLowerCase() !== 'haven') {
-      document.title = `CiaCord: ${d.server_name} — Login`;
+      document.title = `Ciacord: ${d.server_name} — Login`;
     }
     if (d.server_icon) {
       let link = document.querySelector('link[rel="icon"]');

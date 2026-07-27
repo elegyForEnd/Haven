@@ -392,7 +392,7 @@
     "muted_for": "您还有 {{minutes}} 分钟的禁言时间"
   },
   "welcome": {
-    "title": "欢迎来到 Haven",
+    "title": "欢迎来到 Ciacord",
     "subtitle": "使用朋友给您的邀请码加入频道，\n或者如果您是管理员，可以创建一个。"
   },
   "header": {
@@ -1032,7 +1032,7 @@
       "go_btn": "前往恢复设置"
     },
     "wizard": {
-      "title": "欢迎来到 Haven",
+      "title": "欢迎来到 Ciacord",
       "subtitle": "让我们准备好您的服务器。只需一分钟。",
       "step1_title": "您的服务器",
       "step1_desc": "一切已正常运行。以下是自动设置好的内容：",
@@ -1094,7 +1094,7 @@
       "recheck_btn": "重新检查",
       "check_failed": "检查失败：{{error}}。您可能已离线。",
       "retry_btn": "重试",
-      "setup_complete": "设置完成！欢迎来到 Haven。"
+      "setup_complete": "设置完成！欢迎来到 Ciacord。"
     },
     "code_settings": {
       "title": "频道码设置",

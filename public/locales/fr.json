@@ -392,7 +392,7 @@
     "muted_for": "Vous êtes en sourdine pendant encore {{minutes}} minute(s)"
   },
   "welcome": {
-    "title": "Bienvenue sur Haven",
+    "title": "Bienvenue sur Ciacord",
     "subtitle": "Rejoignez un salon avec un code de vos amis,\nou créez-en un si vous êtes administrateur."
   },
   "header": {
@@ -1032,7 +1032,7 @@
       "go_btn": "Accéder aux paramètres de récupération"
     },
     "wizard": {
-      "title": "Bienvenue sur Haven",
+      "title": "Bienvenue sur Ciacord",
       "subtitle": "Configurons votre serveur. Cela ne prend qu'une minute.",
       "step1_title": "Votre serveur",
       "step1_desc": "Tout est déjà en marche. Voici ce qui a été configuré automatiquement :",
@@ -1094,7 +1094,7 @@
       "recheck_btn": "Revérifier",
       "check_failed": "Vérification échouée : {{error}}. Vous êtes peut-être hors ligne.",
       "retry_btn": "Réessayer",
-      "setup_complete": "Configuration terminée ! Bienvenue sur Haven."
+      "setup_complete": "Configuration terminée ! Bienvenue sur Ciacord."
     },
     "code_settings": {
       "title": "Paramètres du code de salon",

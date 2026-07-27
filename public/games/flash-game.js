@@ -1,11 +1,11 @@
-// CiaCord — Flash Game Loader (Ruffle)
+// Ciacord — Flash Game Loader (Ruffle)
 // Parse game info from URL params: ?swf=URL&title=NAME
 const params = new URLSearchParams(window.location.search);
 const swfUrl = params.get('swf');
 const title = params.get('title') || 'Flash Game';
 
 document.getElementById('game-title').textContent = title;
-document.title = `${title} — CiaCord`;
+document.title = `${title} — Ciacord`;
 
 // Volume control
 const volSlider = document.getElementById('volume-slider');

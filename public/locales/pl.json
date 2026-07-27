@@ -414,7 +414,7 @@
     "muted_for": "Jesteś wyciszony przez jeszcze {{minutes}} minutę/minut"
   },
   "welcome": {
-    "title": "Witaj w Haven",
+    "title": "Witaj w Ciacord",
     "subtitle": "Dołącz do kanału z kodem od znajomych,\nlub utwórz go, jeśli jesteś administratorem."
   },
   "header": {
@@ -1080,7 +1080,7 @@
       "go_btn": "Przejdź do ustawień odzyskiwania"
     },
     "wizard": {
-      "title": "Witaj w Haven",
+      "title": "Witaj w Ciacord",
       "subtitle": "Skonfigurujmy Twój serwer. Zajmie to tylko chwilę.",
       "step1_title": "Twój serwer",
       "step1_desc": "Wszystko już działa. Oto co zostało skonfigurowane automatycznie:",
@@ -1142,7 +1142,7 @@
       "recheck_btn": "Sprawdź ponownie",
       "check_failed": "Sprawdzenie nie powiodło się: {{error}}. Możesz być offline.",
       "retry_btn": "Spróbuj ponownie",
-      "setup_complete": "Konfiguracja zakończona! Witaj w Haven."
+      "setup_complete": "Konfiguracja zakończona! Witaj w Ciacord."
     },
     "code_settings": {
       "title": "Ustawienia kodu kanału",

@@ -392,7 +392,7 @@
     "muted_for": "Du bist noch {{minutes}} Minute(n) lang stummgeschaltet"
   },
   "welcome": {
-    "title": "Willkommen bei Haven",
+    "title": "Willkommen bei Ciacord",
     "subtitle": "Tritt einem Kanal mit einem Code deiner Freunde bei,\noder erstelle einen, wenn du der Admin bist."
   },
   "header": {
@@ -1032,7 +1032,7 @@
       "go_btn": "Zu den Wiederherstellungseinstellungen"
     },
     "wizard": {
-      "title": "Willkommen bei Haven",
+      "title": "Willkommen bei Ciacord",
       "subtitle": "Lass uns deinen Server einrichten. Das dauert nur eine Minute.",
       "step1_title": "Dein Server",
       "step1_desc": "Alles läuft bereits. Hier ist, was automatisch eingerichtet wurde:",
@@ -1094,7 +1094,7 @@
       "recheck_btn": "Erneut prüfen",
       "check_failed": "Prüfung fehlgeschlagen: {{error}}. Möglicherweise bist du offline.",
       "retry_btn": "Erneut versuchen",
-      "setup_complete": "Einrichtung abgeschlossen! Willkommen bei Haven."
+      "setup_complete": "Einrichtung abgeschlossen! Willkommen bei Ciacord."
     },
     "code_settings": {
       "title": "Kanalcode-Einstellungen",

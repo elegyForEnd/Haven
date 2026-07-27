@@ -1281,6 +1281,11 @@ class VoiceManager {
         displayMediaOptions.surfaceSwitching = 'exclude';
         displayMediaOptions.selfBrowserSurface = 'include';
         displayMediaOptions.monitorTypeSurfaces = 'include';
+        // Edge 141+ can expose audio for non-tab surfaces when the capture
+        // intent is explicit. Keep window capture scoped to that window,
+        // while full-screen capture may offer system audio.
+        displayMediaOptions.systemAudio = 'include';
+        displayMediaOptions.windowAudio = 'window';
 
         // Use CaptureController if available to manage the capture session
         if (typeof CaptureController !== 'undefined') {

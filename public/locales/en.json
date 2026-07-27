@@ -418,7 +418,7 @@
     "muted_for": "You are muted for {{minutes}} more minute(s)"
   },
   "welcome": {
-    "title": "Welcome to Haven",
+    "title": "Welcome to Ciacord",
     "subtitle": "Join a channel with a code from your friends,\nor create one if you're the admin."
   },
   "header": {
@@ -1123,7 +1123,7 @@
       "go_btn": "Go to Recovery Settings"
     },
     "wizard": {
-      "title": "Welcome to Haven",
+      "title": "Welcome to Ciacord",
       "subtitle": "Let's get your server ready. This only takes a minute.",
       "step1_title": "Your Server",
       "step1_desc": "Everything is already running. Here's what was set up automatically:",
@@ -1185,7 +1185,7 @@
       "recheck_btn": "Re-check",
       "check_failed": "Check failed: {{error}}. You may be offline.",
       "retry_btn": "Retry",
-      "setup_complete": "Setup complete! Welcome to Haven."
+      "setup_complete": "Setup complete! Welcome to Ciacord."
     },
     "code_settings": {
       "title": "Channel Code Settings",
