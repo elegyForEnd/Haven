@@ -6,7 +6,7 @@
     "direction": "ltr"
   },
   "auth": {
-    "tagline": "Chat privado, tus reglas",
+    "tagline": "Ciallo～(∠・ω< )⌒☆",
     "tabs": {
       "login": "Iniciar sesión",
       "register": "Registrarse"
@@ -189,7 +189,7 @@
     "join_voice_first": "Únete al chat de voz primero para compartir música",
     "join_voice_required": "Únete al chat de voz primero",
     "paste_music_link": "Por favor pega un enlace de música",
-    "unsupported_music_link": "Enlace no compatible — prueba Spotify, YouTube o SoundCloud",
+    "unsupported_music_link": "Enlace no compatible — prueba Spotify, YouTube, SoundCloud o Bilibili",
     "no_more_results": "No hay más resultados",
     "no_results_for": "Sin resultados para \"{{query}}\"",
     "loading_more": "Cargando más…",
@@ -1313,7 +1313,7 @@
     },
     "listen_together": {
       "title": "Escuchar juntos",
-      "desc": "Pega un enlace de Spotify, YouTube o SoundCloud para compartir con todos en voz",
+      "desc": "Pega un enlace de Spotify, YouTube, SoundCloud o Bilibili para compartir con todos en voz",
       "link_label": "Enlace de música",
       "link_placeholder": "https://open.spotify.com/track/...",
       "share_btn": "Compartir con el canal"

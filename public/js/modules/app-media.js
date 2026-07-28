@@ -1,4 +1,4 @@
-﻿export default {
+export default {
 
 // ── Image Queue (paste/drop → preview → send on Enter) ──
 
@@ -474,7 +474,14 @@ _setupSoundManagement() {
   this._showHiddenSounds = false;
   this._soundboardSidebarMode = localStorage.getItem('haven_soundboard_sidebar_mode') === 'true';
   this._soundboardListMode = localStorage.getItem('haven_soundboard_list_mode') === 'true';
+  try {
+    this._globalSoundSlots = JSON.parse(localStorage.getItem('haven_global_sound_slots') || '{}');
+  } catch {
+    this._globalSoundSlots = {};
+  }
+  this._soundboardExtensionConnected = false;
   this._loadUserSoundPrefs();
+  this._setupGlobalShortcutBridge();
 
   // Open from admin "Manage Sounds" button
   const openBtn = document.getElementById('open-sound-manager-btn');
@@ -785,6 +792,135 @@ _setupSoundManagement() {
   this._loadCustomSounds();
 },
 
+_setupGlobalShortcutBridge() {
+  if (this._globalShortcutBridgeReady) return;
+  this._globalShortcutBridgeReady = true;
+  this._globalShortcutLastActiveAt = Date.now();
+
+  const postStatus = () => {
+    window.postMessage({
+      source: 'haven-soundboard',
+      type: 'status',
+      inVoice: !!this.voice?.inVoice,
+      lastActiveAt: this._globalShortcutLastActiveAt
+    }, window.location.origin);
+  };
+
+  const probeExtension = () => {
+    window.postMessage({ source: 'haven-soundboard', type: 'probe' }, window.location.origin);
+  };
+
+  window.addEventListener('message', (event) => {
+    if (event.source !== window || event.origin !== window.location.origin) return;
+    const message = event.data;
+    if (!message || message.source !== 'haven-soundboard-extension') return;
+
+    if (message.type === 'ready') {
+      this._soundboardExtensionConnected = true;
+      clearTimeout(this._globalShortcutProbeTimer);
+      this._renderGlobalSoundSlots(this.customSounds || []);
+      postStatus();
+      return;
+    }
+
+    if (message.type !== 'trigger') return;
+    const slot = String(message.slot || '');
+    const soundName = this._globalSoundSlots[slot];
+    const sound = (this.customSounds || []).find(item => item.name === soundName);
+    if (!sound) {
+      this._showToast(`全局音效槽位 ${slot} 尚未分配`, 'error');
+      return;
+    }
+    this._playSoundFile(sound.url);
+    postStatus();
+  });
+
+  const markActive = () => {
+    this._globalShortcutLastActiveAt = Date.now();
+    window.postMessage({
+      source: 'haven-soundboard',
+      type: 'activity',
+      at: this._globalShortcutLastActiveAt,
+      inVoice: !!this.voice?.inVoice
+    }, window.location.origin);
+  };
+  ['pointerdown', 'keydown', 'focus'].forEach(type => window.addEventListener(type, markActive, { passive: true }));
+
+  const checkExtension = () => {
+    probeExtension();
+    clearTimeout(this._globalShortcutProbeTimer);
+    this._globalShortcutProbeTimer = setTimeout(() => {
+      this._soundboardExtensionConnected = false;
+      this._renderGlobalSoundSlots(this.customSounds || []);
+    }, 1500);
+  };
+
+  checkExtension();
+  this._globalShortcutProbeInterval = setInterval(checkExtension, 10000);
+  this._globalShortcutStatusInterval = setInterval(postStatus, 3000);
+},
+
+_renderGlobalSoundSlots(sounds = []) {
+  const container = document.getElementById('soundboard-global-slot-list');
+  const status = document.getElementById('soundboard-extension-status');
+  const install = document.getElementById('soundboard-extension-install');
+  if (status) {
+    status.textContent = this._soundboardExtensionConnected
+      ? '扩展已连接，可以在浏览器外使用快捷键'
+      : '未检测到扩展，请下载并完成安装';
+    status.classList.toggle('connected', this._soundboardExtensionConnected);
+  }
+  if (install) install.style.display = this._soundboardExtensionConnected ? 'none' : '';
+  if (!container) return;
+
+  const availableNames = new Set(sounds.map(sound => sound.name));
+  container.innerHTML = '';
+
+  for (let slot = 1; slot <= 4; slot += 1) {
+    const row = document.createElement('label');
+    row.className = 'soundboard-global-slot';
+
+    const shortcut = document.createElement('span');
+    shortcut.className = 'soundboard-global-shortcut';
+    shortcut.textContent = `Ctrl+Shift+${slot}`;
+
+    const select = document.createElement('select');
+    select.className = 'settings-select soundboard-global-select';
+    select.dataset.slot = String(slot);
+
+    const empty = document.createElement('option');
+    empty.value = '';
+    empty.textContent = '未分配';
+    select.appendChild(empty);
+
+    const assignedName = this._globalSoundSlots[String(slot)] || '';
+    if (assignedName && !availableNames.has(assignedName)) {
+      const unavailable = document.createElement('option');
+      unavailable.value = assignedName;
+      unavailable.textContent = `${assignedName}（不可用）`;
+      select.appendChild(unavailable);
+    }
+
+    sounds.forEach(sound => {
+      const option = document.createElement('option');
+      option.value = sound.name;
+      option.textContent = sound.name;
+      select.appendChild(option);
+    });
+
+    select.value = assignedName;
+    select.addEventListener('change', () => {
+      if (select.value) this._globalSoundSlots[String(slot)] = select.value;
+      else delete this._globalSoundSlots[String(slot)];
+      localStorage.setItem('haven_global_sound_slots', JSON.stringify(this._globalSoundSlots));
+    });
+
+    row.appendChild(shortcut);
+    row.appendChild(select);
+    container.appendChild(row);
+  }
+},
+
 _buildHotkeyString(e) {
   const parts = [];
   if (e.ctrlKey) parts.push('Ctrl');
@@ -830,6 +966,7 @@ _openSoundModal(tab = 'soundboard') {
   if (popoutBtn) { popoutBtn.textContent = '\u29c9'; popoutBtn.title = 'Pop out soundboard'; }
   this._renderSoundboard();
   this._renderAssignTab();
+  this._renderGlobalSoundSlots(this.customSounds || []);
 },
 
 // ── Custom dropdown wrapper for native <select> elements (#5418) ──
@@ -1071,6 +1208,20 @@ _popInSoundboard(reopen = false) {
   if (reopen) this._openSoundModal('soundboard');
 },
 
+_stopLocalSoundboardPlayback() {
+  const audio = this._activeSoundboardAudio;
+  this._activeSoundboardAudio = null;
+  if (!audio) return;
+
+  audio.onended = null;
+  audio.onerror = null;
+  try { audio.pause(); } catch {}
+  try {
+    audio.removeAttribute('src');
+    audio.load();
+  } catch {}
+},
+
 _playSoundFile(url) {
   try {
     const vol = Math.max(0, Math.min(1, this.notifications.volume * this.notifications.volume));
@@ -1084,12 +1235,22 @@ _playSoundFile(url) {
       if (vcCh && vcCh.soundboard_enabled === 0) {
         return this._showToast(t('media.soundboard_disabled'), 'error');
       }
+      this._stopLocalSoundboardPlayback();
       if (this.voice.playSoundToVC(url, vol)) return;
     }
-    // Fallback: play locally only
+
+    // Fallback: keep exactly one local soundboard player active.
+    this.voice?.stopSoundboardPlayback?.();
+    this._stopLocalSoundboardPlayback();
     const audio = new Audio(url);
+    this._activeSoundboardAudio = audio;
     audio.volume = vol;
-    audio.play().catch(() => {});
+    const clearCurrent = () => {
+      if (this._activeSoundboardAudio === audio) this._activeSoundboardAudio = null;
+    };
+    audio.onended = clearCurrent;
+    audio.onerror = clearCurrent;
+    audio.play().catch(clearCurrent);
   } catch { /* audio not available */ }
 },
 
@@ -1105,6 +1266,7 @@ async _loadCustomSounds() {
 
     // Update all notification sound select dropdowns
     this._updateSoundSelects(sounds);
+    this._renderGlobalSoundSlots(sounds);
 
     // Render admin sound list
     this._renderSoundList(sounds);
@@ -1286,7 +1448,11 @@ _renderSoundList(sounds) {
             Object.keys(this._soundHotkeys).forEach(k => {
               if (this._soundHotkeys[k] === oldName) this._soundHotkeys[k] = newName;
             });
+            Object.keys(this._globalSoundSlots).forEach(slot => {
+              if (this._globalSoundSlots[slot] === oldName) this._globalSoundSlots[slot] = newName;
+            });
             localStorage.setItem('haven_sound_hotkeys', JSON.stringify(this._soundHotkeys));
+            localStorage.setItem('haven_global_sound_slots', JSON.stringify(this._globalSoundSlots));
             this._showToast(`Renamed to "${newName}"`, 'success');
             this._loadCustomSounds();
           } else {
@@ -1326,7 +1492,11 @@ _renderSoundList(sounds) {
           Object.keys(this._soundHotkeys).forEach(k => {
             if (this._soundHotkeys[k] === name) delete this._soundHotkeys[k];
           });
+          Object.keys(this._globalSoundSlots).forEach(slot => {
+            if (this._globalSoundSlots[slot] === name) delete this._globalSoundSlots[slot];
+          });
           localStorage.setItem('haven_sound_hotkeys', JSON.stringify(this._soundHotkeys));
+          localStorage.setItem('haven_global_sound_slots', JSON.stringify(this._globalSoundSlots));
           this._loadCustomSounds();
         } else {
           this._showToast('Delete failed', 'error');

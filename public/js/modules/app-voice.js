@@ -2155,7 +2155,8 @@ _handleMusicShared(data) {
   if (!this.currentChannel && this.voice && this.voice.currentChannel) {
     this.switchChannel(this.voice.currentChannel);
   }
-  const embedUrl = this._getMusicEmbed(data.url);
+  const effectiveSyncState = this._getEffectiveMusicSyncState(data.syncState);
+  const embedUrl = this._getMusicEmbed(data.url, effectiveSyncState?.positionSeconds || 0);
   if (!embedUrl) return;
   const platform = this._getMusicPlatform(data.url);
   const panel = document.getElementById('music-panel');
@@ -2183,13 +2184,16 @@ _handleMusicShared(data) {
   let iframeH = '152';
   if (data.url.includes('spotify.com')) iframeH = '152';
   else if (data.url.includes('soundcloud.com')) iframeH = '166';
+  else if (data.url.includes('bilibili.com')) iframeH = '360';
   else if (data.url.includes('youtube.com') || data.url.includes('youtu.be')) iframeH = '200';
 
-  // Wrap iframe in a container; overlay blocks direct clicks for SoundCloud (Haven has API control)
-  // For Spotify & YouTube, no overlay — user interacts with their native controls (seek bar, etc.)
+  // Wrap iframe in a container. SoundCloud uses an overlay because Haven controls it through its widget API.
+  // Other providers keep direct interaction enabled for their native controls.
   const isSpotify = data.url.includes('spotify.com');
   const isYouTube = data.url.includes('youtube.com') || data.url.includes('youtu.be') || data.url.includes('music.youtube.com');
-  const needsOverlay = !isSpotify && !isYouTube; // only SoundCloud gets the click-blocker now
+  const isBilibili = data.url.includes('bilibili.com');
+  const needsOverlay = !isSpotify && !isYouTube && !isBilibili;
+  container.classList.toggle('music-embed-bilibili', isBilibili);
   // YouTube embeds: origin param tells Google which page hosts the iframe.
   // We skip referrerpolicy=no-referrer so the IFrame API (enablejsapi) can
   // communicate with the parent window; the origin= param already handles
@@ -2202,18 +2206,19 @@ _handleMusicShared(data) {
   }
   panel.style.display = 'flex';
 
-  // Update play/pause button — hide for Spotify (no external API)
+  // Update play/pause button — hide for platforms without an external control API
   const ppBtn = document.getElementById('music-play-pause-btn');
+  const hidePlaybackControls = isSpotify || isBilibili;
   if (ppBtn) {
-    ppBtn.textContent = isSpotify ? '' : (data.syncState?.isPlaying === false ? '▶' : '⏸');
-    ppBtn.style.display = isSpotify ? 'none' : '';
+    ppBtn.textContent = hidePlaybackControls ? '' : (data.syncState?.isPlaying === false ? '▶' : '⏸');
+    ppBtn.style.display = hidePlaybackControls ? 'none' : '';
   }
 
-  // Seek bar — hide for Spotify (no external API for position tracking)
+  // Seek bar — hide for platforms without position tracking
   const seekSlider = document.getElementById('music-seek-slider');
   const timeCur = document.getElementById('music-time-current');
   const timeDur = document.getElementById('music-time-duration');
-  const hideSeek = isSpotify;
+  const hideSeek = isSpotify || isBilibili;
   if (seekSlider) seekSlider.style.display = hideSeek ? 'none' : '';
   if (timeCur) timeCur.style.display = hideSeek ? 'none' : '';
   if (timeDur) timeDur.style.display = hideSeek ? 'none' : '';
@@ -2222,15 +2227,22 @@ _handleMusicShared(data) {
   const savedVol = parseInt(localStorage.getItem('haven_music_volume') ?? '80');
   document.getElementById('music-volume-slider').value = savedVol;
 
-  // For Spotify: volume can only be controlled inside the embed — show disclaimer
+  // The official Bilibili player and Spotify embed expose volume only inside their iframe.
   const volSlider = document.getElementById('music-volume-slider');
   const muteBtn = document.getElementById('music-mute-btn');
-  if (isSpotify) {
-    if (volSlider) { volSlider.disabled = true; volSlider.title = t('media.spotify_volume_hint'); }
-    if (muteBtn) { muteBtn.disabled = true; muteBtn.title = t('media.spotify_volume_hint'); }
+  if (isBilibili) {
+    if (volSlider) volSlider.style.display = 'none';
+    if (muteBtn) muteBtn.style.display = 'none';
   } else {
-    if (volSlider) { volSlider.disabled = false; volSlider.title = ''; }
-    if (muteBtn) { muteBtn.disabled = false; muteBtn.title = t('media.mute_unmute'); }
+    if (volSlider) volSlider.style.display = '';
+    if (muteBtn) muteBtn.style.display = '';
+    if (isSpotify) {
+      if (volSlider) { volSlider.disabled = true; volSlider.title = t('media.spotify_volume_hint'); }
+      if (muteBtn) { muteBtn.disabled = true; muteBtn.title = t('media.spotify_volume_hint'); }
+    } else {
+      if (volSlider) { volSlider.disabled = false; volSlider.title = ''; }
+      if (muteBtn) { muteBtn.disabled = false; muteBtn.title = t('media.mute_unmute'); }
+    }
   }
 
   // Show next button for SoundCloud (has internal tracks) or when the queue has items
@@ -2942,6 +2954,8 @@ _popOutMusicPlayer() {
     const volume = parseInt(document.getElementById('music-volume-slider')?.value ?? '80');
     const platform = this._musicPlatform || 'Music';
     const playing = this._musicPlaying;
+    const isBilibili = platform === 'Bilibili';
+    pip.classList.toggle('music-pip-bilibili', isBilibili);
 
     const savedOpacity = parseInt(localStorage.getItem('haven_pip_opacity') ?? '100');
 
@@ -2959,9 +2973,9 @@ _popOutMusicPlayer() {
       </div>
       <div class="music-pip-embed" id="music-pip-embed"></div>
       <div class="music-pip-controls">
-        <button class="music-pip-btn" id="music-pip-pp" title="Play/Pause">${playing ? '⏸' : '▶'}</button>
-        <span class="music-pip-vol-icon" id="music-pip-mute" title="Mute">🔊</span>
-        <input type="range" class="music-pip-vol" id="music-pip-vol" min="0" max="100" value="${volume}">
+        <button class="music-pip-btn" id="music-pip-pp" title="Play/Pause"${isBilibili ? ' style="display:none"' : ''}>${playing ? '⏸' : '▶'}</button>
+        <span class="music-pip-vol-icon" id="music-pip-mute" title="Mute"${isBilibili ? ' style="display:none"' : ''}>🔊</span>
+        <input type="range" class="music-pip-vol" id="music-pip-vol" min="0" max="100" value="${volume}"${isBilibili ? ' style="display:none"' : ''}>
         <span class="pip-opacity-divider"></span>
         <span class="music-pip-vol-icon" id="music-pip-opacity-icon" title="Window opacity">👁</span>
         <input type="range" class="music-pip-vol pip-opacity-slider" id="music-pip-opacity" min="20" max="100" value="${savedOpacity}">
@@ -3247,7 +3261,7 @@ _stopMusicTimeTracking() {
   this._musicLastTrackedAt = 0;
 },
 
-_getMusicEmbed(url) {
+_getMusicEmbed(url, startSeconds = 0) {
   if (!url) return null;
   const spotifyMatch = url.match(/open\.spotify\.com\/(track|album|playlist|episode|show)\/([a-zA-Z0-9]+)/);
   if (spotifyMatch) return `https://open.spotify.com/embed/${spotifyMatch[1]}/${spotifyMatch[2]}?theme=0&utm_source=generator&autoplay=1`;
@@ -3255,6 +3269,24 @@ _getMusicEmbed(url) {
   if (ytMusicMatch) return `https://www.youtube-nocookie.com/embed/${ytMusicMatch[1]}?autoplay=1&enablejsapi=1&origin=${encodeURIComponent(location.origin)}&rel=0`;
   const ytMatch = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)([a-zA-Z0-9_-]{11})/);
   if (ytMatch) return `https://www.youtube-nocookie.com/embed/${ytMatch[1]}?autoplay=1&enablejsapi=1&origin=${encodeURIComponent(location.origin)}&rel=0`;
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase();
+    if (host === 'b23.tv' || host.endsWith('.b23.tv')) {
+      // The server expands short links before broadcasting the playable URL.
+      return 'https://player.bilibili.com/player.html';
+    }
+    if (host === 'bilibili.com' || host.endsWith('.bilibili.com')) {
+      const match = parsed.pathname.match(/\/video\/(BV[0-9A-Za-z]{10})(?:\/|$)/i);
+      const queryBvid = parsed.searchParams.get('bvid');
+      const bvid = match?.[1] || (/^BV[0-9A-Za-z]{10}$/i.test(queryBvid || '') ? queryBvid : null);
+      if (bvid) {
+        const page = Math.max(1, Number.parseInt(parsed.searchParams.get('p') || '1', 10) || 1);
+        const start = Math.max(0, Math.floor(Number(startSeconds) || 0));
+        return `https://player.bilibili.com/player.html?bvid=${encodeURIComponent(bvid)}&p=${page}&autoplay=1&danmaku=0&t=${start}`;
+      }
+    }
+  } catch {}
   if (url.includes('soundcloud.com/')) {
     return `https://w.soundcloud.com/player/?url=${encodeURIComponent(url)}&color=%23ff5500&auto_play=true&hide_related=true&show_comments=false&show_user=true&show_reposts=false&show_teaser=false&visual=false`;
   }
@@ -3266,6 +3298,7 @@ _getMusicPlatform(url) {
   if (url.includes('spotify.com')) return { name: 'Spotify', icon: '🟢' };
   if (url.includes('music.youtube.com')) return { name: 'YouTube Music', icon: '🔴' };
   if (url.includes('youtube.com') || url.includes('youtu.be')) return { name: 'YouTube', icon: '🔴' };
+  if (url.includes('bilibili.com') || url.includes('b23.tv')) return { name: 'Bilibili', icon: '🔵' };
   if (url.includes('soundcloud.com')) return { name: 'SoundCloud', icon: '🟠' };
   return null;
 },

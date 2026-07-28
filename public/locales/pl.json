@@ -6,7 +6,7 @@
     "direction": "ltr"
   },
   "auth": {
-    "tagline": "Prywatny czat, twoje zasady",
+    "tagline": "Ciallo～(∠・ω< )⌒☆",
     "tabs": {
       "login": "Logowanie",
       "register": "Rejestracja"
@@ -197,7 +197,7 @@
     "join_voice_first": "Najpierw dołącz do głosu, aby udostępnić muzykę",
     "join_voice_required": "Najpierw dołącz do głosu",
     "paste_music_link": "Wklej link do muzyki",
-    "unsupported_music_link": "Nieobsługiwany link — spróbuj Spotify, YouTube lub SoundCloud",
+    "unsupported_music_link": "Nieobsługiwany link — spróbuj Spotify, YouTube, SoundCloud lub Bilibili",
     "no_more_results": "Brak kolejnych wyników",
     "no_results_for": "Brak wyników dla \"{{query}}\"",
     "loading_more": "Ładowanie więcej…",
@@ -1361,7 +1361,7 @@
     },
     "listen_together": {
       "title": "Słuchaj razem",
-      "desc": "Wklej link ze Spotify, YouTube lub SoundCloud, aby udostępnić wszystkim na głosie",
+      "desc": "Wklej link ze Spotify, YouTube, SoundCloud lub Bilibili, aby udostępnić wszystkim na głosie",
       "link_label": "Link do muzyki",
       "link_placeholder": "https://open.spotify.com/track/...",
       "share_btn": "Udostępnij"

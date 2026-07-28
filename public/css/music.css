@@ -101,6 +101,17 @@
   border: none;
   display: block;
 }
+.music-embed-container.music-embed-bilibili {
+  height: min(360px, 55vh);
+  min-height: 240px;
+  max-height: 70vh;
+  resize: vertical;
+  overflow: hidden;
+}
+.music-embed-bilibili .music-embed-wrapper,
+.music-embed-bilibili iframe {
+  height: 100% !important;
+}
 .music-queue-modal { max-width: 780px; }
 .music-queue-table-wrap {
   max-height: 420px;
@@ -273,6 +284,14 @@
   min-width: 260px;
   min-height: 140px;
 }
+.music-pip-overlay.music-pip-bilibili {
+  width: min(720px, calc(100vw - 48px));
+  height: min(480px, calc(100vh - 48px));
+  min-width: min(320px, calc(100vw - 48px));
+  min-height: min(260px, calc(100vh - 48px));
+  max-width: calc(100vw - 48px);
+  max-height: calc(100vh - 48px);
+}
 .music-pip-header {
   display: flex;
   align-items: center;
@@ -416,6 +435,7 @@
 }
 .platform-badge.spotify { background: rgba(29,185,84,0.15); color: #1db954; }
 .platform-badge.youtube { background: rgba(255,0,0,0.12); color: #ff4444; }
+.platform-badge.bilibili { background: rgba(0,161,214,0.14); color: #00a1d6; }
 .platform-badge.soundcloud { background: rgba(255,85,0,0.12); color: #ff5500; }
 
 /* ── Music Search Picker ─────────────────────────────── */

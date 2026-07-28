@@ -200,7 +200,7 @@ app.use(helmet({
       fontSrc: ["'self'", "https://fonts.gstatic.com"],  // Google Fonts CDN
       workerSrc: ["'self'", "blob:", "https://unpkg.com"],  // service worker + Ruffle WebAssembly workers
       objectSrc: ["'none'"],
-      frameSrc: ["'self'", "https://open.spotify.com", "https://www.youtube.com", "https://www.youtube-nocookie.com", "https://w.soundcloud.com"],  // Listen Together embeds + game iframes
+      frameSrc: ["'self'", "https://open.spotify.com", "https://www.youtube.com", "https://www.youtube-nocookie.com", "https://w.soundcloud.com", "https://player.bilibili.com"],  // Listen Together embeds + game iframes
       baseUri: ["'self'"],
       formAction: ["'self'"],
       frameAncestors: ["'self'"],               // allow mobile app iframe, block third-party clickjacking
@@ -231,6 +231,36 @@ app.disable('x-powered-by');
 // where appropriate. (#5347 v3.15.7)
 app.use(express.json({ limit: '128kb' }));
 app.use(express.urlencoded({ extended: false, limit: '128kb' }));
+
+// Package only the reviewed extension runtime files. Keeping an explicit
+// allowlist prevents unrelated files from being exposed if the directory later
+// gains development artifacts or local configuration.
+app.get('/api/download-global-shortcut-extension', (req, res) => {
+  const extensionDir = path.join(__dirname, 'browser-extension');
+  const extensionFiles = ['manifest.json', 'service-worker.js', 'content-bridge.js'];
+
+  try {
+    const archive = require('archiver')('zip', { zlib: { level: 9 } });
+    archive.on('error', (error) => {
+      console.error('Global shortcut extension packaging failed:', error);
+      if (!res.headersSent) res.status(500).json({ error: 'Failed to package browser extension' });
+      else res.destroy(error);
+    });
+
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', 'attachment; filename="ciabord-global-shortcuts.zip"');
+    res.setHeader('Cache-Control', 'no-store');
+    archive.pipe(res);
+    for (const filename of extensionFiles) {
+      archive.file(path.join(extensionDir, filename), { name: filename });
+    }
+    void archive.finalize();
+  } catch (error) {
+    console.error('Global shortcut extension packaging failed:', error);
+    if (!res.headersSent) res.status(500).json({ error: 'Failed to package browser extension' });
+    else res.destroy(error);
+  }
+});
 
 // ── Static files with caching ────────────────────────────
 app.use(express.static(path.join(__dirname, 'public'), {

@@ -11,7 +11,7 @@ const { DATA_DIR, UPLOADS_DIR, DELETED_ATTACHMENTS_DIR } = require('../paths');
 const HAVEN_VERSION = require('../../package.json').version;
 
 const { sanitizeText, utcStamp, isString, isInt, isValidUploadPath, VALID_ROLE_PERMS } = require('./helpers');
-const { resolveSpotifyToYouTube, searchYouTube, fetchYouTubePlaylist, extractYouTubeVideoId, resolveMusicMetadata } = require('./musicResolver');
+const { resolveSpotifyToYouTube, resolveBilibiliLink, searchYouTube, fetchYouTubePlaylist, extractYouTubeVideoId, resolveMusicMetadata } = require('./musicResolver');
 const createPermissions = require('./permissions');
 
 const { createActivity } = require('../activity');
@@ -176,13 +176,15 @@ function setupSocketHandlers(io, db, opts = {}) {
 
   function sanitizeQueueEntry(entry) {
     if (!entry || typeof entry !== 'object') return null;
+    const durationSeconds = Number(entry.durationSeconds);
     return {
       id: trimMusicText(entry.id, 64),
       url: trimMusicText(entry.url, 500),
       title: trimMusicText(entry.title, 200) || 'Untitled track',
       userId: Number(entry.userId) || 0,
       username: trimMusicText(entry.username, 80) || 'Unknown',
-      resolvedFrom: trimMusicText(entry.resolvedFrom, 32) || null
+      resolvedFrom: trimMusicText(entry.resolvedFrom, 32) || null,
+      durationSeconds: Number.isFinite(durationSeconds) && durationSeconds > 0 ? durationSeconds : null
     };
   }
 
@@ -204,7 +206,12 @@ function setupSocketHandlers(io, db, opts = {}) {
           durationSeconds: Number.isFinite(entry.playbackState.durationSeconds) ? Math.max(0, Number(entry.playbackState.durationSeconds)) : null,
           updatedAt: Number(entry.playbackState.updatedAt) || Date.now()
         }
-      : { isPlaying: true, positionSeconds: 0, durationSeconds: null, updatedAt: Date.now() };
+      : {
+          isPlaying: true,
+          positionSeconds: 0,
+          durationSeconds: Number.isFinite(entry.durationSeconds) ? Math.max(0, Number(entry.durationSeconds)) : null,
+          updatedAt: Date.now()
+        };
     const music = { ...entry, playbackState };
     activeMusic.set(code, music);
     syncMusicActivity(code);
@@ -1539,7 +1546,7 @@ function setupSocketHandlers(io, db, opts = {}) {
       // Slash commands
       processSlashCommand,
       // Music helpers
-      resolveSpotifyToYouTube, searchYouTube, fetchYouTubePlaylist,
+      resolveSpotifyToYouTube, resolveBilibiliLink, searchYouTube, fetchYouTubePlaylist,
       extractYouTubeVideoId, resolveMusicMetadata,
       getActiveMusicSyncState, updateActiveMusicPlaybackState,
       setActiveMusic, emitMusicSharedToRoom, startQueuedMusic,

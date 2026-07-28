@@ -1143,12 +1143,15 @@ _setupUI() {
   const outputDeviceSelect = document.getElementById('voice-output-device');
   const camDeviceSelect    = document.getElementById('voice-cam-device');
   if (inputDeviceSelect) {
-    inputDeviceSelect.addEventListener('change', (e) => {
+    inputDeviceSelect.addEventListener('change', async (e) => {
       const deviceId = e.target.value;
       localStorage.setItem('haven_input_device', deviceId);
       // Hot-swap if in voice
       if (this.voice && this.voice.inVoice) {
-        this.voice.switchInputDevice(deviceId);
+        const switched = await this.voice.switchInputDevice(deviceId);
+        if (switched && this.voice.microphoneStereo && !this.voice.microphoneStereoActive) {
+          this._showToast(t('voice_settings.mic_stereo_unavailable'), 'info');
+        }
       }
     });
   }
@@ -1289,11 +1292,38 @@ _setupUI() {
   const noiseModeSelect = document.getElementById('voice-noise-mode');
   const noiseGateRow = document.getElementById('noise-gate-row');
   const nsSlider = document.getElementById('voice-ns-slider');
+  const micStereoSelect = document.getElementById('voice-mic-stereo');
 
-  // Restore saved mode
+  // Restore saved profiles. Stereo capture and mono voice processing are
+  // mutually exclusive because RNNoise is a single-channel processor.
   const savedNoiseMode = localStorage.getItem('haven_noise_mode') || 'gate';
+  const savedMicStereo = localStorage.getItem('haven_mic_stereo') === '1';
   noiseModeSelect.value = savedNoiseMode;
-  noiseGateRow.style.display = savedNoiseMode === 'gate' ? '' : 'none';
+  micStereoSelect.value = savedMicStereo ? '1' : '0';
+
+  const applyMicProfileUI = (stereo) => {
+    noiseModeSelect.disabled = stereo;
+    noiseGateRow.style.display = !stereo && noiseModeSelect.value === 'gate' ? '' : 'none';
+    const threshold = !stereo && noiseModeSelect.value === 'gate'
+      ? parseInt(localStorage.getItem('haven_ns_value') || '10', 10)
+      : 0;
+    if (this._micMeterThreshold) this._updateMicMeterThreshold(threshold);
+  };
+  applyMicProfileUI(savedMicStereo);
+
+  micStereoSelect.addEventListener('change', async (e) => {
+    const enabled = e.target.value === '1';
+    applyMicProfileUI(enabled);
+    let result = null;
+    if (this.voice) {
+      result = await this.voice.setMicrophoneStereo(enabled);
+    } else {
+      localStorage.setItem('haven_mic_stereo', enabled ? '1' : '0');
+    }
+    if (enabled && result?.active === false) {
+      this._showToast(t('voice_settings.mic_stereo_unavailable'), 'info');
+    }
+  });
 
   noiseModeSelect.addEventListener('change', (e) => {
     const mode = e.target.value;
@@ -1324,7 +1354,7 @@ _setupUI() {
   this._micMeterFill = document.getElementById('mic-meter-fill');
   this._micMeterThreshold = document.getElementById('mic-meter-threshold');
   this._micMeterRAF = null;
-  this._updateMicMeterThreshold(savedNoiseMode === 'gate' ? parseInt(nsSlider.value, 10) : 0);
+  this._updateMicMeterThreshold(!savedMicStereo && savedNoiseMode === 'gate' ? parseInt(nsSlider.value, 10) : 0);
   this._startMicMeter();
 
   // ── Screen share quality dropdowns ──

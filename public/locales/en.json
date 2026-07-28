@@ -6,7 +6,7 @@
     "direction": "ltr"
   },
   "auth": {
-    "tagline": "Private chat, your rules",
+    "tagline": "Ciallo～(∠・ω< )⌒☆",
     "tabs": {
       "login": "Login",
       "register": "Register"
@@ -197,7 +197,7 @@
     "join_voice_first": "Join voice first to share music",
     "join_voice_required": "Join voice first",
     "paste_music_link": "Please paste a music link",
-    "unsupported_music_link": "Unsupported link — try Spotify, YouTube, or SoundCloud",
+    "unsupported_music_link": "Unsupported link — try Spotify, YouTube, SoundCloud, or Bilibili",
     "no_more_results": "No more results",
     "no_results_for": "No results for \"{{query}}\"",
     "loading_more": "Loading more…",
@@ -620,6 +620,11 @@
     "input": "Input",
     "default_mic": "Default Microphone",
     "mic_fallback": "Microphone {{n}}",
+    "mic_channels": "Mic Channels",
+    "mic_mono": "Mono (voice processing)",
+    "mic_stereo": "Stereo (raw)",
+    "mic_stereo_hint": "Preserves left/right channels. Requires a stereo microphone and disables echo cancellation, automatic gain, browser noise suppression, and AI suppression.",
+    "mic_stereo_unavailable": "The selected microphone did not provide two channels; audio is currently mono.",
     "output": "Output",
     "default_speaker": "Default Speaker",
     "speaker_fallback": "Speaker {{n}}",
@@ -1404,7 +1409,7 @@
     },
     "listen_together": {
       "title": "Listen Together",
-      "desc": "Paste a link from Spotify, YouTube, or SoundCloud to share with everyone in voice",
+      "desc": "Paste a link from Spotify, YouTube, SoundCloud, or Bilibili to share with everyone in voice",
       "link_label": "Music Link",
       "link_placeholder": "https://open.spotify.com/track/...",
       "share_btn": "Share with Channel"

@@ -1,0 +1,44 @@
+{
+  "manifest_version": 3,
+  "name": "Ciabord Global 快捷键",
+  "version": "1.0.0",
+  "description": "在浏览器失去焦点时，通过全局快捷键触发 Ciabord 音效板。",
+  "minimum_chrome_version": "102",
+  "permissions": ["tabs"],
+  "host_permissions": ["http://*/*", "https://*/*"],
+  "background": {
+    "service_worker": "service-worker.js"
+  },
+  "action": {
+    "default_title": "Ciabord Global 快捷键"
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content-bridge.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "commands": {
+    "sound-slot-1": {
+      "suggested_key": { "default": "Ctrl+Shift+1" },
+      "description": "播放 Ciabord 全局音效槽位 1",
+      "global": true
+    },
+    "sound-slot-2": {
+      "suggested_key": { "default": "Ctrl+Shift+2" },
+      "description": "播放 Ciabord 全局音效槽位 2",
+      "global": true
+    },
+    "sound-slot-3": {
+      "suggested_key": { "default": "Ctrl+Shift+3" },
+      "description": "播放 Ciabord 全局音效槽位 3",
+      "global": true
+    },
+    "sound-slot-4": {
+      "suggested_key": { "default": "Ctrl+Shift+4" },
+      "description": "播放 Ciabord 全局音效槽位 4",
+      "global": true
+    }
+  }
+}

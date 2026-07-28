@@ -64,17 +64,30 @@ class VoiceManager {
     this._noiseGateGain = null;
     this._noiseGateAnalyser = null;
     this._vcDest = null;             // MediaStreamDestination node for mixing soundboard audio into VC
+    this._soundboardSource = null;
+    this._soundboardVcGain = null;
+    this._soundboardLocalGain = null;
+    this._soundboardFetchController = null;
+    this._soundboardPlayGeneration = 0;
 
     // Voice audio bitrate cap (0 = auto, otherwise kbps from server)
     this.audioBitrate = 0;
 
     // RNNoise noise suppression state
     this._rnnoiseNode = null;        // AudioWorkletNode for RNNoise
-    this._rnnoiseReady = false;      // true once WASM is loaded in the worklet
+    this._rnnoiseReady = false;      // processor module + WASM are ready for the current AudioContext
+    this._rnnoiseContext = null;     // AudioWorklet registration is scoped to one AudioContext
+    this._rnnoiseInitPromise = null; // deduplicates concurrent initialization for one context
+    this._rnnoiseInitContext = null;
+    this._rnnoiseOperational = false; // true after the worklet confirms WASM initialization
+    this._rnnoiseWasmModule = null;  // compiled WASM can be reused across AudioContext instances
     this._rnnoiseSource = null;      // MediaStreamSource feeding the chain
     // Noise mode: 'off' | 'gate' | 'suppress'
     const savedMode = localStorage.getItem('haven_noise_mode');
     this.noiseMode = savedMode || 'gate';
+    // Stereo mic is an opt-in capture profile. It preserves channel layout by
+    // bypassing mono-oriented browser processing and RNNoise.
+    this.microphoneStereo = localStorage.getItem('haven_mic_stereo') === '1';
 
     // Screen share quality settings (populated from localStorage)
     const savedRes = localStorage.getItem('haven_screen_res');
@@ -491,7 +504,7 @@ class VoiceManager {
           }
         }
         await conn.setRemoteDescription(new RTCSessionDescription(offer));
-        const answer = await conn.createAnswer();
+        const answer = this._withOpusStereo(await conn.createAnswer());
         await conn.setLocalDescription(answer);
 
         this.socket.emit('voice-answer', {
@@ -847,6 +860,53 @@ class VoiceManager {
     }, 3500);
   }
 
+  _getMicrophoneConstraints(deviceId = '') {
+    const stereo = this.microphoneStereo;
+    const constraints = {
+      channelCount: { ideal: stereo ? 2 : 1 },
+      echoCancellation: !stereo,
+      noiseSuppression: !stereo,
+      autoGainControl: !stereo
+    };
+    if (deviceId) constraints.deviceId = { exact: deviceId };
+    return constraints;
+  }
+
+  _buildMicrophonePipeline(rawStream) {
+    const rawTrack = rawStream?.getAudioTracks?.()[0];
+    const reportedChannels = rawTrack?.getSettings?.().channelCount;
+    const channels = this.microphoneStereo && reportedChannels !== 1 ? 2 : 1;
+    this.microphoneStereoActive = channels === 2;
+
+    const source = this.audioCtx.createMediaStreamSource(rawStream);
+    source.channelCount = channels;
+    source.channelCountMode = 'explicit';
+    source.channelInterpretation = 'speakers';
+    this._rnnoiseSource = source;
+
+    const gateAnalyser = this.audioCtx.createAnalyser();
+    gateAnalyser.fftSize = 2048;
+    gateAnalyser.smoothingTimeConstant = 0.3;
+    source.connect(gateAnalyser);
+
+    const gateGain = this.audioCtx.createGain();
+    gateGain.channelCount = channels;
+    gateGain.channelCountMode = 'explicit';
+    gateGain.channelInterpretation = 'speakers';
+    source.connect(gateGain);
+
+    const dest = this.audioCtx.createMediaStreamDestination();
+    dest.channelCount = channels;
+    dest.channelCountMode = 'explicit';
+    dest.channelInterpretation = 'speakers';
+    gateGain.connect(dest);
+
+    this._noiseGateAnalyser = gateAnalyser;
+    this._noiseGateGain = gateGain;
+    this._vcDest = dest;
+    return dest.stream;
+  }
+
   async join(channelCode) {
     try {
       const preservedMuteState = this.isMuted;
@@ -878,14 +938,10 @@ class VoiceManager {
       this._ensureAudioCtx();
       await this.audioCtx.resume().catch(() => {});
 
-      // Use saved input device if the user picked one
+      // Use saved input device if the user picked one. Stereo capture is an
+      // explicit profile because preserving L/R requires bypassing voice DSP.
       const savedInputId = localStorage.getItem('haven_input_device') || '';
-      const audioConstraints = {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true
-      };
-      if (savedInputId) audioConstraints.deviceId = { exact: savedInputId };
+      const audioConstraints = this._getMicrophoneConstraints(savedInputId);
 
       // #5380 — listener-only mode flag; set if mic acquisition fails or
       // the user has explicitly opted out via "Join without microphone".
@@ -942,38 +998,25 @@ class VoiceManager {
         this._noiseGateAnalyser = null;
         this._noiseGateGain = null;
       } else {
-        // ── Noise Gate via Web Audio ──
-        // Route mic through an analyser + gain node so we can silence
-        // audio below a threshold before sending it to peers.
-        const source = this.audioCtx.createMediaStreamSource(this.rawStream);
-        this._rnnoiseSource = source;
-        const gateAnalyser = this.audioCtx.createAnalyser();
-        gateAnalyser.fftSize = 2048;
-        gateAnalyser.smoothingTimeConstant = 0.3;
-        source.connect(gateAnalyser);
-
-        const gateGain = this.audioCtx.createGain();
-        source.connect(gateGain);
-
-        const dest = this.audioCtx.createMediaStreamDestination();
-        gateGain.connect(dest);
-
-        this._noiseGateAnalyser = gateAnalyser;
-        this._noiseGateGain = gateGain;
-        this._vcDest = dest;
-        this.localStream = dest.stream;   // processed stream → peers
+        this.localStream = this._buildMicrophonePipeline(this.rawStream);
         this._startNoiseGate();
 
-        // Initialize RNNoise and apply saved noise mode
-        await this._initRNNoise();
-        if (this.noiseMode === 'suppress' && this._rnnoiseReady) {
+        // Stereo mode preserves the original channel layout, so mono-only
+        // RNNoise and browser voice processing remain disabled.
+        if (this.microphoneStereo) {
           this.setNoiseSensitivity(0);
-          this._enableRNNoise();
-        } else if (this.noiseMode === 'off') {
-          this.setNoiseSensitivity(0);
-        } else if (this.noiseMode === 'gate') {
-          const saved = parseInt(localStorage.getItem('haven_ns_value') || '10', 10);
-          this.setNoiseSensitivity(saved);
+        } else {
+          // Initialize RNNoise and apply saved noise mode
+          await this._initRNNoise();
+          if (this.noiseMode === 'suppress' && this._rnnoiseReady) {
+            this.setNoiseSensitivity(0);
+            this._enableRNNoise();
+          } else if (this.noiseMode === 'off') {
+            this.setNoiseSensitivity(0);
+          } else if (this.noiseMode === 'gate') {
+            const saved = parseInt(localStorage.getItem('haven_ns_value') || '10', 10);
+            this.setNoiseSensitivity(saved);
+          }
         }
       }
 
@@ -1007,6 +1050,8 @@ class VoiceManager {
   }
 
   leave() {
+    this.stopSoundboardPlayback();
+
     // Stop screen share first if active
     if (this.isScreenSharing) {
       this.stopScreenShare();
@@ -1072,12 +1117,21 @@ class VoiceManager {
     this.screenGainNodes.clear();
     this.webcamUsers.clear();
     this._vcDest = null;
+    this.microphoneStereoActive = false;
 
     // Close AudioContext to free resources
     if (this.audioCtx) {
-      this.audioCtx.close().catch(() => {});
+      const closingContext = this.audioCtx;
       this.audioCtx = null;
+      closingContext.close().catch(() => {});
     }
+    // AudioWorklet modules are registered per AudioContext. A future join must
+    // register the processor again even though the compiled WASM stays cached.
+    this._rnnoiseReady = false;
+    this._rnnoiseContext = null;
+    this._rnnoiseInitPromise = null;
+    this._rnnoiseInitContext = null;
+    this._rnnoiseOperational = false;
     // Clear cached silent track
     this._cachedSilentTrack = null;
     
@@ -1101,6 +1155,7 @@ class VoiceManager {
    */
   _softLeave() {
     if (!this.inVoice) return;
+    this.stopSoundboardPlayback();
 
     // Stop screen share / webcam (local cleanup only)
     if (this.isScreenSharing && this.screenStream) {
@@ -1114,6 +1169,7 @@ class VoiceManager {
       this.isWebcamActive = false;
     }
 
+    this._disableRNNoise();
     this._stopNoiseGate();
     this._stopLocalTalkDetection();
     for (const [id] of this.analysers) this._stopAnalyser(id);
@@ -1149,11 +1205,18 @@ class VoiceManager {
     this.screenGainNodes.clear();
     this.webcamUsers.clear();
     this._vcDest = null;
+    this.microphoneStereoActive = false;
 
     if (this.audioCtx) {
-      this.audioCtx.close().catch(() => {});
+      const closingContext = this.audioCtx;
       this.audioCtx = null;
+      closingContext.close().catch(() => {});
     }
+    this._rnnoiseReady = false;
+    this._rnnoiseContext = null;
+    this._rnnoiseInitPromise = null;
+    this._rnnoiseInitContext = null;
+    this._rnnoiseOperational = false;
     this._cachedSilentTrack = null;
 
     if (this._disconnectTimers) {
@@ -1165,27 +1228,78 @@ class VoiceManager {
     // NOTE: leaves haven_voice_channel in localStorage so auto-rejoin on reconnect works
   }
 
+  stopSoundboardPlayback() {
+    this._soundboardPlayGeneration += 1;
+
+    if (this._soundboardFetchController) {
+      this._soundboardFetchController.abort();
+      this._soundboardFetchController = null;
+    }
+
+    if (this._soundboardSource) {
+      this._soundboardSource.onended = null;
+      try { this._soundboardSource.stop(); } catch {}
+      try { this._soundboardSource.disconnect(); } catch {}
+      this._soundboardSource = null;
+    }
+
+    try { this._soundboardVcGain?.disconnect(); } catch {}
+    try { this._soundboardLocalGain?.disconnect(); } catch {}
+    this._soundboardVcGain = null;
+    this._soundboardLocalGain = null;
+  }
+
   // Play a soundboard audio file and mix it into the VC stream so other users hear it
   playSoundToVC(url, localVolume = 0.5) {
     if (!this.inVoice || !this.audioCtx || !this._vcDest) return false;
-    // Use fetch + decodeAudioData for reliable mixing into VC destination
-    fetch(url).then(r => r.arrayBuffer()).then(buf => {
-      return this.audioCtx.decodeAudioData(buf);
-    }).then(audioBuffer => {
-      const bufferSource = this.audioCtx.createBufferSource();
+
+    this.stopSoundboardPlayback();
+    const generation = this._soundboardPlayGeneration;
+    const audioContext = this.audioCtx;
+    const fetchController = new AbortController();
+    this._soundboardFetchController = fetchController;
+
+    fetch(url, { signal: fetchController.signal }).then(response => {
+      if (!response.ok) throw new Error(`Sound request failed (${response.status})`);
+      return response.arrayBuffer();
+    }).then(buffer => audioContext.decodeAudioData(buffer)).then(audioBuffer => {
+      if (
+        generation !== this._soundboardPlayGeneration
+        || this.audioCtx !== audioContext
+        || !this.inVoice
+        || !this._vcDest
+      ) return;
+
+      this._soundboardFetchController = null;
+      const bufferSource = audioContext.createBufferSource();
+      const vcGain = audioContext.createGain();
+      const localGain = audioContext.createGain();
+
       bufferSource.buffer = audioBuffer;
-      // Mix into the VC destination so peers hear it
-      const vcGain = this.audioCtx.createGain();
       vcGain.gain.value = 0.7;
+      localGain.gain.value = localVolume;
       bufferSource.connect(vcGain);
       vcGain.connect(this._vcDest);
-      // Also play locally for the user's own preview
-      const localGain = this.audioCtx.createGain();
-      localGain.gain.value = localVolume;
       bufferSource.connect(localGain);
-      localGain.connect(this.audioCtx.destination);
+      localGain.connect(audioContext.destination);
+
+      this._soundboardSource = bufferSource;
+      this._soundboardVcGain = vcGain;
+      this._soundboardLocalGain = localGain;
+      bufferSource.onended = () => {
+        if (this._soundboardSource !== bufferSource) return;
+        try { bufferSource.disconnect(); } catch {}
+        try { vcGain.disconnect(); } catch {}
+        try { localGain.disconnect(); } catch {}
+        this._soundboardSource = null;
+        this._soundboardVcGain = null;
+        this._soundboardLocalGain = null;
+      };
       bufferSource.start(0);
-    }).catch(() => {});
+    }).catch(error => {
+      if (error?.name !== 'AbortError') console.warn('[Voice] Soundboard playback failed:', error);
+      if (generation === this._soundboardPlayGeneration) this._soundboardFetchController = null;
+    });
     return true;
   }
 
@@ -1266,13 +1380,18 @@ class VoiceManager {
       // talk where they want the captured system audio to be cleaned up
       // can opt back in via Settings → Debug → "Apply voice processing
       // to screen-share audio". Mic capture (getUserMedia) is a separate
-      // stream and always gets full voice processing regardless.
+      // stream with its own mono-voice or stereo-raw processing profile.
       const applyVoiceProcToScreen = (() => {
         try { return localStorage.getItem('screen_share_voice_processing') === '1'; } catch { return false; }
       })();
       displayMediaOptions.audio = applyVoiceProcToScreen
-        ? true
-        : { echoCancellation: false, autoGainControl: false, noiseSuppression: false };
+        ? { channelCount: { ideal: 2 } }
+        : {
+            channelCount: { ideal: 2 },
+            echoCancellation: false,
+            autoGainControl: false,
+            noiseSuppression: false
+          };
 
       // These options aren't supported in Electron's Chromium — only add them
       // when running in a regular browser to avoid immediate rejection.
@@ -1621,6 +1740,46 @@ class VoiceManager {
     } catch (e) { /* setParameters not supported */ }
   }
 
+  _withOpusStereo(description) {
+    if (!description?.sdp) return description;
+
+    const lines = description.sdp.split('\r\n');
+    const opusPayloads = new Set();
+    for (const line of lines) {
+      const match = line.match(/^a=rtpmap:(\d+) opus\/48000(?:\/2)?$/i);
+      if (match) opusPayloads.add(match[1]);
+    }
+    if (!opusPayloads.size) return description;
+
+    const fmtpPayloads = new Set();
+    for (let i = 0; i < lines.length; i++) {
+      const match = lines[i].match(/^a=fmtp:(\d+)\s*(.*)$/i);
+      if (!match || !opusPayloads.has(match[1])) continue;
+      fmtpPayloads.add(match[1]);
+      const params = match[2]
+        .split(';')
+        .map(value => value.trim())
+        .filter(Boolean)
+        .filter(value => !/^(?:stereo|sprop-stereo)=/i.test(value));
+      params.push('stereo=1', 'sprop-stereo=1');
+      lines[i] = `a=fmtp:${match[1]} ${params.join(';')}`;
+    }
+
+    // Chromium normally emits an Opus fmtp line. Keep this fallback for
+    // browsers that omit it so stereo negotiation is still explicit.
+    for (const payload of opusPayloads) {
+      if (fmtpPayloads.has(payload)) continue;
+      const rtpmapIndex = lines.findIndex(line =>
+        new RegExp(`^a=rtpmap:${payload} opus\\/48000(?:\\/2)?$`, 'i').test(line)
+      );
+      if (rtpmapIndex >= 0) {
+        lines.splice(rtpmapIndex + 1, 0, `a=fmtp:${payload} stereo=1;sprop-stereo=1`);
+      }
+    }
+
+    return { type: description.type, sdp: lines.join('\r\n') };
+  }
+
   async _waitForSignalingStable(connection, timeoutMs = 5000) {
     if (!connection || connection.signalingState === 'stable') return true;
     return await new Promise((resolve) => {
@@ -1678,7 +1837,9 @@ class VoiceManager {
           return false;
         }
       }
-      const offer = await connection.createOffer(iceRestart ? { iceRestart: true } : undefined);
+      const offer = this._withOpusStereo(
+        await connection.createOffer(iceRestart ? { iceRestart: true } : undefined)
+      );
       if (connection.signalingState !== 'stable') {
         // Another incoming offer won the race while createOffer() was in flight.
         // Leave one queued retry instead of forcing a stale local offer on top.
@@ -2129,23 +2290,37 @@ class VoiceManager {
    * chain, and replaces the audio track on every peer connection.
    * @param {string} deviceId - MediaDeviceInfo.deviceId (empty = system default)
    */
-  async switchInputDevice(deviceId) {
-    if (!this.inVoice) return;
+  async setMicrophoneStereo(enabled) {
+    this.microphoneStereo = !!enabled;
+    localStorage.setItem('haven_mic_stereo', this.microphoneStereo ? '1' : '0');
 
-    const audioConstraints = {
-      echoCancellation: true,
-      noiseSuppression: true,
-      autoGainControl: true
+    if (!this.inVoice) {
+      this.microphoneStereoActive = false;
+      return { requested: this.microphoneStereo, active: null };
+    }
+
+    const deviceId = localStorage.getItem('haven_input_device') || '';
+    const switched = await this.switchInputDevice(deviceId);
+    return {
+      requested: this.microphoneStereo,
+      active: switched ? this.microphoneStereoActive : false
     };
-    if (deviceId) audioConstraints.deviceId = { exact: deviceId };
+  }
+
+  async switchInputDevice(deviceId) {
+    if (!this.inVoice) return false;
+
+    const audioConstraints = this._getMicrophoneConstraints(deviceId);
 
     let newRawStream;
     try {
       newRawStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints, video: false });
     } catch (err) {
       console.error('[Voice] Failed to switch input device:', err);
-      return;
+      return false;
     }
+
+    const oldLocalStream = this.localStream;
 
     // Stop old raw tracks
     if (this.rawStream) {
@@ -2158,29 +2333,15 @@ class VoiceManager {
     this._stopNoiseGate();
     this._stopLocalTalkDetection();
 
-    const source = this.audioCtx.createMediaStreamSource(this.rawStream);
-    this._rnnoiseSource = source;
-    const gateAnalyser = this.audioCtx.createAnalyser();
-    gateAnalyser.fftSize = 2048;
-    gateAnalyser.smoothingTimeConstant = 0.3;
-    source.connect(gateAnalyser);
-
-    const gateGain = this.audioCtx.createGain();
-    source.connect(gateGain);
-
-    const dest = this.audioCtx.createMediaStreamDestination();
-    gateGain.connect(dest);
-
-    this._noiseGateAnalyser = gateAnalyser;
-    this._noiseGateGain = gateGain;
-
-    const oldLocalStream = this.localStream;
-    this.localStream = dest.stream;
+    this.localStream = this._buildMicrophonePipeline(this.rawStream);
     this._startNoiseGate();
     this._startLocalTalkDetection();
 
-    // Re-enable RNNoise if it was active
-    if (this.noiseMode === 'suppress' && this._rnnoiseReady) {
+    // Stereo mode intentionally bypasses mono-oriented processing. Mono mode
+    // restores the user's saved noise profile after rebuilding the graph.
+    if (this.microphoneStereo) {
+      this.setNoiseSensitivity(0);
+    } else if (this.noiseMode === 'suppress' && this._rnnoiseReady) {
       this.setNoiseSensitivity(0);
       this._enableRNNoise();
     } else if (this.noiseMode === 'gate') {
@@ -2216,7 +2377,8 @@ class VoiceManager {
 
     // Persist preference
     localStorage.setItem('haven_input_device', deviceId || '');
-    console.log(`[Voice] Input device switched: ${deviceId || 'default'}`);
+    console.log(`[Voice] Input device switched: ${deviceId || 'default'} (${this.microphoneStereoActive ? 'stereo' : 'mono'})`);
+    return true;
   }
 
   /**
@@ -2384,14 +2546,22 @@ class VoiceManager {
     this.noiseMode = mode;
     localStorage.setItem('haven_noise_mode', mode);
 
+    // Stereo microphone mode preserves L/R and therefore cannot pass through
+    // the mono RNNoise processor or gate profile.
+    if (this.microphoneStereo) {
+      this._disableRNNoise();
+      this.setNoiseSensitivity(0);
+      return;
+    }
+
     if (mode === 'suppress') {
       // Disable noise gate, enable RNNoise
       if (this.noiseSensitivity !== 0) {
         this.setNoiseSensitivity(0);
       }
-      if (!this._rnnoiseReady) {
+      if (!this._rnnoiseReady || this._rnnoiseContext !== this.audioCtx) {
         this._initRNNoise().then(() => {
-          if (this._rnnoiseReady) this._enableRNNoise();
+          if (this._rnnoiseReady && this._rnnoiseContext === this.audioCtx) this._enableRNNoise();
           else console.warn('[Voice] AI suppression unavailable');
         });
       } else {
@@ -2410,50 +2580,125 @@ class VoiceManager {
   }
 
   async _initRNNoise() {
-    if (this._rnnoiseReady || !this.audioCtx) return;
-    try {
-      await this.audioCtx.audioWorklet.addModule('/js/rnnoise-processor.js');
-      const wasmResponse = await fetch('/js/rnnoise.wasm');
-      const wasmBytes = await wasmResponse.arrayBuffer();
-      const wasmModule = await WebAssembly.compile(wasmBytes);
-      this._rnnoiseWasmModule = wasmModule;
-      this._rnnoiseReady = true;
-    } catch (err) {
-      console.warn('[Voice] RNNoise init failed:', err);
-      this._rnnoiseReady = false;
+    const context = this.audioCtx;
+    if (!context?.audioWorklet) return false;
+    if (this._rnnoiseReady && this._rnnoiseContext === context) return true;
+    if (this._rnnoiseInitPromise && this._rnnoiseInitContext === context) {
+      return this._rnnoiseInitPromise;
     }
+
+    // A processor registered in a closed AudioContext does not exist in the
+    // replacement context. Keep the compiled WASM, but reload the worklet.
+    this._rnnoiseReady = false;
+    this._rnnoiseContext = null;
+    this._rnnoiseOperational = false;
+    this._rnnoiseInitContext = context;
+
+    const initialization = (async () => {
+      try {
+        await context.audioWorklet.addModule('/js/rnnoise-processor.js');
+        if (!this._rnnoiseWasmModule) {
+          const wasmResponse = await fetch('/js/rnnoise.wasm');
+          if (!wasmResponse.ok) {
+            throw new Error(`RNNoise WASM request failed (${wasmResponse.status})`);
+          }
+          this._rnnoiseWasmModule = await WebAssembly.compile(await wasmResponse.arrayBuffer());
+        }
+
+        // The user may have left voice while the module or WASM was loading.
+        if (this.audioCtx !== context || context.state === 'closed') return false;
+        this._rnnoiseContext = context;
+        this._rnnoiseReady = true;
+        return true;
+      } catch (err) {
+        if (this.audioCtx === context) {
+          this._rnnoiseReady = false;
+          this._rnnoiseContext = null;
+        }
+        console.warn('[Voice] RNNoise init failed:', err);
+        return false;
+      } finally {
+        if (this._rnnoiseInitContext === context) {
+          this._rnnoiseInitPromise = null;
+          this._rnnoiseInitContext = null;
+        }
+      }
+    })();
+
+    this._rnnoiseInitPromise = initialization;
+    return initialization;
   }
 
   _enableRNNoise() {
-    if (!this._rnnoiseReady || !this._rnnoiseSource || this._rnnoiseNode) return;
+    if (
+      !this._rnnoiseReady
+      || this._rnnoiseContext !== this.audioCtx
+      || !this._rnnoiseSource
+      || !this._noiseGateGain
+      || this._rnnoiseNode
+    ) return false;
+
+    let node = null;
     try {
-      const node = new AudioWorkletNode(this.audioCtx, 'rnnoise-processor', {
+      node = new AudioWorkletNode(this.audioCtx, 'rnnoise-processor', {
         numberOfInputs: 1, numberOfOutputs: 1,
         outputChannelCount: [1], channelCount: 1
       });
-      node.port.postMessage({ type: 'wasm-module', module: this._rnnoiseWasmModule });
+      node.port.onmessage = event => {
+        if (this._rnnoiseNode !== node) return;
+        if (event.data?.type === 'ready') {
+          this._rnnoiseOperational = true;
+          console.log('[Voice] RNNoise suppression active');
+        } else if (event.data?.type === 'error') {
+          console.warn('[Voice] RNNoise processor failed:', event.data.message);
+          this._disableRNNoise();
+        }
+      };
+      node.onprocessorerror = event => {
+        if (this._rnnoiseNode !== node) return;
+        console.warn('[Voice] RNNoise processor error:', event);
+        this._disableRNNoise();
+      };
+
       // Re-wire: source → rnnoise → gateGain (gate is open since sensitivity=0)
       this._rnnoiseSource.disconnect(this._noiseGateGain);
       this._rnnoiseSource.connect(node);
       node.connect(this._noiseGateGain);
       this._rnnoiseNode = node;
+      this._rnnoiseOperational = false;
+      node.port.postMessage({ type: 'wasm-module', module: this._rnnoiseWasmModule });
+      return true;
     } catch (err) {
+      try { node?.disconnect(); } catch {}
+      this._rnnoiseNode = null;
+      this._rnnoiseOperational = false;
+      // Never leave the outgoing microphone graph disconnected after a failed
+      // enable attempt; fall back to the browser-processed direct path.
+      try { this._rnnoiseSource?.connect(this._noiseGateGain); } catch {}
       console.warn('[Voice] Failed to enable RNNoise:', err);
+      return false;
     }
   }
 
   _disableRNNoise() {
-    if (!this._rnnoiseNode) return;
-    try {
-      this._rnnoiseNode.port.postMessage({ type: 'destroy' });
-      this._rnnoiseNode.disconnect();
-      this._rnnoiseNode = null;
-      // Re-wire: source → gateGain directly
-      if (this._rnnoiseSource && this._noiseGateGain) {
-        this._rnnoiseSource.connect(this._noiseGateGain);
-      }
-    } catch (err) {
-      console.warn('[Voice] Failed to disable RNNoise:', err);
+    const node = this._rnnoiseNode;
+    if (!node) {
+      this._rnnoiseOperational = false;
+      return;
+    }
+
+    this._rnnoiseNode = null;
+    this._rnnoiseOperational = false;
+    try { node.port.onmessage = null; } catch {}
+    try { node.onprocessorerror = null; } catch {}
+    try { node.port.postMessage({ type: 'destroy' }); } catch {}
+    try { this._rnnoiseSource?.disconnect(node); } catch {}
+    try { node.disconnect(); } catch {}
+
+    // Re-wire: source → gateGain directly
+    if (this._rnnoiseSource && this._noiseGateGain) {
+      try { this._rnnoiseSource.connect(this._noiseGateGain); }
+      catch (err) { console.warn('[Voice] Failed to restore microphone pipeline:', err); }
     }
   }
 

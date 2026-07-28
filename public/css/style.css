@@ -1,10 +1,10 @@
-﻿/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
    HAVEN — Multi-Theme Stylesheet
    Themes: Haven (default), Discord, Matrix, Tron, HALO, LoTR
    â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 @import url('https://fonts.googleapis.com/css2?family=VT323&family=Share+Tech+Mono&display=swap');
 @import url('/css/voice.css?v=3.34.0');
-@import url('/css/music.css?v=1');
+@import url('/css/music.css?v=3');
 
 /* ─── THEME: Haven (Default) ───────────────────────────── */
 :root, [data-theme="haven"] {
@@ -4770,6 +4770,85 @@ select.cfn-select.cfn-input {
 .sound-tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
 .sound-tab-content { display: none; }
 .sound-tab-content.active { display: block; }
+
+.soundboard-global-settings {
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+}
+.soundboard-global-settings > summary {
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.soundboard-extension-status {
+  margin: 8px 0 4px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.soundboard-extension-status::before {
+  content: '';
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--danger);
+}
+.soundboard-extension-status.connected { color: var(--success); }
+.soundboard-extension-status.connected::before { background: var(--success); }
+.soundboard-extension-install {
+  margin: 6px 0 8px;
+  padding: 8px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+}
+.soundboard-extension-download {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+}
+.soundboard-extension-steps {
+  margin: 8px 0 0 18px;
+  padding: 0;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.65;
+}
+.soundboard-extension-steps code {
+  padding: 1px 3px;
+  border-radius: 3px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+.soundboard-global-hint { display: block; margin-bottom: 8px; }
+.soundboard-global-hint code {
+  padding: 1px 3px;
+  border-radius: 3px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+}
+.soundboard-global-slot-list { display: grid; gap: 5px; }
+.soundboard-global-slot {
+  display: grid;
+  grid-template-columns: 105px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+.soundboard-global-shortcut {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+.soundboard-global-select {
+  width: 100%;
+  min-width: 0;
+  padding: 4px 7px;
+  font-size: 11px;
+}
 
 /* Soundboard grid */
 .soundboard-grid {

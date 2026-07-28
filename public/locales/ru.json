@@ -6,7 +6,7 @@
     "direction": "ltr"
   },
   "auth": {
-    "tagline": "Приватный чат, твои правила",
+    "tagline": "Ciallo～(∠・ω< )⌒☆",
     "tabs": {
       "login": "Войти",
       "register": "Регистрация"
@@ -197,7 +197,7 @@
     "join_voice_first": "Сначала войдите в голосовой чат для обмена музыкой",
     "join_voice_required": "Сначала войдите в голосовой чат",
     "paste_music_link": "Вставьте ссылку на музыку",
-    "unsupported_music_link": "Неподдерживаемая ссылка — попробуйте Spotify, YouTube или SoundCloud",
+    "unsupported_music_link": "Неподдерживаемая ссылка — попробуйте Spotify, YouTube, SoundCloud или Bilibili",
     "no_more_results": "Больше нет результатов",
     "no_results_for": "Нет результатов для «{{query}}»",
     "loading_more": "Загрузка…",
@@ -1369,7 +1369,7 @@
     },
     "listen_together": {
       "title": "Совместное прослушивание",
-      "desc": "Вставьте прямую ссылку на трек или плейлист из Spotify, YouTube или SoundCloud, чтобы запустить стриминг музыки для всех участников голосового канала",
+      "desc": "Вставьте прямую ссылку на трек или плейлист из Spotify, YouTube, SoundCloud или Bilibili, чтобы запустить стриминг музыки для всех участников голосового канала",
       "link_label": "Ссылка на аудиоматериал",
       "link_placeholder": "https://open.spotify.com/... или https://youtube.com/...",
       "share_btn": "Транслировать в канал"

@@ -14,10 +14,14 @@ class RNNoiseProcessor extends AudioWorkletProcessor {
 
     // Ring buffers for bridging 128-sample blocks → 480-sample RNNoise frames
     this._inputBuf = new Float32Array(480);
-    this._outputBuf = new Float32Array(480);
-    this._inputPos = 0;   // write cursor into _inputBuf
-    this._outputPos = 0;  // read cursor from _outputBuf
-    this._outputReady = 0; // samples available in _outputBuf
+    this._inputPos = 0;
+
+    // Keep one RNNoise frame of latency so the 128-sample consumer never
+    // catches the 480-sample producer between frame boundaries.
+    this._outputBuf = new Float32Array(1920);
+    this._outputReadPos = 0;
+    this._outputWritePos = 480;
+    this._outputReady = 480;
 
     this.port.onmessage = (e) => {
       if (e.data.type === 'wasm-module') {
@@ -135,14 +139,15 @@ class RNNoiseProcessor extends AudioWorkletProcessor {
       }
     }
 
-    // Read processed samples from output buffer
+    // Read processed samples from the output queue
     for (let i = 0; i < output.length; i++) {
       if (this._outputReady > 0) {
-        output[i] = this._outputBuf[this._outputPos++];
+        output[i] = this._outputBuf[this._outputReadPos];
+        this._outputReadPos = (this._outputReadPos + 1) % this._outputBuf.length;
         this._outputReady--;
-        if (this._outputPos >= 480) this._outputPos = 0;
       } else {
-        output[i] = 0; // underrun — silence
+        // This should only occur after an unexpected render discontinuity.
+        output[i] = 0;
       }
     }
 
@@ -164,13 +169,18 @@ class RNNoiseProcessor extends AudioWorkletProcessor {
     // Process — returns VAD probability (0..1), output written to wasmOutputPtr
     this._rnnoise_process_frame(this._state, this._wasmOutputPtr, this._wasmInputPtr);
 
-    // Read output, scale back to [-1, 1]
+    // Append the processed frame without overwriting samples that have not
+    // reached the AudioWorklet output yet.
     const outIdx = this._wasmOutputPtr >> 2;
-    this._outputPos = 0;
     for (let i = 0; i < 480; i++) {
-      this._outputBuf[i] = this._HEAPF32[outIdx + i] / 32768;
+      if (this._outputReady === this._outputBuf.length) {
+        this._outputReadPos = (this._outputReadPos + 1) % this._outputBuf.length;
+        this._outputReady--;
+      }
+      this._outputBuf[this._outputWritePos] = this._HEAPF32[outIdx + i] / 32768;
+      this._outputWritePos = (this._outputWritePos + 1) % this._outputBuf.length;
+      this._outputReady++;
     }
-    this._outputReady = 480;
   }
 }
 

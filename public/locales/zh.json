@@ -6,7 +6,7 @@
     "direction": "ltr"
   },
   "auth": {
-    "tagline": "私密聊天，由你做主",
+    "tagline": "Ciallo～(∠・ω< )⌒☆",
     "tabs": {
       "login": "登录",
       "register": "注册"
@@ -189,7 +189,7 @@
     "join_voice_first": "请先加入语音频道以分享音乐",
     "join_voice_required": "请先加入语音",
     "paste_music_link": "请粘贴音乐链接",
-    "unsupported_music_link": "不支持的链接 — 请尝试 Spotify、YouTube 或 SoundCloud",
+    "unsupported_music_link": "不支持的链接 — 请尝试 Spotify、YouTube、SoundCloud 或 Bilibili",
     "no_more_results": "没有更多结果",
     "no_results_for": "未找到 \"{{query}}\" 的结果",
     "loading_more": "加载更多…",
@@ -590,6 +590,11 @@
     "input": "输入",
     "default_mic": "默认麦克风",
     "mic_fallback": "麦克风 {{n}}",
+    "mic_channels": "麦克风声道",
+    "mic_mono": "单声道（语音处理）",
+    "mic_stereo": "双声道（原始音频）",
+    "mic_stereo_hint": "保留左右声道。需要双声道麦克风，并会关闭回声消除、自动增益、浏览器降噪和 AI 降噪。",
+    "mic_stereo_unavailable": "所选麦克风没有提供两个声道，当前仍以单声道发送。",
     "output": "输出",
     "default_speaker": "默认扬声器",
     "speaker_fallback": "扬声器 {{n}}",
@@ -1313,7 +1318,7 @@
     },
     "listen_together": {
       "title": "一起听",
-      "desc": "粘贴 Spotify、YouTube 或 SoundCloud 的链接，与语音中的所有人分享",
+      "desc": "粘贴 Spotify、YouTube、SoundCloud 或 Bilibili 的链接，与语音中的所有人分享",
       "link_label": "音乐链接",
       "link_placeholder": "https://open.spotify.com/track/...",
       "share_btn": "与频道分享"

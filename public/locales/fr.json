@@ -6,7 +6,7 @@
     "direction": "ltr"
   },
   "auth": {
-    "tagline": "Chat privé, vos règles",
+    "tagline": "Ciallo～(∠・ω< )⌒☆",
     "tabs": {
       "login": "Connexion",
       "register": "Inscription"
@@ -189,7 +189,7 @@
     "join_voice_first": "Rejoignez d'abord le vocal pour partager de la musique",
     "join_voice_required": "Rejoignez d'abord le vocal",
     "paste_music_link": "Veuillez coller un lien musical",
-    "unsupported_music_link": "Lien non supporté — essayez Spotify, YouTube ou SoundCloud",
+    "unsupported_music_link": "Lien non supporté — essayez Spotify, YouTube, SoundCloud ou Bilibili",
     "no_more_results": "Plus de résultats",
     "no_results_for": "Aucun résultat pour \"{{query}}\"",
     "loading_more": "Chargement…",
@@ -1313,7 +1313,7 @@
     },
     "listen_together": {
       "title": "Écoute en commun",
-      "desc": "Collez un lien Spotify, YouTube ou SoundCloud pour le partager avec tout le monde dans le vocal",
+      "desc": "Collez un lien Spotify, YouTube, SoundCloud ou Bilibili pour le partager avec tout le monde dans le vocal",
       "link_label": "Lien musical",
       "link_placeholder": "https://open.spotify.com/track/...",
       "share_btn": "Partager avec le salon"

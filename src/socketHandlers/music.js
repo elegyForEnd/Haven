@@ -5,7 +5,7 @@ const { isString, isInt } = require('./helpers');
 
 module.exports = function register(socket, ctx) {
   const { io, db, state, userHasPermission,
-          resolveSpotifyToYouTube, searchYouTube, fetchYouTubePlaylist, resolveMusicMetadata,
+          resolveSpotifyToYouTube, resolveBilibiliLink, searchYouTube, fetchYouTubePlaylist, resolveMusicMetadata,
           getActiveMusicSyncState, updateActiveMusicPlaybackState,
           startQueuedMusic, popNextQueuedMusic, isNaturalMusicFinish,
           broadcastMusicQueue, getMusicQueuePayload, sanitizeQueueEntry,
@@ -29,6 +29,25 @@ module.exports = function register(socket, ctx) {
     let playUrl = stripYouTubePlaylistParam(data.url);
     let resolvedFrom = null;
     let title = trimMusicText(data.title, 200);
+    let durationSeconds = null;
+
+    let isBilibili = false;
+    try {
+      const host = new URL(data.url).hostname.toLowerCase();
+      isBilibili = host === 'b23.tv' || host.endsWith('.b23.tv') || host === 'bilibili.com' || host.endsWith('.bilibili.com');
+    } catch {}
+    if (isBilibili) {
+      const resolved = await resolveBilibiliLink(data.url);
+      if (!resolved?.url) {
+        return socket.emit('error-msg', 'Could not resolve Bilibili link. Check that the video link is public and valid.');
+      }
+      playUrl = resolved.url;
+      resolvedFrom = 'bilibili';
+      durationSeconds = Number.isFinite(Number(resolved.duration)) && Number(resolved.duration) > 0
+        ? Number(resolved.duration)
+        : null;
+      if (!title) title = trimMusicText(resolved.title, 200);
+    }
 
     const isSpotify = /open\.spotify\.com\/(track|album|playlist|episode|show)\/[a-zA-Z0-9]+/.test(data.url);
     if (isSpotify) {
@@ -45,6 +64,8 @@ module.exports = function register(socket, ctx) {
     if (!title) {
       const resolvedMeta = await resolveMusicMetadata(playUrl);
       title = trimMusicText(resolvedMeta.title, 200);
+      const resolvedDuration = Number(resolvedMeta.duration);
+      if (Number.isFinite(resolvedDuration) && resolvedDuration > 0) durationSeconds = resolvedDuration;
     }
 
     const entry = sanitizeQueueEntry({
@@ -53,7 +74,8 @@ module.exports = function register(socket, ctx) {
       title: title || 'Shared track',
       userId: socket.user.id,
       username: socket.user.displayName,
-      resolvedFrom
+      resolvedFrom,
+      durationSeconds
     });
     if (!entry) return;
 

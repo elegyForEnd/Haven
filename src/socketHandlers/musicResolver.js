@@ -253,6 +253,90 @@ function extractYouTubeVideoId(url) {
   return match ? match[1] : null;
 }
 
+function isBilibiliHost(hostname) {
+  const host = String(hostname || '').toLowerCase();
+  return host === 'b23.tv' || host.endsWith('.b23.tv') || host === 'bilibili.com' || host.endsWith('.bilibili.com');
+}
+
+function extractBilibiliVideoInfo(url) {
+  if (typeof url !== 'string') return null;
+  try {
+    const parsed = new URL(url);
+    if (!isBilibiliHost(parsed.hostname)) return null;
+    const pathMatch = parsed.pathname.match(/\/video\/(BV[0-9A-Za-z]{10})(?:\/|$)/i);
+    const queryBvid = parsed.searchParams.get('bvid');
+    const bvid = pathMatch?.[1] || (/^BV[0-9A-Za-z]{10}$/i.test(queryBvid || '') ? queryBvid : null);
+    if (!bvid) return null;
+    const rawPage = Number.parseInt(parsed.searchParams.get('p') || '1', 10);
+    const page = Number.isInteger(rawPage) && rawPage > 0 ? rawPage : 1;
+    return { bvid, page };
+  } catch {
+    return null;
+  }
+}
+
+async function expandBilibiliShortUrl(url) {
+  let current;
+  try {
+    current = new URL(url);
+  } catch {
+    return null;
+  }
+  if (!isBilibiliHost(current.hostname)) return null;
+
+  for (let hop = 0; hop < 4; hop++) {
+    if (current.hostname.toLowerCase() !== 'b23.tv' && !current.hostname.toLowerCase().endsWith('.b23.tv')) {
+      return current.toString();
+    }
+    try {
+      const response = await fetch(current, {
+        redirect: 'manual',
+        headers: { 'User-Agent': YT_UA },
+        signal: AbortSignal.timeout(5000)
+      });
+      if (response.status < 300 || response.status >= 400) return current.toString();
+      const location = response.headers.get('location');
+      if (!location) return null;
+      const next = new URL(location, current);
+      if (!isBilibiliHost(next.hostname)) return null;
+      current = next;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+async function resolveBilibiliLink(url) {
+  const expandedUrl = await expandBilibiliShortUrl(url);
+  const info = extractBilibiliVideoInfo(expandedUrl || url);
+  if (!info) return null;
+
+  const canonicalUrl = `https://www.bilibili.com/video/${info.bvid}${info.page > 1 ? `?p=${info.page}` : ''}`;
+  try {
+    const response = await fetch(
+      `https://api.bilibili.com/x/web-interface/view?bvid=${encodeURIComponent(info.bvid)}`,
+      { headers: { 'User-Agent': YT_UA, Referer: 'https://www.bilibili.com/' }, signal: AbortSignal.timeout(5000) }
+    );
+    if (!response.ok) return { url: canonicalUrl, title: '', duration: '' };
+    const payload = await response.json();
+    if (payload?.code !== 0 || !payload.data) return { url: canonicalUrl, title: '', duration: '' };
+    const page = Array.isArray(payload.data.pages)
+      ? payload.data.pages.find(item => Number(item.page) === info.page)
+      : null;
+    const title = page?.part && page.part !== payload.data.title
+      ? `${payload.data.title} - ${page.part}`
+      : payload.data.title;
+    return {
+      url: canonicalUrl,
+      title: title || '',
+      duration: Number(page?.duration || payload.data.duration) || ''
+    };
+  } catch {
+    return { url: canonicalUrl, title: '', duration: '' };
+  }
+}
+
 //Grab metadata for queue and up next system
 async function resolveMusicMetadata(url) {
   if (!url || typeof url !== 'string') return { title: '', duration: '' };
@@ -267,6 +351,10 @@ async function resolveMusicMetadata(url) {
         const data = await res.json();
         return { title: data.title || '', duration: '' };
       }
+    }
+    if (url.includes('bilibili.com/') || url.includes('b23.tv/')) {
+      const resolved = await resolveBilibiliLink(url);
+      return { title: resolved?.title || '', duration: resolved?.duration || '' };
     }
     if (url.includes('soundcloud.com/') || url.includes('spotify.com/')) {
       const res = await fetch(
@@ -283,6 +371,6 @@ async function resolveMusicMetadata(url) {
 }
 
 module.exports = {
-  resolveSpotifyToYouTube, searchYouTube, fetchYouTubePlaylist,
-  extractYouTubeVideoId, resolveMusicMetadata
+  resolveSpotifyToYouTube, resolveBilibiliLink, searchYouTube, fetchYouTubePlaylist,
+  extractYouTubeVideoId, extractBilibiliVideoInfo, resolveMusicMetadata
 };

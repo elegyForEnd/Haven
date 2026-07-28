@@ -10,7 +10,7 @@
   <link rel="manifest" href="/manifest.webmanifest">
   <title>Ciacord</title>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDAgMTAwIj48cG9seWdvbiBwb2ludHM9IjUwLDMgOTMsMjggOTMsNzIgNTAsOTcgNyw3MiA3LDI4IiBmaWxsPSJub25lIiBzdHJva2U9IiM2YjRmZGIiIHN0cm9rZS13aWR0aD0iOCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPjx0ZXh0IHg9IjUwIiB5PSI2MyIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC1mYW1pbHk9IkFyaWFsLEhlbHZldGljYSxzYW5zLXNlcmlmIiBmb250LXdlaWdodD0iYm9sZCIgZm9udC1zaXplPSIzOCIgZmlsbD0iIzZiNGZkYiIgb3BhY2l0eT0iMC45NSI+SDwvdGV4dD48L3N2Zz4=">
-  <link rel="stylesheet" href="/css/style.css?v=3.34.0">
+  <link rel="stylesheet" href="/css/style.css?v=3.37.2">
   <script src="/js/theme-init.js?v=3.16.15"></script>
 </head>
 <body>
@@ -572,6 +572,13 @@
             <label class="voice-settings-label" data-i18n="voice_settings.input">Input</label>
             <select id="voice-input-device" class="voice-settings-select">
               <option value="" data-i18n="voice_settings.default_mic">Default Microphone</option>
+            </select>
+          </div>
+          <div class="voice-settings-row">
+            <label class="voice-settings-label" data-i18n="voice_settings.mic_channels">Mic Channels</label>
+            <select id="voice-mic-stereo" class="voice-settings-select" data-i18n-title="voice_settings.mic_stereo_hint" title="Stereo preserves left/right channels and disables voice processing">
+              <option value="0" data-i18n="voice_settings.mic_mono">Mono (voice processing)</option>
+              <option value="1" data-i18n="voice_settings.mic_stereo">Stereo (raw)</option>
             </select>
           </div>
           <div class="voice-settings-row">
@@ -2679,6 +2686,21 @@
       <!-- TAB: Soundboard (all users) -->
       <div class="sound-tab-content active" id="sound-tab-soundboard">
         <small class="settings-hint" style="display:block;margin-bottom:8px" data-i18n="modals.sound_manager.modal_hint">Browse & play custom sounds. Set hotkeys to play them anytime.</small>
+        <details class="soundboard-global-settings">
+          <summary>Ciabord Global 快捷键</summary>
+          <div id="soundboard-extension-status" class="soundboard-extension-status">正在检测浏览器扩展...</div>
+          <div id="soundboard-extension-install" class="soundboard-extension-install">
+            <a class="btn-sm btn-accent soundboard-extension-download" href="/api/download-global-shortcut-extension" download="ciabord-global-shortcuts.zip">下载扩展</a>
+            <ol class="soundboard-extension-steps">
+              <li>下载并解压 ZIP 文件</li>
+              <li>打开 <code>chrome://extensions/</code> 或 <code>edge://extensions/</code></li>
+              <li>开启“开发者模式”，点击“加载已解压的扩展程序”并选择解压目录</li>
+              <li>刷新当前 Ciabord 页面</li>
+            </ol>
+          </div>
+          <small class="settings-hint soundboard-global-hint">安装后可在 <code>chrome://extensions/shortcuts</code> 修改全局按键。</small>
+          <div id="soundboard-global-slot-list" class="soundboard-global-slot-list"></div>
+        </details>
         <div class="sound-search-row">
           <input type="text" id="soundboard-search" data-i18n-placeholder="modals.sound_manager.search_placeholder" placeholder="Search sounds..." class="settings-text-input" style="flex:1">
           <button id="soundboard-popout-btn" class="icon-btn small" title="Pop out soundboard">⧉</button>
@@ -2976,7 +2998,7 @@
   <div class="modal-overlay" id="music-modal" style="display:none">
     <div class="modal">
       <h3>🎵 <span data-i18n="modals.listen_together.title">Listen Together</span></h3>
-      <p class="modal-desc" data-i18n="modals.listen_together.desc">Paste a link from Spotify, YouTube, or SoundCloud to share with everyone in voice</p>
+      <p class="modal-desc" data-i18n="modals.listen_together.desc">Paste a link from Spotify, YouTube, SoundCloud, or Bilibili to share with everyone in voice</p>
       <div class="form-group">
         <label data-i18n="modals.listen_together.link_label">Music Link</label>
         <input type="text" id="music-link-input" data-i18n-placeholder="modals.listen_together.link_placeholder" placeholder="https://open.spotify.com/track/..." maxlength="500">
@@ -2985,6 +3007,7 @@
       <div class="music-platforms-hint">
         <span class="platform-badge spotify">Spotify</span>
         <span class="platform-badge youtube">YouTube</span>
+        <span class="platform-badge bilibili">Bilibili</span>
         <span class="platform-badge soundcloud">SoundCloud</span>
       </div>
       <div class="modal-actions">
@@ -3550,10 +3573,10 @@
   <script src="/js/theme.js?v=3.16.15"></script>
   <script src="/js/notifications.js?v=3.16.15"></script>
   <script src="/js/servers.js?v=3.16.15"></script>
-  <script src="/js/voice.js?v=3.34.0"></script>
+  <script src="/js/voice.js?v=3.37.3"></script>
   <script src="/js/modmode.js?v=3.16.15"></script>
   <script src="/js/e2e.js?v=3.16.15"></script>
-  <script type="module" src="/js/app.js?v=3.34.0"></script>
+  <script type="module" src="/js/app.js?v=3.37.4"></script>
   <script src="/js/plugin-loader.js?v=3.16.15"></script>
   <script src="/js/modules/stream-debug.js?v=3.16.15"></script>
   <script src="/js/password-eye.js?v=3.17.1"></script>

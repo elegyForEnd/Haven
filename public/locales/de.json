@@ -6,7 +6,7 @@
     "direction": "ltr"
   },
   "auth": {
-    "tagline": "Privater Chat, deine Regeln",
+    "tagline": "Ciallo～(∠・ω< )⌒☆",
     "tabs": {
       "login": "Anmelden",
       "register": "Registrieren"
@@ -189,7 +189,7 @@
     "join_voice_first": "Zuerst dem Sprachchat beitreten, um Musik zu teilen",
     "join_voice_required": "Zuerst dem Sprachchat beitreten",
     "paste_music_link": "Bitte einen Musik-Link einfügen",
-    "unsupported_music_link": "Nicht unterstützter Link — Spotify, YouTube oder SoundCloud versuchen",
+    "unsupported_music_link": "Nicht unterstützter Link — Spotify, YouTube, SoundCloud oder Bilibili versuchen",
     "no_more_results": "Keine weiteren Ergebnisse",
     "no_results_for": "Keine Ergebnisse für „{{query}}“",
     "loading_more": "Mehr laden…",
@@ -1313,7 +1313,7 @@
     },
     "listen_together": {
       "title": "Gemeinsam hören",
-      "desc": "Füge einen Link von Spotify, YouTube oder SoundCloud ein, um ihn mit allen im Sprachchat zu teilen",
+      "desc": "Füge einen Link von Spotify, YouTube, SoundCloud oder Bilibili ein, um ihn mit allen im Sprachchat zu teilen",
       "link_label": "Musik-Link",
       "link_placeholder": "https://open.spotify.com/track/...",
       "share_btn": "Mit Kanal teilen"

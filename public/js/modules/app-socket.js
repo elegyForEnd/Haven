@@ -258,10 +258,6 @@ _setupSocketListeners() {
       this.socket.emit('set-status', this._pendingStatus);
       this._pendingStatus = null;
     }
-    // Show recovery-codes feature notice once per user (dismissible)
-    if (!localStorage.getItem('haven_recovery_notice_v1')) {
-      setTimeout(() => this._showRecoveryNotice(), 2500);
-    }
   });
   document.addEventListener('visibilitychange', () => {
     this.socket?.emit('visibility-change', { visible: !document.hidden });
