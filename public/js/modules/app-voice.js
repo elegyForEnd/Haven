@@ -2004,6 +2004,11 @@ _openMusicModal() {
   document.getElementById('music-link-preview').innerHTML = '';
   document.getElementById('music-link-preview').classList.remove('active');
   this._updateMusicModalButtons(null);
+  const bilibiliModeSelect = document.getElementById('bilibili-playback-mode-select');
+  if (bilibiliModeSelect) {
+    bilibiliModeSelect.value = localStorage.getItem('haven_bilibili_playback_mode') === 'official' ? 'official' : 'hls';
+  }
+  this._updateBilibiliPlaybackModeField(null);
   document.getElementById('music-modal').style.display = 'flex';
   setTimeout(() => document.getElementById('music-link-input').focus(), 100);
 },
@@ -2047,8 +2052,27 @@ _updateMusicModalButtons(url) {
   }
 },
 
+_isBilibiliMusicUrl(url) {
+  if (!url) return false;
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return host === 'b23.tv'
+      || host.endsWith('.b23.tv')
+      || host === 'bilibili.com'
+      || host.endsWith('.bilibili.com');
+  } catch {
+    return false;
+  }
+},
+
+_updateBilibiliPlaybackModeField(url) {
+  const group = document.getElementById('bilibili-playback-mode-group');
+  if (group) group.style.display = this._isBilibiliMusicUrl(url) ? '' : 'none';
+},
+
 _previewMusicLink(url) {
   const preview = document.getElementById('music-link-preview');
+  this._updateBilibiliPlaybackModeField(url);
   if (!url) {
     preview.innerHTML = '';
     preview.classList.remove('active');
@@ -2084,7 +2108,15 @@ _shareMusic() {
     return;
   }
   if (!this.voice || !this.voice.inVoice) { this._showToast(t('toasts.join_voice_required'), 'error'); return; }
-  this.socket.emit('music-share', { code: this.voice.currentChannel, url });
+  const bilibiliPlaybackMode = this._isBilibiliMusicUrl(url)
+    ? (document.getElementById('bilibili-playback-mode-select')?.value === 'official' ? 'official' : 'hls')
+    : null;
+  if (bilibiliPlaybackMode) localStorage.setItem('haven_bilibili_playback_mode', bilibiliPlaybackMode);
+  this.socket.emit('music-share', {
+    code: this.voice.currentChannel,
+    url,
+    bilibiliPlaybackMode
+  });
   this._closeMusicModal();
 },
 //Playlist queue addition
@@ -2203,8 +2235,16 @@ _handleMusicShared(data) {
   }
   const effectiveSyncState = this._getEffectiveMusicSyncState(data.syncState);
   const isBilibili = data.resolvedFrom === 'bilibili';
-  const embedUrl = isBilibili ? null : this._getMusicEmbed(data.url, effectiveSyncState?.positionSeconds || 0);
-  if (!isBilibili && !embedUrl) return;
+  const bilibiliPlaybackMode = data.bilibiliPlaybackMode === 'official' ? 'official' : 'hls';
+  const isOfficialBilibili = isBilibili && bilibiliPlaybackMode === 'official';
+  const embedUrl = isOfficialBilibili
+    ? this._getBilibiliOfficialEmbed(
+        data.url,
+        effectiveSyncState?.positionSeconds || 0,
+        data.syncState?.isPlaying !== false
+      )
+    : (isBilibili ? null : this._getMusicEmbed(data.url, effectiveSyncState?.positionSeconds || 0));
+  if ((!isBilibili || isOfficialBilibili) && !embedUrl) return;
   const platform = this._getMusicPlatform(data.url);
   const panel = document.getElementById('music-panel');
   const container = document.getElementById('music-embed-container');
@@ -2221,6 +2261,8 @@ _handleMusicShared(data) {
   this._musicUrl = data.url;
   this._musicTrackId = data.trackId || null;
   this._musicRequestorId = data.userId || null;
+  this._musicBilibiliPlaybackMode = isBilibili ? bilibiliPlaybackMode : null;
+  if (isBilibili) localStorage.setItem('haven_bilibili_playback_mode', bilibiliPlaybackMode);
   this._setMusicActivityHint('');
   this._pendingMusicSyncState = data.syncState || null;
   this._musicAuthoritativeSyncState = data.syncState || null;
@@ -2247,7 +2289,9 @@ _handleMusicShared(data) {
   // We skip referrerpolicy=no-referrer so the IFrame API (enablejsapi) can
   // communicate with the parent window; the origin= param already handles
   // the "Video unavailable" issue that self-hosted instances used to trigger.
-  if (isBilibili) {
+  if (isOfficialBilibili) {
+    container.innerHTML = `<div class="music-embed-wrapper"><iframe id="music-iframe" src="${embedUrl}" width="100%" height="${iframeH}" frameborder="0" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture" loading="lazy"></iframe></div>`;
+  } else if (isBilibili) {
     const initialVolume = parseInt(localStorage.getItem('haven_music_volume') ?? '80');
     if (!this._initBilibiliPlayer?.(container, data.media, initialVolume)) {
       this._showToast('Bilibili media streams are unavailable for this video.', 'error');
@@ -2264,12 +2308,22 @@ _handleMusicShared(data) {
   }
   panel.style.display = 'flex';
 
+  const bilibiliModeSelect = document.getElementById('music-bilibili-mode-select');
+  if (bilibiliModeSelect) {
+    bilibiliModeSelect.style.display = isBilibili ? '' : 'none';
+    bilibiliModeSelect.value = bilibiliPlaybackMode;
+    bilibiliModeSelect.disabled = !this._canControlMusic();
+    bilibiliModeSelect.title = this._canControlMusic()
+      ? 'Change the shared Bilibili playback method'
+      : 'Only the requestor or a moderator can change the playback method';
+  }
+
   const qualitySelect = document.getElementById('music-quality-select');
   if (qualitySelect) {
     qualitySelect.innerHTML = '';
-    qualitySelect.style.display = isBilibili ? '' : 'none';
-    if (!isBilibili) this._musicBilibiliAvailableHeights = [];
-    if (isBilibili) {
+    qualitySelect.style.display = isBilibili && !isOfficialBilibili ? '' : 'none';
+    if (!isBilibili || isOfficialBilibili) this._musicBilibiliAvailableHeights = [];
+    if (isBilibili && !isOfficialBilibili) {
       const availableVideoHeights = [...new Set(
         (Array.isArray(data.media?.availableVideoHeights) ? data.media.availableVideoHeights : [])
           .map(Number)
@@ -2296,7 +2350,7 @@ _handleMusicShared(data) {
 
   // Update play/pause button — hide for platforms without an external control API
   const ppBtn = document.getElementById('music-play-pause-btn');
-  const hidePlaybackControls = isSpotify;
+  const hidePlaybackControls = isSpotify || isOfficialBilibili;
   if (ppBtn) {
     ppBtn.textContent = hidePlaybackControls ? '' : (data.syncState?.isPlaying === false ? '▶' : '⏸');
     ppBtn.style.display = hidePlaybackControls ? 'none' : '';
@@ -2307,8 +2361,8 @@ _handleMusicShared(data) {
   const seekSlider = document.getElementById('music-seek-slider');
   const timeCur = document.getElementById('music-time-current');
   const timeDur = document.getElementById('music-time-duration');
-  const hideSeekSlider = isSpotify;
-  const hideTimeLabels = isSpotify;
+  const hideSeekSlider = isSpotify || isOfficialBilibili;
+  const hideTimeLabels = isSpotify || isOfficialBilibili;
   if (seekSlider) seekSlider.style.display = hideSeekSlider ? 'none' : '';
   if (timeCur) timeCur.style.display = hideTimeLabels ? 'none' : '';
   if (timeDur) timeDur.style.display = hideTimeLabels ? 'none' : '';
@@ -2320,14 +2374,15 @@ _handleMusicShared(data) {
   // Spotify exposes volume only inside its iframe.
   const volSlider = document.getElementById('music-volume-slider');
   const muteBtn = document.getElementById('music-mute-btn');
-  if (volSlider) volSlider.style.display = '';
-  if (muteBtn) muteBtn.style.display = '';
-  if (isSpotify) {
-    if (volSlider) { volSlider.disabled = true; volSlider.title = t('media.spotify_volume_hint'); }
-    if (muteBtn) { muteBtn.disabled = true; muteBtn.title = t('media.spotify_volume_hint'); }
+  if (isOfficialBilibili) {
+    if (volSlider) volSlider.style.display = 'none';
+    if (muteBtn) muteBtn.style.display = 'none';
+  } else if (isSpotify) {
+    if (volSlider) { volSlider.style.display = ''; volSlider.disabled = true; volSlider.title = t('media.spotify_volume_hint'); }
+    if (muteBtn) { muteBtn.style.display = ''; muteBtn.disabled = true; muteBtn.title = t('media.spotify_volume_hint'); }
   } else {
-    if (volSlider) { volSlider.disabled = false; volSlider.title = ''; }
-    if (muteBtn) { muteBtn.disabled = false; muteBtn.title = t('media.mute_unmute'); }
+    if (volSlider) { volSlider.style.display = ''; volSlider.disabled = false; volSlider.title = ''; }
+    if (muteBtn) { muteBtn.style.display = ''; muteBtn.disabled = false; muteBtn.title = t('media.mute_unmute'); }
   }
 
   // Show next button for SoundCloud (has internal tracks) or when the queue has items
@@ -2360,6 +2415,27 @@ _canControlMusic() {
     this._hasPerm('manage_music_queue');
 },
 
+_setBilibiliPlaybackMode(mode) {
+  if (!this.voice?.currentChannel || !this._musicTrackId || !this._canControlMusic()) return;
+  const requestedMode = mode === 'official' ? 'official' : 'hls';
+  if (requestedMode === this._musicBilibiliPlaybackMode) return;
+  const modeSelect = document.getElementById('music-bilibili-mode-select');
+  if (modeSelect) modeSelect.disabled = true;
+  const requestId = Number(this._musicBilibiliModeRequestCounter || 0) + 1;
+  this._musicBilibiliModeRequestCounter = requestId;
+  this._pendingMusicBilibiliModeRequest = {
+    requestId,
+    previousMode: this._musicBilibiliPlaybackMode === 'official' ? 'official' : 'hls'
+  };
+  this._setMusicActivityHint(`Switching Bilibili playback to ${requestedMode === 'official' ? 'Official Player' : 'HLS'}...`);
+  this.socket.emit('music-set-bilibili-mode', {
+    code: this.voice.currentChannel,
+    trackId: this._musicTrackId,
+    requestId,
+    mode: requestedMode
+  });
+},
+
 _setBilibiliRoomQuality(videoHeight) {
   if (!this.voice?.currentChannel || !this._musicTrackId || !this._canControlMusic()) return;
   const requestedVideoHeight = Number(videoHeight);
@@ -2390,6 +2466,7 @@ _applyMusicControlPermissions() {
   const nextBtn = document.getElementById('music-next-btn');
   const stopBtn = document.getElementById('music-stop-btn');
   const qualitySelect = document.getElementById('music-quality-select');
+  const bilibiliModeSelect = document.getElementById('music-bilibili-mode-select');
   const pipPpBtn = document.getElementById('music-pip-pp');
   const pipStopBtn = document.getElementById('music-pip-close');
   if (ppBtn) {
@@ -2418,6 +2495,12 @@ _applyMusicControlPermissions() {
   if (pipPpBtn) {
     pipPpBtn.disabled = !allowed;
     pipPpBtn.title = allowed ? 'Play/Pause' : restricted;
+  }
+  if (bilibiliModeSelect) {
+    bilibiliModeSelect.disabled = !allowed;
+    bilibiliModeSelect.title = allowed
+      ? 'Change the shared Bilibili playback method'
+      : restricted;
   }
   if (pipStopBtn) {
     pipStopBtn.disabled = !allowed;
@@ -3069,6 +3152,12 @@ _hideMusicPanel() {
   this._musicAuthoritativeSyncState = null;
   this._musicTrackId = null;
   this._musicRequestorId = null;
+  this._musicBilibiliPlaybackMode = null;
+  this._pendingMusicBilibiliModeRequest = null;
+  const bilibiliModeSelect = document.getElementById('music-bilibili-mode-select');
+  const qualitySelect = document.getElementById('music-quality-select');
+  if (bilibiliModeSelect) bilibiliModeSelect.style.display = 'none';
+  if (qualitySelect) qualitySelect.style.display = 'none';
 },
 
 _minimizeMusicPanel() {
@@ -3103,6 +3192,7 @@ _popOutMusicPlayer() {
     const platform = this._musicPlatform || 'Music';
     const playing = this._musicPlaying;
     const isBilibili = platform === 'Bilibili';
+    const usesOfficialBilibiliPlayer = isBilibili && this._musicBilibiliPlaybackMode === 'official';
     pip.classList.toggle('music-pip-bilibili', isBilibili);
 
     const savedOpacity = parseInt(localStorage.getItem('haven_pip_opacity') ?? '100');
@@ -3133,6 +3223,12 @@ _popOutMusicPlayer() {
     pip.style.opacity = savedOpacity / 100;
 
     document.body.appendChild(pip);
+    if (usesOfficialBilibiliPlayer) {
+      for (const controlId of ['music-pip-pp', 'music-pip-mute', 'music-pip-vol']) {
+        const control = document.getElementById(controlId);
+        if (control) control.style.display = 'none';
+      }
+    }
     this._syncMusicQueueUi();
     this._applyMusicControlPermissions();
 
@@ -3445,6 +3541,32 @@ _stopMusicTimeTracking() {
   this._musicLastTrackedPosition = null;
   this._musicLastTrackedAt = 0;
   this._musicLastCorrectionAt = 0;
+},
+
+_getBilibiliOfficialEmbed(url, startSeconds = 0, autoplay = true) {
+  if (!url) return null;
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase();
+    if (host !== 'bilibili.com' && !host.endsWith('.bilibili.com')) return null;
+    const pathMatch = parsed.pathname.match(/\/video\/(BV[0-9A-Za-z]{10})(?:\/|$)/i);
+    const queryBvid = parsed.searchParams.get('bvid');
+    const bvid = pathMatch?.[1]
+      || (/^BV[0-9A-Za-z]{10}$/i.test(queryBvid || '') ? queryBvid : null);
+    if (!bvid) return null;
+    const page = Math.max(1, Number.parseInt(parsed.searchParams.get('p') || '1', 10) || 1);
+    const params = new URLSearchParams({
+      bvid,
+      p: String(page),
+      autoplay: autoplay ? '1' : '0',
+      danmaku: '0',
+      high_quality: '1',
+      t: String(Math.max(0, Math.floor(Number(startSeconds) || 0)))
+    });
+    return `https://player.bilibili.com/player.html?${params}`;
+  } catch {
+    return null;
+  }
 },
 
 _getMusicEmbed(url, startSeconds = 0) {

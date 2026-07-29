@@ -1352,6 +1352,10 @@
       "desc": "粘贴 Spotify、YouTube、SoundCloud 或 Bilibili 的链接，与语音中的所有人分享",
       "link_label": "音乐链接",
       "link_placeholder": "https://open.spotify.com/track/...",
+      "bilibili_mode_label": "Bilibili \u64ad\u653e\u65b9\u5f0f",
+      "bilibili_mode_hls": "HLS\uff08\u623f\u95f4\u540c\u6b65\u66f4\u597d\uff09",
+      "bilibili_mode_official": "\u5b98\u65b9\u64ad\u653e\u5668\uff08\u517c\u5bb9\u6027\u66f4\u597d\uff09",
+      "bilibili_mode_hint": "HLS \u4f7f\u7528 Haven \u7684\u540c\u6b65\u64ad\u653e\u5668\uff1b\u5b98\u65b9\u64ad\u653e\u5668\u4f7f\u7528 Bilibili iframe \u548c\u81ea\u5e26\u63a7\u4ef6\u3002",
       "share_btn": "与频道分享"
     },
     "manage_servers": {

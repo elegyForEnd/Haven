@@ -4,6 +4,13 @@
 // Internal closures preserve subsystem boundaries without spreading one
 // integration across many small files.
 
+const BILIBILI_PLAYBACK_MODES = new Set(['hls', 'official']);
+
+function normalizeBilibiliPlaybackMode(value, fallback = 'hls') {
+  const normalizedFallback = BILIBILI_PLAYBACK_MODES.has(fallback) ? fallback : 'hls';
+  return BILIBILI_PLAYBACK_MODES.has(value) ? value : normalizedFallback;
+}
+
 const bilibiliCredentialStore = (() => {
 const crypto = require('crypto');
 const { getDb } = require('./database');
@@ -2571,6 +2578,7 @@ return function registerBilibiliAdmin(socket, ctx) {
 })();
 
 module.exports = {
+  normalizeBilibiliPlaybackMode,
   ...bilibiliCredentialStore,
   ...bilibiliApiClient,
   ...bilibiliAuth,

@@ -1085,6 +1085,9 @@ _setupUI() {
   document.getElementById('music-quality-select')?.addEventListener('change', (event) => {
     this._setBilibiliRoomQuality(Number(event.target.value));
   });
+  document.getElementById('music-bilibili-mode-select')?.addEventListener('change', (event) => {
+    this._setBilibiliPlaybackMode(event.target.value);
+  });
   document.getElementById('music-mute-btn').addEventListener('click', () => this._toggleMusicMute());
   document.getElementById('music-volume-slider').addEventListener('input', (e) => {
     this._setMusicVolume(parseInt(e.target.value));

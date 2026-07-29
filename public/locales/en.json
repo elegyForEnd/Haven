@@ -1443,6 +1443,10 @@
       "desc": "Paste a link from Spotify, YouTube, SoundCloud, or Bilibili to share with everyone in voice",
       "link_label": "Music Link",
       "link_placeholder": "https://open.spotify.com/track/...",
+      "bilibili_mode_label": "Bilibili Playback Method",
+      "bilibili_mode_hls": "HLS (better room sync)",
+      "bilibili_mode_official": "Official Player (more compatible)",
+      "bilibili_mode_hint": "HLS uses Haven's synchronized player; Official Player loads Bilibili's iframe and uses its own controls.",
       "share_btn": "Share with Channel"
     },
     "manage_servers": {

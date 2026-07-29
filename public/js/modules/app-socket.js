@@ -1385,6 +1385,22 @@ _setupSocketListeners() {
   });
 
   // ── Voice kicked ────────────────────────────────
+  this.socket.on('music-bilibili-mode-result', result => {
+    if (result?.trackId !== this._musicTrackId) return;
+    const pendingRequest = this._pendingMusicBilibiliModeRequest;
+    if (pendingRequest && Number(result.requestId) !== pendingRequest.requestId) return;
+    const authoritativeMode = result.mode === 'official'
+      ? 'official'
+      : (result.success ? 'hls' : (pendingRequest?.previousMode || 'hls'));
+    this._musicBilibiliPlaybackMode = authoritativeMode;
+    localStorage.setItem('haven_bilibili_playback_mode', authoritativeMode);
+    const modeSelect = document.getElementById('music-bilibili-mode-select');
+    if (modeSelect) modeSelect.value = authoritativeMode;
+    this._pendingMusicBilibiliModeRequest = null;
+    this._setMusicActivityHint('');
+    this._applyMusicControlPermissions();
+  });
+
   this.socket.on('voice-kicked', (data) => {
     // Server forcibly removed us from voice — tear down locally
     if (this.voice && this.voice.inVoice) {

@@ -10,7 +10,7 @@
   <link rel="manifest" href="/manifest.webmanifest">
   <title>Ciacord</title>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDAgMTAwIj48cG9seWdvbiBwb2ludHM9IjUwLDMgOTMsMjggOTMsNzIgNTAsOTcgNyw3MiA3LDI4IiBmaWxsPSJub25lIiBzdHJva2U9IiM2YjRmZGIiIHN0cm9rZS13aWR0aD0iOCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPjx0ZXh0IHg9IjUwIiB5PSI2MyIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC1mYW1pbHk9IkFyaWFsLEhlbHZldGljYSxzYW5zLXNlcmlmIiBmb250LXdlaWdodD0iYm9sZCIgZm9udC1zaXplPSIzOCIgZmlsbD0iIzZiNGZkYiIgb3BhY2l0eT0iMC45NSI+SDwvdGV4dD48L3N2Zz4=">
-  <link rel="stylesheet" href="/css/style.css?v=3.37.8">
+  <link rel="stylesheet" href="/css/style.css?v=3.37.9">
   <script src="/js/theme-init.js?v=3.16.15"></script>
 </head>
 <body>
@@ -412,6 +412,10 @@
                 <button id="music-queue-btn" class="icon-btn small" data-i18n-title="media.music_queue" title="Queue">☰</button>
                 <button id="music-play-pause-btn" class="icon-btn small" data-i18n-title="media.music_play_pause" title="Play/Pause">⏸</button>
                 <button id="music-next-btn" class="icon-btn small" data-i18n-title="media.music_next" title="Next track" style="display:none">⏭</button>
+                <select id="music-bilibili-mode-select" class="music-quality-select music-playback-mode-select" title="Bilibili playback method" style="display:none" disabled>
+                  <option value="hls" data-i18n="modals.listen_together.bilibili_mode_hls">HLS (better room sync)</option>
+                  <option value="official" data-i18n="modals.listen_together.bilibili_mode_official">Official Player (more compatible)</option>
+                </select>
                 <select id="music-quality-select" class="music-quality-select" title="Bilibili room video quality" style="display:none" disabled>
                   <option value="360">360p (default)</option>
                 </select>
@@ -3031,6 +3035,14 @@
         <label data-i18n="modals.listen_together.link_label">Music Link</label>
         <input type="text" id="music-link-input" data-i18n-placeholder="modals.listen_together.link_placeholder" placeholder="https://open.spotify.com/track/..." maxlength="500">
       </div>
+      <div class="form-group" id="bilibili-playback-mode-group" style="display:none">
+        <label for="bilibili-playback-mode-select" data-i18n="modals.listen_together.bilibili_mode_label">Bilibili Playback Method</label>
+        <select id="bilibili-playback-mode-select" class="form-select">
+          <option value="hls" data-i18n="modals.listen_together.bilibili_mode_hls">HLS (better room sync)</option>
+          <option value="official" data-i18n="modals.listen_together.bilibili_mode_official">Official Player (more compatible)</option>
+        </select>
+        <small data-i18n="modals.listen_together.bilibili_mode_hint">HLS uses Haven's synchronized player; Official Player loads Bilibili's iframe and uses its own controls.</small>
+      </div>
       <div class="music-link-preview" id="music-link-preview"></div>
       <div class="music-platforms-hint">
         <span class="platform-badge spotify">Spotify</span>
@@ -3639,7 +3651,7 @@
   <script src="/js/voice.js?v=3.37.3"></script>
   <script src="/js/modmode.js?v=3.16.15"></script>
   <script src="/js/e2e.js?v=3.16.15"></script>
-  <script type="module" src="/js/app.js?v=3.37.14"></script>
+  <script type="module" src="/js/app.js?v=3.37.15"></script>
   <script src="/js/plugin-loader.js?v=3.16.15"></script>
   <script src="/js/modules/stream-debug.js?v=3.16.15"></script>
   <script src="/js/password-eye.js?v=3.17.1"></script>

@@ -9,6 +9,7 @@ module.exports = function register(socket, ctx) {
           getActiveMusicSyncState, updateActiveMusicPlaybackState,
           startQueuedMusic, popNextQueuedMusic, isNaturalMusicFinish,
           emitMusicSharedToRoom, clearMusicMedia,
+          normalizeBilibiliPlaybackMode,
           broadcastMusicQueue, getMusicQueuePayload, sanitizeQueueEntry,
           trimMusicText, stripYouTubePlaylistParam } = ctx;
   const { voiceUsers, activeMusic, musicQueues } = state;
@@ -42,6 +43,7 @@ module.exports = function register(socket, ctx) {
 
     let playUrl = stripYouTubePlaylistParam(data.url);
     let resolvedFrom = null;
+    let bilibiliPlaybackMode = null;
     let title = trimMusicText(data.title, 200);
     let durationSeconds = null;
 
@@ -57,6 +59,7 @@ module.exports = function register(socket, ctx) {
       }
       playUrl = resolved.url;
       resolvedFrom = 'bilibili';
+      bilibiliPlaybackMode = normalizeBilibiliPlaybackMode(data.bilibiliPlaybackMode);
       durationSeconds = Number.isFinite(Number(resolved.duration)) && Number(resolved.duration) > 0
         ? Number(resolved.duration)
         : null;
@@ -89,6 +92,7 @@ module.exports = function register(socket, ctx) {
       userId: socket.user.id,
       username: socket.user.displayName,
       resolvedFrom,
+      bilibiliPlaybackMode,
       durationSeconds
     });
     if (!entry) return;
@@ -191,6 +195,82 @@ module.exports = function register(socket, ctx) {
       });
     } catch (error) {
       socket.emit('error-msg', `Could not refresh Bilibili media: ${String(error?.message || 'resolution failed').slice(0, 200)}`);
+    }
+  });
+
+  socket.on('music-set-bilibili-mode', async (data) => {
+    if (!data || typeof data !== 'object') return;
+    if (!isString(data.code, 8, 8) || !isString(data.trackId, 1, 64)) return;
+    if (data.mode !== 'hls' && data.mode !== 'official') return;
+    const requestId = Number.isSafeInteger(Number(data.requestId)) ? Number(data.requestId) : null;
+    const voiceRoom = voiceUsers.get(data.code);
+    if (!voiceRoom || !voiceRoom.has(socket.user.id)) return;
+    const current = activeMusic.get(data.code);
+    if (!current || current.id !== data.trackId || current.resolvedFrom !== 'bilibili') return;
+
+    if (socket.user.id !== current.userId && !socket.user.isAdmin) {
+      const channel = db.prepare('SELECT id FROM channels WHERE code = ?').get(data.code);
+      if (!channel || !userHasPermission(socket.user.id, 'manage_music_queue', channel.id)) {
+        socket.emit('error-msg', 'Only the requestor or a moderator can change the Bilibili playback method');
+        return socket.emit('music-bilibili-mode-result', {
+          success: false,
+          trackId: current.id,
+          requestId,
+          mode: normalizeBilibiliPlaybackMode(current.bilibiliPlaybackMode)
+        });
+      }
+    }
+
+    const previousMode = normalizeBilibiliPlaybackMode(current.bilibiliPlaybackMode);
+    const requestedMode = normalizeBilibiliPlaybackMode(data.mode);
+    if (previousMode === requestedMode) {
+      return socket.emit('music-bilibili-mode-result', {
+        success: true,
+        trackId: current.id,
+        requestId,
+        mode: previousMode
+      });
+    }
+
+    try {
+      const emitted = await enqueueBilibiliMediaOperation(current, async () => {
+        if (activeMusic.get(data.code) !== current) return false;
+        current.bilibiliPlaybackMode = requestedMode;
+        if (requestedMode === 'official') {
+          clearMusicMedia(current, { preserveOperation: true });
+        }
+        try {
+          return await emitMusicSharedToRoom(data.code, current, {
+            force: requestedMode === 'hls',
+            preferredVideoHeight: current.bilibiliVideoHeight,
+            preservePlaybackState: previousMode === 'official' && requestedMode === 'hls'
+          });
+        } catch (error) {
+          current.bilibiliPlaybackMode = previousMode;
+          clearMusicMedia(current, { preserveOperation: true });
+          await emitMusicSharedToRoom(data.code, current).catch(() => {});
+          throw error;
+        }
+      });
+      if (!emitted || activeMusic.get(data.code) !== current) return;
+      io.to(`voice:${data.code}`).emit('toast', {
+        message: `${socket.user.displayName} switched Bilibili playback to ${requestedMode === 'official' ? 'Official Player' : 'HLS'}`,
+        type: 'info'
+      });
+      socket.emit('music-bilibili-mode-result', {
+        success: true,
+        trackId: current.id,
+        requestId,
+        mode: requestedMode
+      });
+    } catch (error) {
+      socket.emit('error-msg', `Could not change Bilibili playback method: ${String(error?.message || 'resolution failed').slice(0, 200)}`);
+      socket.emit('music-bilibili-mode-result', {
+        success: false,
+        trackId: current.id,
+        requestId,
+        mode: normalizeBilibiliPlaybackMode(current.bilibiliPlaybackMode, previousMode)
+      });
     }
   });
 

@@ -15,6 +15,7 @@ const { resolveSpotifyToYouTube, resolveBilibiliLink, searchYouTube, fetchYouTub
 const {
   createBilibiliMediaPayload,
   ensureBilibiliPlaybackSession,
+  normalizeBilibiliPlaybackMode,
   registerBilibiliAdmin,
   releaseBilibiliPlaybackSession
 } = require('../bilibili');
@@ -208,13 +209,17 @@ function setupSocketHandlers(io, db, opts = {}) {
   function sanitizeQueueEntry(entry) {
     if (!entry || typeof entry !== 'object') return null;
     const durationSeconds = Number(entry.durationSeconds);
+    const resolvedFrom = trimMusicText(entry.resolvedFrom, 32) || null;
     return {
       id: trimMusicText(entry.id, 64),
       url: trimMusicText(entry.url, 500),
       title: trimMusicText(entry.title, 200) || 'Untitled track',
       userId: Number(entry.userId) || 0,
       username: trimMusicText(entry.username, 80) || 'Unknown',
-      resolvedFrom: trimMusicText(entry.resolvedFrom, 32) || null,
+      resolvedFrom,
+      bilibiliPlaybackMode: resolvedFrom === 'bilibili'
+        ? normalizeBilibiliPlaybackMode(entry.bilibiliPlaybackMode)
+        : null,
       durationSeconds: Number.isFinite(durationSeconds) && durationSeconds > 0 ? durationSeconds : null
     };
   }
@@ -276,7 +281,10 @@ function setupSocketHandlers(io, db, opts = {}) {
   }
 
   function getMusicSharedPayload(code, music) {
-    const bilibiliMedia = music.resolvedFrom === 'bilibili'
+    const bilibiliPlaybackMode = music.resolvedFrom === 'bilibili'
+      ? normalizeBilibiliPlaybackMode(music.bilibiliPlaybackMode)
+      : null;
+    const bilibiliMedia = music.resolvedFrom === 'bilibili' && bilibiliPlaybackMode !== 'official'
       ? createBilibiliMediaPayload(music.media)
       : null;
     return {
@@ -287,13 +295,15 @@ function setupSocketHandlers(io, db, opts = {}) {
       trackId: music.id,
       channelCode: code,
       resolvedFrom: music.resolvedFrom,
+      bilibiliPlaybackMode,
       media: bilibiliMedia,
       syncState: getActiveMusicSyncState(music)
     };
   }
 
-  async function ensureBilibiliMusicMedia(music, force = false, preferredVideoHeight = null) {
+  async function ensureBilibiliMusicMedia(music, force = false, preferredVideoHeight = null, preservePlaybackState = false) {
     if (!music || music.resolvedFrom !== 'bilibili') return null;
+    if (normalizeBilibiliPlaybackMode(music.bilibiliPlaybackMode) === 'official') return null;
     if (music.mediaResolvePromise) return music.mediaResolvePromise;
     const hadMedia = !!music.media;
     const explicitVideoHeight = Number(preferredVideoHeight);
@@ -321,14 +331,15 @@ function setupSocketHandlers(io, db, opts = {}) {
         releaseBilibiliPlaybackSession(music.id);
         throw new Error('Bilibili media resolution was cancelled');
       }
-      const refreshedState = hadMedia ? getActiveMusicSyncState(music) : null;
+      const shouldPreservePlaybackState = hadMedia || preservePlaybackState === true;
+      const refreshedState = shouldPreservePlaybackState ? getActiveMusicSyncState(music) : null;
       music.media = media;
       music.bilibiliVideoHeight = media.requestedVideoHeight || requestedVideoHeight;
       if (Number.isFinite(media.duration) && media.duration > 0) {
         music.durationSeconds = media.duration;
         music.playbackState = {
           isPlaying: refreshedState?.isPlaying !== false,
-          positionSeconds: hadMedia
+          positionSeconds: shouldPreservePlaybackState
             ? clampMusicPosition(refreshedState?.positionSeconds || 0, media.duration)
             : 0,
           durationSeconds: media.duration,
@@ -346,18 +357,27 @@ function setupSocketHandlers(io, db, opts = {}) {
     }
   }
 
-  function clearMusicMedia(music) {
+  function clearMusicMedia(music, options = {}) {
     if (!music || music.resolvedFrom !== 'bilibili') return;
+    const pendingOperation = options.preserveOperation === true
+      ? music.mediaRefreshBroadcastPromise
+      : null;
     music.mediaResolutionGeneration = Number(music.mediaResolutionGeneration || 0) + 1;
     releaseBilibiliPlaybackSession(music.id);
     delete music.media;
     delete music.mediaResolvePromise;
     delete music.mediaRefreshBroadcastPromise;
+    if (pendingOperation) music.mediaRefreshBroadcastPromise = pendingOperation;
   }
 
   async function emitMusicSharedToSocket(targetSocket, code, music, options = {}) {
     if (!targetSocket || !music) return false;
-    await ensureBilibiliMusicMedia(music, options.force === true, options.preferredVideoHeight);
+    await ensureBilibiliMusicMedia(
+      music,
+      options.force === true,
+      options.preferredVideoHeight,
+      options.preservePlaybackState === true
+    );
     if (activeMusic.get(code) !== music) return false;
     targetSocket.emit('music-shared', getMusicSharedPayload(code, music));
     return true;
@@ -366,7 +386,12 @@ function setupSocketHandlers(io, db, opts = {}) {
   async function emitMusicSharedToRoom(code, music, options = {}) {
     const voiceRoom = voiceUsers.get(code);
     if (!voiceRoom || !music) return false;
-    await ensureBilibiliMusicMedia(music, options.force === true, options.preferredVideoHeight);
+    await ensureBilibiliMusicMedia(
+      music,
+      options.force === true,
+      options.preferredVideoHeight,
+      options.preservePlaybackState === true
+    );
     if (activeMusic.get(code) !== music) return false;
     const payload = getMusicSharedPayload(code, music);
     for (const [, user] of voiceRoom) {
@@ -1700,7 +1725,7 @@ function setupSocketHandlers(io, db, opts = {}) {
       extractYouTubeVideoId, resolveMusicMetadata,
       getActiveMusicSyncState, updateActiveMusicPlaybackState,
       setActiveMusic, emitMusicSharedToSocket, emitMusicSharedToRoom, startQueuedMusic,
-      clearMusicMedia,
+      clearMusicMedia, normalizeBilibiliPlaybackMode,
       popNextQueuedMusic, isNaturalMusicFinish,
       broadcastMusicQueue, getMusicQueuePayload,
       sanitizeQueueEntry, trimMusicText, stripYouTubePlaylistParam,

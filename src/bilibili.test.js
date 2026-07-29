@@ -14,6 +14,7 @@ const test = require('node:test');
 
 const {
   createWbiMixinKey,
+  normalizeBilibiliPlaybackMode,
   normalizeDashFormats,
   parseCanonicalVideoUrl,
   resolveBilibiliPlaybackInfo,
@@ -30,6 +31,13 @@ function createJsonResponse(payload) {
     headers: { 'Content-Type': 'application/json' }
   });
 }
+
+test('Bilibili playback mode accepts HLS and official player values only', () => {
+  assert.equal(normalizeBilibiliPlaybackMode('hls'), 'hls');
+  assert.equal(normalizeBilibiliPlaybackMode('official'), 'official');
+  assert.equal(normalizeBilibiliPlaybackMode('invalid'), 'hls');
+  assert.equal(normalizeBilibiliPlaybackMode(undefined, 'official'), 'official');
+});
 
 test('WBI signing produces a deterministic sorted signature', () => {
   const mixinKey = createWbiMixinKey(
