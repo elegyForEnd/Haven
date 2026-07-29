@@ -151,6 +151,7 @@
   const ssoForm = document.getElementById('sso-form');
   const totpForm = document.getElementById('totp-form');
   const forcedChangeForm = document.getElementById('forced-change-form');
+  const banAppealForm = document.getElementById('ban-appeal-form');
   const errorEl = document.getElementById('auth-error');
 
   // Pending TOTP challenge state (set after successful password auth)
@@ -159,6 +160,9 @@
   // Holds the temp-pw session token + the password the user typed (which
   // was the temp password). Cleared once the change-password flow completes.
   let _pendingForcedChange = null; // { token, user, originalPassword }
+  // Pending ban appeal (#5457): the credentials the user just proved with a
+  // successful password check, reused to authenticate the appeal submission.
+  let _pendingBanAppeal = null; // { username, password }
 
   function showTotpForm() {
     loginForm.style.display = 'none';
@@ -191,6 +195,30 @@
     document.getElementById('forced-old-password').value = '';
     document.getElementById('forced-change-recall').open = false;
     document.getElementById('forced-new-password').focus();
+    hideError();
+  }
+
+  // (#5457) Shown when login is rejected because the account is banned. The
+  // reason came back from the server only after the password was verified.
+  function showBanAppeal(username, password, reason) {
+    _pendingBanAppeal = { username, password };
+    loginForm.style.display = 'none';
+    registerForm.style.display = 'none';
+    if (ssoForm) ssoForm.style.display = 'none';
+    totpForm.style.display = 'none';
+    forcedChangeForm.style.display = 'none';
+    document.getElementById('recover-form').style.display = 'none';
+    banAppealForm.style.display = 'flex';
+    document.querySelector('.auth-tabs').style.display = 'none';
+    const reasonEl = document.getElementById('ban-appeal-reason');
+    if (reasonEl) {
+      reasonEl.textContent = reason
+        ? `${t('auth.ban_appeal.reason_prefix')} ${reason}`
+        : t('auth.ban_appeal.no_reason');
+    }
+    document.getElementById('ban-appeal-text').value = '';
+    errorEl.style.color = '';
+    document.getElementById('ban-appeal-text').focus();
     hideError();
   }
 
@@ -328,7 +356,14 @@
       });
 
       const data = await res.json();
-      if (!res.ok) return showError(data.error || t('auth.errors.login_failed'));
+      if (!res.ok) {
+        // ── Banned: offer an appeal instead of a dead-end error (#5457) ──
+        if (data.banned) {
+          showBanAppeal(username, password, data.reason);
+          return;
+        }
+        return showError(data.error || t('auth.errors.login_failed'));
+      }
 
       // ── TOTP challenge ──
       if (data.requiresTOTP) {
@@ -355,6 +390,46 @@
     } catch (err) {
       showError(t('auth.errors.connection_error'));
     }
+  });
+
+  // ── Ban appeal submit (#5457) ─────────────────────────
+  banAppealForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    hideError();
+    if (!_pendingBanAppeal) return showError(t('auth.errors.session_expired'));
+    const appeal = document.getElementById('ban-appeal-text').value.trim();
+    if (!appeal) return showError(t('auth.ban_appeal.errors.empty'));
+    try {
+      const res = await fetch('/api/auth/ban-appeal', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: _pendingBanAppeal.username,
+          password: _pendingBanAppeal.password,
+          appeal
+        })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return showError(data.error || t('auth.ban_appeal.errors.failed'));
+      _pendingBanAppeal = null;
+      document.getElementById('ban-appeal-text').value = '';
+      document.getElementById('ban-appeal-text').disabled = true;
+      showError(t('auth.ban_appeal.submitted'));
+      errorEl.style.color = 'var(--success, #2ecc71)';
+    } catch (err) {
+      showError(t('auth.errors.connection_error'));
+    }
+  });
+
+  document.getElementById('ban-appeal-back-btn').addEventListener('click', (e) => {
+    e.preventDefault();
+    _pendingBanAppeal = null;
+    banAppealForm.style.display = 'none';
+    document.getElementById('ban-appeal-text').disabled = false;
+    loginForm.style.display = 'flex';
+    document.querySelector('.auth-tabs').style.display = 'flex';
+    errorEl.style.color = '';
+    hideError();
   });
 
   // ── TOTP verification ────────────────────────────────
@@ -710,6 +785,9 @@
         profilePicUrl = ssoServerUrl + profilePicUrl;
       }
 
+      const ssoCaptchaToken = _captchaTokenFor('sso');
+      if (ssoCaptchaToken === '') return showError(t('auth.errors.captcha_incomplete'));
+
       try {
         const res = await fetch('/api/auth/register', {
           method: 'POST',
@@ -723,12 +801,13 @@
             // (#5344) Reuse the same token field the standard form uses;
             // when the server requires a token the user will have already
             // typed it in the visible field.
-            registrationToken: (document.getElementById('reg-token')?.value || '').trim()
+            registrationToken: (document.getElementById('reg-token')?.value || '').trim(),
+            captchaToken: ssoCaptchaToken || ''
           })
         });
 
         const data = await res.json();
-        if (!res.ok) return showError(data.error || t('auth.errors.registration_failed'));
+        if (!res.ok) { _resetCaptcha('sso'); return showError(data.error || t('auth.errors.registration_failed')); }
 
         // Derive E2E wrapping key from password
         const e2eWrap = await deriveE2EWrappingKey(password);
@@ -742,6 +821,60 @@
         showError(t('auth.errors.connection_error'));
       }
     });
+  }
+
+  // ── Opt-in Turnstile CAPTCHA on registration ──────────
+  // Rendered only when the server reports it enabled. Two widgets: one for the
+  // standard register form, one for the SSO register step (both hit the same
+  // /register endpoint, which enforces the challenge server-side).
+  let _captchaSiteKey = '';
+  let _turnstileMain = null;
+  let _turnstileSso = null;
+
+  function _loadTurnstileScript() {
+    return new Promise((resolve, reject) => {
+      if (window.turnstile) return resolve();
+      let s = document.getElementById('cf-turnstile-script');
+      if (s) { s.addEventListener('load', () => resolve()); s.addEventListener('error', () => reject(new Error('load failed'))); return; }
+      s = document.createElement('script');
+      s.id = 'cf-turnstile-script';
+      s.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+      s.async = true; s.defer = true;
+      s.onload = () => resolve();
+      s.onerror = () => reject(new Error('load failed'));
+      document.head.appendChild(s);
+    });
+  }
+
+  async function _initRegistrationCaptcha(siteKey) {
+    _captchaSiteKey = siteKey;
+    try { await _loadTurnstileScript(); } catch { return; }
+    if (!window.turnstile) return;
+    const mainBox = document.getElementById('reg-captcha');
+    if (mainBox && _turnstileMain === null) {
+      const g = document.getElementById('reg-captcha-group'); if (g) g.style.display = '';
+      _turnstileMain = window.turnstile.render(mainBox, { sitekey: siteKey, theme: 'auto' });
+    }
+    const ssoBox = document.getElementById('sso-captcha');
+    if (ssoBox && _turnstileSso === null) {
+      const g = document.getElementById('sso-captcha-group'); if (g) g.style.display = '';
+      _turnstileSso = window.turnstile.render(ssoBox, { sitekey: siteKey, theme: 'auto' });
+    }
+  }
+
+  // null  = captcha not active (skip it);
+  // ''    = active but the user hasn't solved it yet (block submit);
+  // token = solved (send it).
+  function _captchaTokenFor(which) {
+    if (!_captchaSiteKey || !window.turnstile) return null;
+    const id = which === 'sso' ? _turnstileSso : _turnstileMain;
+    if (id === null || id === undefined) return null;
+    return window.turnstile.getResponse(id) || '';
+  }
+  function _resetCaptcha(which) {
+    if (!window.turnstile) return;
+    const id = which === 'sso' ? _turnstileSso : _turnstileMain;
+    if (id !== null && id !== undefined) { try { window.turnstile.reset(id); } catch { /* noop */ } }
   }
 
   // ── Register ──────────────────────────────────────────
@@ -758,6 +891,9 @@
         const inp = document.getElementById('reg-token');
         if (grp) grp.style.display = '';
         if (inp) inp.required = true;
+      }
+      if (info && info.captchaEnabled && info.turnstileSiteKey) {
+        _initRegistrationCaptcha(info.turnstileSiteKey);
       }
     } catch { /* ignore */ }
   })();
@@ -777,15 +913,18 @@
     if (password !== confirm) return showError(t('auth.errors.passwords_no_match'));
     if (password.length < 8) return showError(t('auth.errors.password_too_short'));
 
+    const captchaToken = _captchaTokenFor('main');
+    if (captchaToken === '') return showError(t('auth.errors.captcha_incomplete'));
+
     try {
       const res = await fetch('/api/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password, eulaVersion: '2.0', ageVerified: true, registrationToken })
+        body: JSON.stringify({ username, password, eulaVersion: '2.0', ageVerified: true, registrationToken, captchaToken: captchaToken || '' })
       });
 
       const data = await res.json();
-      if (!res.ok) return showError(data.error || t('auth.errors.registration_failed'));
+      if (!res.ok) { _resetCaptcha('main'); return showError(data.error || t('auth.errors.registration_failed')); }
 
       // Derive E2E wrapping key from password (client-side only, never sent to server)
       const e2eWrap = await deriveE2EWrappingKey(password);

@@ -110,10 +110,43 @@ setInterval(() => {
   }
 }, 30 * 60 * 1000);
 
+// ── Global registration velocity limiter (opt-in) ───────
+// Caps how many new accounts can be created server-wide per rolling hour, to
+// blunt a bot wave even when it is spread across many IPs (the per-IP limiter
+// above can't). In-memory, so it resets on restart — same as the others here.
+const _regTimestamps = [];
+function _regCountLastHour() {
+  const cutoff = Date.now() - 3600 * 1000;
+  while (_regTimestamps.length && _regTimestamps[0] < cutoff) _regTimestamps.shift();
+  return _regTimestamps.length;
+}
+
 // ── Input Sanitization ──────────────────────────────────
 function sanitizeString(str, maxLen = 200) {
   if (typeof str !== 'string') return '';
   return str.trim().slice(0, maxLen);
+}
+
+// ── Cloudflare Turnstile verification (opt-in CAPTCHA) ───
+// Verifies a registration challenge token server-side against Cloudflare so a
+// forged or missing token can't pass. Returns true only on a confirmed pass;
+// any error (network, timeout, bad response) returns false = challenge failed.
+async function verifyTurnstile(secret, token, remoteIp) {
+  try {
+    const body = new URLSearchParams({ secret, response: token });
+    if (remoteIp) body.append('remoteip', remoteIp);
+    const resp = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body,
+      signal: AbortSignal.timeout(5000)
+    });
+    if (!resp.ok) return false;
+    const data = await resp.json();
+    return !!(data && data.success === true);
+  } catch {
+    return false;
+  }
 }
 
 // ── SSO Avatar Download ─────────────────────────────────
@@ -207,9 +240,16 @@ router.get('/registration-info', (req, res) => {
     const tokenEnabledRow = db.prepare("SELECT value FROM server_settings WHERE key = 'registration_token_enabled'").get();
     const tokenRow = db.prepare("SELECT value FROM server_settings WHERE key = 'registration_token'").get();
     const requiresToken = !!(tokenEnabledRow && tokenEnabledRow.value === 'true' && tokenRow && tokenRow.value);
-    res.json({ requiresToken });
+    // Opt-in Turnstile CAPTCHA. Only the public site key is exposed (safe by
+    // design); the secret key never leaves the server. Gated on a site key
+    // being present so the page never tries to render a keyless widget.
+    const capEnabledRow = db.prepare("SELECT value FROM server_settings WHERE key = 'registration_captcha_enabled'").get();
+    const siteKeyRow = db.prepare("SELECT value FROM server_settings WHERE key = 'turnstile_site_key'").get();
+    const turnstileSiteKey = (siteKeyRow && typeof siteKeyRow.value === 'string') ? siteKeyRow.value.trim() : '';
+    const captchaEnabled = !!(capEnabledRow && capEnabledRow.value === 'true' && turnstileSiteKey);
+    res.json({ requiresToken, captchaEnabled, turnstileSiteKey: captchaEnabled ? turnstileSiteKey : '' });
   } catch (err) {
-    res.json({ requiresToken: false });
+    res.json({ requiresToken: false, captchaEnabled: false, turnstileSiteKey: '' });
   }
 });
 
@@ -389,6 +429,33 @@ router.post('/register', authLimiter, async (req, res) => {
       }
     }
 
+    // Cloudflare Turnstile CAPTCHA (opt-in). When enabled with a secret key,
+    // the registrant must pass the challenge, verified server-side so a forged
+    // or absent token can't slip through. A blank secret disables enforcement
+    // (misconfiguration), rather than locking everyone out.
+    const capEnabledRow = db.prepare("SELECT value FROM server_settings WHERE key = 'registration_captcha_enabled'").get();
+    if (capEnabledRow && capEnabledRow.value === 'true') {
+      const secretRow = db.prepare("SELECT value FROM server_settings WHERE key = 'turnstile_secret_key'").get();
+      const secret = secretRow && typeof secretRow.value === 'string' ? secretRow.value.trim() : '';
+      if (secret) {
+        const capToken = typeof req.body.captchaToken === 'string' ? req.body.captchaToken : '';
+        if (!capToken) return res.status(400).json({ error: 'Please complete the CAPTCHA.' });
+        const passed = await verifyTurnstile(secret, capToken, req.ip);
+        if (!passed) return res.status(403).json({ error: 'CAPTCHA verification failed. Please try again.' });
+      }
+    }
+
+    // Global registration rate limit (opt-in). Caps new accounts per rolling
+    // hour server-wide to blunt a bot wave spread across many IPs.
+    const rlEnabledRow = db.prepare("SELECT value FROM server_settings WHERE key = 'registration_rate_limit_enabled'").get();
+    if (rlEnabledRow && rlEnabledRow.value === 'true') {
+      const rlRow = db.prepare("SELECT value FROM server_settings WHERE key = 'registration_rate_limit_per_hour'").get();
+      const limit = Math.max(1, parseInt(rlRow && rlRow.value, 10) || 20);
+      if (_regCountLastHour() >= limit) {
+        return res.status(429).json({ error: 'This server is temporarily limiting new sign-ups. Please try again later.' });
+      }
+    }
+
     const existing = db.prepare('SELECT id FROM users WHERE LOWER(username) = LOWER(?)').get(username);
     if (existing) {
       return res.status(400).json({ error: 'Registration could not be completed' });
@@ -412,6 +479,7 @@ router.post('/register', authLimiter, async (req, res) => {
     const result = db.prepare(
       'INSERT INTO users (username, password_hash, is_admin, avatar) VALUES (?, ?, ?, ?)'
     ).run(username, hash, isAdmin, avatarPath);
+    _regTimestamps.push(Date.now()); // feed the opt-in global registration rate limit
 
     // Auto-assign roles flagged as auto_assign to new users
     try {
@@ -523,12 +591,6 @@ router.post('/login', authLimiter, async (req, res) => {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    // Check if user is banned
-    const ban = db.prepare('SELECT reason FROM bans WHERE user_id = ?').get(user.id);
-    if (ban) {
-      return res.status(403).json({ error: 'You have been banned from this server' });
-    }
-
     const valid = await bcrypt.compare(password, user.password_hash);
     // (#5300 DM-preservation) If the original password didn't match, fall
     // back to the temp hash set by an admin reset. Tracking which one matched
@@ -546,6 +608,21 @@ router.post('/login', authLimiter, async (req, res) => {
     }
     if (!okWithOriginal && !usedTemp) {
       return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    // ── Ban check (deferred until AFTER credentials verify) ──────
+    // Kept below the password check on purpose (#5457): the ban reason is
+    // only revealed to whoever actually owns the account, never on a bare
+    // username guess. The client shows the reason and an appeal box; the
+    // /ban-appeal endpoint re-verifies these same credentials before storing.
+    const ban = db.prepare('SELECT reason FROM bans WHERE user_id = ?').get(user.id);
+    if (ban) {
+      return res.status(403).json({
+        error: 'You have been banned from this server',
+        banned: true,
+        reason: (typeof ban.reason === 'string' && ban.reason.trim()) ? ban.reason.trim() : '',
+        canAppeal: true
+      });
     }
 
     // Bootstrap admin from ADMIN_USERNAME env only when NO admin exists
@@ -603,6 +680,67 @@ router.post('/login', authLimiter, async (req, res) => {
     });
   } catch (err) {
     console.error('Login error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ── Ban appeal submission (#5457) ───────────────────────────
+// A banned user proves ownership of the account (same credential check as
+// login) and submits one appeal, which admins see next to the ban in the
+// Banned Users list. Returns the same generic 'Invalid credentials' as login
+// for a bad username/password so it can't be used to probe which accounts
+// exist or are banned. Rate-limited via authLimiter; one active appeal per
+// user (re-submitting overwrites the previous text).
+router.post('/ban-appeal', authLimiter, async (req, res) => {
+  try {
+    const username = sanitizeString(req.body.username, 20);
+    const password = typeof req.body.password === 'string' ? req.body.password : '';
+    const appeal = typeof req.body.appeal === 'string' ? req.body.appeal.trim() : '';
+
+    if (!username || !password) {
+      return res.status(400).json({ error: 'Username and password required' });
+    }
+    if (appeal.length < 1 || appeal.length > 2000) {
+      return res.status(400).json({ error: 'Appeal must be between 1 and 2000 characters' });
+    }
+
+    const db = getDb();
+    const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username);
+    if (!user) return res.status(401).json({ error: 'Invalid credentials' });
+
+    let ok = false;
+    try { ok = await bcrypt.compare(password, user.password_hash); } catch { ok = false; }
+    if (!ok && user.temp_password_hash) {
+      try { ok = await bcrypt.compare(password, user.temp_password_hash); } catch { ok = false; }
+    }
+    if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
+
+    const ban = db.prepare('SELECT id FROM bans WHERE user_id = ?').get(user.id);
+    if (!ban) return res.status(400).json({ error: 'This account is not banned' });
+
+    // One active appeal per user — resubmitting replaces the previous text.
+    db.prepare(
+      'INSERT INTO ban_appeals (user_id, appeal) VALUES (?, ?) ' +
+      'ON CONFLICT(user_id) DO UPDATE SET appeal = excluded.appeal, created_at = CURRENT_TIMESTAMP'
+    ).run(user.id, appeal);
+
+    // Best-effort real-time nudge to any online admin (they check the Banned
+    // Users list to review). Non-fatal if io isn't reachable.
+    try {
+      const io = req.app.get('io');
+      if (io) {
+        const displayName = user.display_name || user.username;
+        for (const [, s] of io.sockets.sockets) {
+          if (s.user && s.user.isAdmin) {
+            s.emit('ban-appeal-received', { userId: user.id, username: displayName });
+          }
+        }
+      }
+    } catch { /* non-critical */ }
+
+    return res.json({ success: true });
+  } catch (err) {
+    console.error('Ban appeal error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });

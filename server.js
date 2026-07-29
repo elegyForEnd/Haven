@@ -1,4 +1,4 @@
-﻿// ── Resolve data directory BEFORE loading .env ────────────
+// ── Resolve data directory BEFORE loading .env ────────────
 const { DATA_DIR, DB_PATH, ENV_PATH, CERTS_DIR, UPLOADS_DIR } = require('./src/paths');
 
 // ── Node.js version guard ─────────────────────────────────
@@ -201,7 +201,7 @@ app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
-      scriptSrc: ["'self'", "'unsafe-eval'", "'wasm-unsafe-eval'", "blob:", "https://www.youtube.com", "https://w.soundcloud.com", "https://unpkg.com"],
+      scriptSrc: ["'self'", "'unsafe-eval'", "'wasm-unsafe-eval'", "blob:", "https://www.youtube.com", "https://w.soundcloud.com", "https://unpkg.com", "https://challenges.cloudflare.com"],  // last host: opt-in Turnstile CAPTCHA on registration
       styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],  // inline styles + Google Fonts
       imgSrc: ["'self'", "data:", "blob:", "https:", "http:"],  // link preview OG images + GIPHY (http: for local/self-hosted services)
       connectSrc: ["'self'", "ws:", "wss:", "https:"],  // Socket.IO + cross-origin health checks
@@ -209,7 +209,7 @@ app.use(helmet({
       fontSrc: ["'self'", "https://fonts.gstatic.com"],  // Google Fonts CDN
       workerSrc: ["'self'", "blob:", "https://unpkg.com"],  // service worker + Ruffle WebAssembly workers
       objectSrc: ["'none'"],
-      frameSrc: ["'self'", "https://open.spotify.com", "https://www.youtube.com", "https://www.youtube-nocookie.com", "https://w.soundcloud.com", "https://player.bilibili.com"],  // Listen Together embeds + game iframes
+      frameSrc: ["'self'", "https://open.spotify.com", "https://www.youtube.com", "https://www.youtube-nocookie.com", "https://w.soundcloud.com", "https://player.bilibili.com", "https://challenges.cloudflare.com"],  // Listen Together embeds + game iframes + Bilibili + Turnstile widget
       baseUri: ["'self'"],
       formAction: ["'self'"],
       frameAncestors: ["'self'"],               // allow mobile app iframe, block third-party clickjacking
