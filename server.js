@@ -79,15 +79,15 @@ webpush.setVapidDetails(vapidEmail, process.env.VAPID_PUBLIC_KEY, process.env.VA
 const { initDatabase } = require('./src/database');
 const { router: authRoutes, authLimiter, verifyToken } = require('./src/auth');
 const { setupSocketHandlers, sanitizeText } = require('./src/socketHandlers');
-const { lookupBilibiliStream } = require('./src/bilibiliMedia');
-const { createBilibiliMediaProxyHandler } = require('./src/bilibiliMediaProxy');
 const {
   cleanupAllBilibiliPlaybackSessions,
+  createBilibiliHlsAssetHandler,
+  createBilibiliMediaProxyHandler,
+  initializeBilibiliHlsStorage,
   lookupBilibiliHlsAsset,
+  lookupBilibiliStream,
   pruneBilibiliPlaybackSessions
-} = require('./src/bilibiliMediaSession');
-const { initializeBilibiliHlsStorage } = require('./src/bilibiliHlsRemux');
-const { createBilibiliHlsAssetHandler } = require('./src/bilibiliHlsRoute');
+} = require('./src/bilibili');
 const { startTunnel, stopTunnel, getTunnelStatus, registerProcessCleanup } = require('./src/tunnel');
 const { startDdns, getDdnsStatus, triggerDdnsNow } = require('./src/ddns');
 const { initFcm } = require('./src/fcm');

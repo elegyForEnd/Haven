@@ -266,7 +266,7 @@ function getBilibiliApiHeaders(includeCredential = true) {
   };
   try {
     if (!includeCredential) return headers;
-    const { getBilibiliRequestCredential } = require('../bilibiliCredentialStore');
+    const { getBilibiliRequestCredential } = require('../bilibili');
     const requestCredential = getBilibiliRequestCredential();
     if (requestCredential.cookieHeader) headers.Cookie = requestCredential.cookieHeader;
   } catch {}

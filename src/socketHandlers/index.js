@@ -13,12 +13,11 @@ const HAVEN_VERSION = require('../../package.json').version;
 const { sanitizeText, utcStamp, isString, isInt, isValidUploadPath, VALID_ROLE_PERMS } = require('./helpers');
 const { resolveSpotifyToYouTube, resolveBilibiliLink, searchYouTube, fetchYouTubePlaylist, extractYouTubeVideoId, resolveMusicMetadata } = require('./musicResolver');
 const {
-  createBilibiliMediaPayload
-} = require('../bilibiliMedia');
-const {
+  createBilibiliMediaPayload,
   ensureBilibiliPlaybackSession,
+  registerBilibiliAdmin,
   releaseBilibiliPlaybackSession
-} = require('../bilibiliMediaSession');
+} = require('../bilibili');
 const createPermissions = require('./permissions');
 
 const { createActivity } = require('../activity');
@@ -31,7 +30,6 @@ const registerUsers      = require('./users');
 const registerModeration = require('./moderation');
 const registerRoles      = require('./roles');
 const registerAdmin      = require('./admin');
-const registerBilibiliAdmin = require('./bilibiliAdmin');
 const registerDrawing    = require('./drawing');
 
 const ADMIN_USERNAME = (process.env.ADMIN_USERNAME || 'admin').toLowerCase();
