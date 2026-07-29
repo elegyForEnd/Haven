@@ -12,17 +12,19 @@ FROM node:22-alpine
 # OpenSSL  → auto-generate self-signed HTTPS certs
 # tini     → proper PID 1 signal handling (clean shutdown)
 # su-exec  → drop root to 'node' user after entrypoint setup
+# ffmpeg  → remux Bilibili DASH into shared fMP4 HLS segments
 # build-base, python3 → compile native modules (better-sqlite3)
 RUN apk update && apk add --no-cache \
-    openssl tini su-exec \
-    build-base python3
+    openssl tini su-exec ffmpeg \
+    build-base python3 && \
+    ffmpeg -version
 
 WORKDIR /app
 
 # Install dependencies first (layer caching — only re-runs when package.json changes)
 COPY package*.json ./
 RUN npm ci --omit=dev && \
-    # Remove build tools after native modules are compiled (saves ~150 MB)
+    # Remove build-only packages after native modules are compiled.
     apk del build-base python3 && \
     rm -rf /root/.cache /tmp/*
 
@@ -40,7 +42,7 @@ ENV PORT=3000 \
     NODE_ENV=production
 
 # Create data directory; give ownership to non-root 'node' user
-RUN mkdir -p /data/certs /data/uploads && chown -R node:node /app /data
+RUN mkdir -p /data/certs /data/uploads /data/temp/bilibili-hls && chown -R node:node /app /data
 
 USER root
 EXPOSE 3000 3001

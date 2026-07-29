@@ -59,6 +59,21 @@
   gap: 6px;
 }
 .music-panel-controls .stream-vol-slider { width: 80px; }
+.music-quality-select {
+  height: 26px;
+  min-width: 68px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 11px;
+  cursor: pointer;
+}
+.music-quality-select:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
 
 /* Seek slider + time labels */
 .music-seek-slider {
@@ -109,8 +124,41 @@
   overflow: hidden;
 }
 .music-embed-bilibili .music-embed-wrapper,
-.music-embed-bilibili iframe {
+.music-embed-bilibili iframe,
+.music-embed-bilibili .music-bilibili-video {
   height: 100% !important;
+}
+.bilibili-native-wrapper {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  background: #000;
+}
+.music-bilibili-video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+}
+.bilibili-native-wrapper audio {
+  display: none;
+}
+.bilibili-sync-unlock {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  margin: auto;
+  width: max-content;
+  height: 42px;
+  max-width: calc(100% - 32px);
+  padding: 0 18px;
+  border: 1px solid rgba(255,255,255,0.25);
+  border-radius: 8px;
+  background: rgba(20,20,28,0.9);
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
 }
 .music-queue-modal { max-width: 780px; }
 .music-queue-table-wrap {
@@ -342,7 +390,8 @@
   width: 100%;
   height: 100%;
 }
-.music-pip-embed iframe {
+.music-pip-embed iframe,
+.music-pip-embed .music-bilibili-video {
   width: 100%;
   height: 100%;
   border: none;

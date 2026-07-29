@@ -32,7 +32,10 @@ services:
       - proxy
 
   haven:
-    image: ghcr.io/ancsemi/haven:latest
+    image: haven-local:dev
+    build:
+      context: ../../..
+      dockerfile: Dockerfile
     container_name: haven
     restart: unless-stopped
     volumes:
@@ -40,6 +43,16 @@ services:
     environment:
       - PORT=3000
       - HOST=0.0.0.0
+      - FFMPEG_PATH=/usr/bin/ffmpeg
+      - BILIBILI_VIDEO_MAX_HEIGHT=1080
+      - BILIBILI_HLS_ENABLED=true
+      - BILIBILI_HLS_MAX_CONCURRENT=2
+      - BILIBILI_HLS_SEGMENT_SECONDS=4
+      - BILIBILI_HLS_MAX_SESSION_BYTES=1073741824
+      - BILIBILI_HLS_MAX_TOTAL_BYTES=5368709120
+      - BILIBILI_PROXY_MAX_CONCURRENT=24
+      - BILIBILI_PROXY_RESERVED_AUDIO=8
+      - BILIBILI_PROXY_TIMEOUT_MS=30000
       - SERVER_NAME=${SERVER_NAME}
       - ADMIN_USERNAME=${ADMIN_USERNAME}
       - TURN_URL=turn:${DOMAIN}:3478

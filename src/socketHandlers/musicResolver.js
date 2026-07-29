@@ -258,6 +258,21 @@ function isBilibiliHost(hostname) {
   return host === 'b23.tv' || host.endsWith('.b23.tv') || host === 'bilibili.com' || host.endsWith('.bilibili.com');
 }
 
+function getBilibiliApiHeaders(includeCredential = true) {
+  const headers = {
+    'User-Agent': YT_UA,
+    Referer: 'https://www.bilibili.com/',
+    Origin: 'https://www.bilibili.com'
+  };
+  try {
+    if (!includeCredential) return headers;
+    const { getBilibiliRequestCredential } = require('../bilibiliCredentialStore');
+    const requestCredential = getBilibiliRequestCredential();
+    if (requestCredential.cookieHeader) headers.Cookie = requestCredential.cookieHeader;
+  } catch {}
+  return headers;
+}
+
 function extractBilibiliVideoInfo(url) {
   if (typeof url !== 'string') return null;
   try {
@@ -288,10 +303,15 @@ async function expandBilibiliShortUrl(url) {
     if (current.hostname.toLowerCase() !== 'b23.tv' && !current.hostname.toLowerCase().endsWith('.b23.tv')) {
       return current.toString();
     }
+    const usesSecureDefaultPort = current.protocol === 'https:'
+      && (!current.port || current.port === '443')
+      && !current.username
+      && !current.password;
+    if (!usesSecureDefaultPort) return null;
     try {
       const response = await fetch(current, {
         redirect: 'manual',
-        headers: { 'User-Agent': YT_UA },
+        headers: getBilibiliApiHeaders(false),
         signal: AbortSignal.timeout(5000)
       });
       if (response.status < 300 || response.status >= 400) return current.toString();
@@ -299,6 +319,10 @@ async function expandBilibiliShortUrl(url) {
       if (!location) return null;
       const next = new URL(location, current);
       if (!isBilibiliHost(next.hostname)) return null;
+      if (next.protocol !== 'https:'
+        || (next.port && next.port !== '443')
+        || next.username
+        || next.password) return null;
       current = next;
     } catch {
       return null;
@@ -316,7 +340,7 @@ async function resolveBilibiliLink(url) {
   try {
     const response = await fetch(
       `https://api.bilibili.com/x/web-interface/view?bvid=${encodeURIComponent(info.bvid)}`,
-      { headers: { 'User-Agent': YT_UA, Referer: 'https://www.bilibili.com/' }, signal: AbortSignal.timeout(5000) }
+      { headers: getBilibiliApiHeaders(), signal: AbortSignal.timeout(5000) }
     );
     if (!response.ok) return { url: canonicalUrl, title: '', duration: '' };
     const payload = await response.json();

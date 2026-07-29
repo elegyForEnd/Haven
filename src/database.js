@@ -143,6 +143,16 @@ function initDatabase() {
       value TEXT NOT NULL
     );
 
+    -- Server-wide encrypted credentials. Values in this table must never be
+    -- returned by the generic server-settings API or broadcast to clients.
+    CREATE TABLE IF NOT EXISTS server_secrets (
+      key TEXT PRIMARY KEY,
+      encrypted_value TEXT NOT NULL,
+      metadata TEXT DEFAULT NULL,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+    );
+
     CREATE TABLE IF NOT EXISTS user_preferences (
       user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       key TEXT NOT NULL,

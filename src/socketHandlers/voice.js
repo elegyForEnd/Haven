@@ -6,7 +6,7 @@ module.exports = function register(socket, ctx) {
   const { io, db, state, userHasPermission, getUserEffectiveLevel, getUserHighestRole,
           broadcastVoiceUsers, emitOnlineUsers, handleVoiceLeave, touchVoiceActivity,
           pruneStaleVoiceUsers,
-          getActiveMusicSyncState, getMusicQueuePayload } = ctx;
+          getMusicQueuePayload, emitMusicSharedToSocket } = ctx;
   const { channelUsers, voiceUsers, voiceLastActivity, activeMusic,
           activeScreenSharers, activeWebcamUsers, streamViewers, pendingTempDelete,
           pendingVoiceLeave } = state;
@@ -165,15 +165,8 @@ module.exports = function register(socket, ctx) {
     // Send active music state to late joiner
     const music = activeMusic.get(code);
     if (music) {
-      socket.emit('music-shared', {
-        userId: music.userId,
-        username: music.username,
-        url: music.url,
-        title: music.title,
-        trackId: music.id,
-        channelCode: code,
-        resolvedFrom: music.resolvedFrom,
-        syncState: getActiveMusicSyncState(music)
+      emitMusicSharedToSocket(socket, code, music).catch(error => {
+        socket.emit('error-msg', `Could not load Bilibili media: ${String(error?.message || 'resolution failed').slice(0, 200)}`);
       });
     }
     socket.emit('music-queue-update', getMusicQueuePayload(code));
@@ -825,15 +818,8 @@ module.exports = function register(socket, ctx) {
 
     const music = activeMusic.get(code);
     if (music) {
-      socket.emit('music-shared', {
-        userId: music.userId,
-        username: music.username,
-        url: music.url,
-        title: music.title,
-        trackId: music.id,
-        channelCode: code,
-        resolvedFrom: music.resolvedFrom,
-        syncState: getActiveMusicSyncState(music)
+      emitMusicSharedToSocket(socket, code, music).catch(error => {
+        socket.emit('error-msg', `Could not load Bilibili media: ${String(error?.message || 'resolution failed').slice(0, 200)}`);
       });
     }
     socket.emit('music-queue-update', getMusicQueuePayload(code));

@@ -442,7 +442,21 @@ async _toggleScreenShare() {
       // Show audio/no-audio badge
       if (this.voice.screenHasAudio) {
         this._handleScreenAudio(this.user.id);
-        this._showToast(t('voice.screen_share_started_audio'), 'success');
+        this._applyBrowserOwnAudioRestrictionBadge();
+
+        const ownAudioRestrictionStatus = this.voice.screenOwnAudioRestrictionStatus;
+        const displaySurface = this.voice.screenDisplaySurface;
+        const isWholeScreenCapture = displaySurface === 'monitor' || !displaySurface;
+        if (ownAudioRestrictionStatus === 'applied') {
+          this._showToast(t('voice.screen_share_started_audio_filtered'), 'success');
+        } else if (
+          isWholeScreenCapture &&
+          (ownAudioRestrictionStatus === 'unsupported' || ownAudioRestrictionStatus === 'not-applied')
+        ) {
+          this._showToast(t('voice.screen_share_audio_filter_unavailable'), 'warning', null, 8000);
+        } else {
+          this._showToast(t('voice.screen_share_started_audio'), 'success');
+        }
       } else {
         this._handleScreenNoAudio(this.user.id);
         this._showToast(t('voice.screen_share_started_no_audio'), 'info');
@@ -1656,8 +1670,8 @@ _handleScreenAudio(userId) {
 },
 
 // Update the streamer's own audio badge to reflect the actual capture mode
-// reported by the desktop app. Browser users won't have this info — they'll
-// just see the generic "🔊 Audio" badge.
+// reported by the desktop app. Browser capture verification is handled
+// separately by _applyBrowserOwnAudioRestrictionBadge.
 _applyShareAudioModeBadge(modeInfo) {
   if (!modeInfo) return;
   const tile = document.getElementById(`screen-tile-${this.user?.id || 'self'}`);
@@ -1697,6 +1711,38 @@ _applyShareAudioModeBadge(modeInfo) {
   badge.title = tip;
   // Also expose on the badge for tooltip-aware UIs
   badge.setAttribute('data-mode', modeInfo.applied);
+},
+
+// Reflect the browser's verified restrictOwnAudio result on the local share
+// badge. Remote viewers do not receive this browser-only track setting, so the
+// badge intentionally applies only to the streamer's own tile.
+_applyBrowserOwnAudioRestrictionBadge() {
+  const restrictionStatus = this.voice?.screenOwnAudioRestrictionStatus;
+  const displaySurface = this.voice?.screenDisplaySurface;
+  const isWholeScreenCapture = displaySurface === 'monitor' || !displaySurface;
+  const restrictionWasVerified = restrictionStatus === 'applied';
+  const restrictionCouldNotBeVerified =
+    restrictionStatus === 'unsupported' || restrictionStatus === 'not-applied';
+  if (!restrictionWasVerified && !(isWholeScreenCapture && restrictionCouldNotBeVerified)) return;
+
+  const tile = document.getElementById(`screen-tile-${this.user?.id || 'self'}`);
+  const badge = tile?.querySelector('.stream-audio-badge');
+  if (!badge) return;
+
+  badge.classList.remove('mode-system-clean', 'mode-loopback');
+
+  if (restrictionWasVerified) {
+    badge.textContent = t('voice.screen_audio_badge_filtered');
+    badge.classList.add('mode-system-clean');
+    badge.title = t('voice.screen_audio_filtered_tip');
+    badge.setAttribute('data-mode', 'browser-own-audio-filtered');
+    return;
+  }
+
+  badge.textContent = t('voice.screen_audio_badge_unverified');
+  badge.classList.add('mode-loopback');
+  badge.title = t('voice.screen_audio_unverified_tip');
+  badge.setAttribute('data-mode', 'browser-own-audio-unverified');
 },
 
 _handleScreenNoAudio(userId) {
@@ -2156,8 +2202,9 @@ _handleMusicShared(data) {
     this.switchChannel(this.voice.currentChannel);
   }
   const effectiveSyncState = this._getEffectiveMusicSyncState(data.syncState);
-  const embedUrl = this._getMusicEmbed(data.url, effectiveSyncState?.positionSeconds || 0);
-  if (!embedUrl) return;
+  const isBilibili = data.resolvedFrom === 'bilibili';
+  const embedUrl = isBilibili ? null : this._getMusicEmbed(data.url, effectiveSyncState?.positionSeconds || 0);
+  if (!isBilibili && !embedUrl) return;
   const platform = this._getMusicPlatform(data.url);
   const panel = document.getElementById('music-panel');
   const container = document.getElementById('music-embed-container');
@@ -2165,6 +2212,7 @@ _handleMusicShared(data) {
   if (this.voice && this.voice.inVoice) this._updateVoiceButtons(true);
 
   // Clean up previous player references
+  this._destroyBilibiliPlayer?.();
   this._musicYTPlayer = null;
   this._musicSCWidget = null;
   this._musicPlatform = platform ? platform.name : null;
@@ -2175,9 +2223,11 @@ _handleMusicShared(data) {
   this._musicRequestorId = data.userId || null;
   this._setMusicActivityHint('');
   this._pendingMusicSyncState = data.syncState || null;
+  this._musicAuthoritativeSyncState = data.syncState || null;
   this._musicSuppressBroadcastUntil = 0;
   this._musicLastTrackedPosition = null;
   this._musicLastTrackedAt = 0;
+  this._musicLastCorrectionAt = 0;
   this._musicLastSeekBroadcastAt = 0;
   this._removeMusicIndicator();
 
@@ -2191,14 +2241,22 @@ _handleMusicShared(data) {
   // Other providers keep direct interaction enabled for their native controls.
   const isSpotify = data.url.includes('spotify.com');
   const isYouTube = data.url.includes('youtube.com') || data.url.includes('youtu.be') || data.url.includes('music.youtube.com');
-  const isBilibili = data.url.includes('bilibili.com');
   const needsOverlay = !isSpotify && !isYouTube && !isBilibili;
   container.classList.toggle('music-embed-bilibili', isBilibili);
   // YouTube embeds: origin param tells Google which page hosts the iframe.
   // We skip referrerpolicy=no-referrer so the IFrame API (enablejsapi) can
   // communicate with the parent window; the origin= param already handles
   // the "Video unavailable" issue that self-hosted instances used to trigger.
-  container.innerHTML = `<div class="music-embed-wrapper"><iframe id="music-iframe" src="${embedUrl}" width="100%" height="${iframeH}" frameborder="0" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture" loading="lazy"></iframe>${needsOverlay ? '<div class="music-embed-overlay"></div>' : ''}</div>`;
+  if (isBilibili) {
+    const initialVolume = parseInt(localStorage.getItem('haven_music_volume') ?? '80');
+    if (!this._initBilibiliPlayer?.(container, data.media, initialVolume)) {
+      this._showToast('Bilibili media streams are unavailable for this video.', 'error');
+      this._hideMusicPanel();
+      return;
+    }
+  } else {
+    container.innerHTML = `<div class="music-embed-wrapper"><iframe id="music-iframe" src="${embedUrl}" width="100%" height="${iframeH}" frameborder="0" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture" loading="lazy"></iframe>${needsOverlay ? '<div class="music-embed-overlay"></div>' : ''}</div>`;
+  }
   if (data.resolvedFrom === 'spotify') {
     label.textContent = `🎵 🟢 Spotify (via YouTube) — shared by ${data.username || 'someone'}`;
   } else {
@@ -2206,43 +2264,70 @@ _handleMusicShared(data) {
   }
   panel.style.display = 'flex';
 
+  const qualitySelect = document.getElementById('music-quality-select');
+  if (qualitySelect) {
+    qualitySelect.innerHTML = '';
+    qualitySelect.style.display = isBilibili ? '' : 'none';
+    if (!isBilibili) this._musicBilibiliAvailableHeights = [];
+    if (isBilibili) {
+      const availableVideoHeights = [...new Set(
+        (Array.isArray(data.media?.availableVideoHeights) ? data.media.availableVideoHeights : [])
+          .map(Number)
+          .filter(videoHeight => Number.isInteger(videoHeight) && videoHeight >= 144 && videoHeight <= 1080)
+      )].sort((leftHeight, rightHeight) => leftHeight - rightHeight);
+      const selectedVideoHeight = Number(data.media?.selectedVideoHeight) || 360;
+      if (!availableVideoHeights.includes(selectedVideoHeight)) availableVideoHeights.push(selectedVideoHeight);
+      availableVideoHeights.sort((leftHeight, rightHeight) => leftHeight - rightHeight);
+      for (const videoHeight of availableVideoHeights) {
+        const option = document.createElement('option');
+        option.value = String(videoHeight);
+        option.textContent = videoHeight === 360 ? '360p (default)' : `${videoHeight}p`;
+        qualitySelect.appendChild(option);
+      }
+      this._musicBilibiliAvailableHeights = availableVideoHeights;
+      this._musicBilibiliSelectedHeight = selectedVideoHeight;
+      qualitySelect.value = String(selectedVideoHeight);
+      qualitySelect.disabled = !this._canControlMusic() || availableVideoHeights.length < 2;
+      qualitySelect.title = this._canControlMusic()
+        ? 'Change the shared Bilibili room quality'
+        : 'Only the requestor or a moderator can change video quality';
+    }
+  }
+
   // Update play/pause button — hide for platforms without an external control API
   const ppBtn = document.getElementById('music-play-pause-btn');
-  const hidePlaybackControls = isSpotify || isBilibili;
+  const hidePlaybackControls = isSpotify;
   if (ppBtn) {
     ppBtn.textContent = hidePlaybackControls ? '' : (data.syncState?.isPlaying === false ? '▶' : '⏸');
     ppBtn.style.display = hidePlaybackControls ? 'none' : '';
   }
 
-  // Seek bar — hide for platforms without position tracking
+  // Spotify does not expose reliable external seek controls. Other providers,
+  // including Bilibili, keep the shared progress slider available.
   const seekSlider = document.getElementById('music-seek-slider');
   const timeCur = document.getElementById('music-time-current');
   const timeDur = document.getElementById('music-time-duration');
-  const hideSeek = isSpotify || isBilibili;
-  if (seekSlider) seekSlider.style.display = hideSeek ? 'none' : '';
-  if (timeCur) timeCur.style.display = hideSeek ? 'none' : '';
-  if (timeDur) timeDur.style.display = hideSeek ? 'none' : '';
+  const hideSeekSlider = isSpotify;
+  const hideTimeLabels = isSpotify;
+  if (seekSlider) seekSlider.style.display = hideSeekSlider ? 'none' : '';
+  if (timeCur) timeCur.style.display = hideTimeLabels ? 'none' : '';
+  if (timeDur) timeDur.style.display = hideTimeLabels ? 'none' : '';
 
   // Apply saved volume
   const savedVol = parseInt(localStorage.getItem('haven_music_volume') ?? '80');
   document.getElementById('music-volume-slider').value = savedVol;
 
-  // The official Bilibili player and Spotify embed expose volume only inside their iframe.
+  // Spotify exposes volume only inside its iframe.
   const volSlider = document.getElementById('music-volume-slider');
   const muteBtn = document.getElementById('music-mute-btn');
-  if (isBilibili) {
-    if (volSlider) volSlider.style.display = 'none';
-    if (muteBtn) muteBtn.style.display = 'none';
+  if (volSlider) volSlider.style.display = '';
+  if (muteBtn) muteBtn.style.display = '';
+  if (isSpotify) {
+    if (volSlider) { volSlider.disabled = true; volSlider.title = t('media.spotify_volume_hint'); }
+    if (muteBtn) { muteBtn.disabled = true; muteBtn.title = t('media.spotify_volume_hint'); }
   } else {
-    if (volSlider) volSlider.style.display = '';
-    if (muteBtn) muteBtn.style.display = '';
-    if (isSpotify) {
-      if (volSlider) { volSlider.disabled = true; volSlider.title = t('media.spotify_volume_hint'); }
-      if (muteBtn) { muteBtn.disabled = true; muteBtn.title = t('media.spotify_volume_hint'); }
-    } else {
-      if (volSlider) { volSlider.disabled = false; volSlider.title = ''; }
-      if (muteBtn) { muteBtn.disabled = false; muteBtn.title = t('media.mute_unmute'); }
-    }
+    if (volSlider) { volSlider.disabled = false; volSlider.title = ''; }
+    if (muteBtn) { muteBtn.disabled = false; muteBtn.title = t('media.mute_unmute'); }
   }
 
   // Show next button for SoundCloud (has internal tracks) or when the queue has items
@@ -2274,6 +2359,28 @@ _canControlMusic() {
     this._musicRequestorId === this.user?.id ||
     this._hasPerm('manage_music_queue');
 },
+
+_setBilibiliRoomQuality(videoHeight) {
+  if (!this.voice?.currentChannel || !this._musicTrackId || !this._canControlMusic()) return;
+  const requestedVideoHeight = Number(videoHeight);
+  if (!Number.isInteger(requestedVideoHeight)
+    || !this._musicBilibiliAvailableHeights?.includes(requestedVideoHeight)) return;
+  const qualitySelect = document.getElementById('music-quality-select');
+  if (qualitySelect) qualitySelect.disabled = true;
+  const requestId = Number(this._musicQualityRequestCounter || 0) + 1;
+  this._musicQualityRequestCounter = requestId;
+  this._pendingMusicQualityRequest = {
+    requestId,
+    previousVideoHeight: Number(this._musicBilibiliSelectedHeight) || 360
+  };
+  this._setMusicActivityHint(`Changing room video quality to ${requestedVideoHeight}p...`);
+  this.socket.emit('music-set-quality', {
+    code: this.voice.currentChannel,
+    trackId: this._musicTrackId,
+    requestId,
+    videoHeight: requestedVideoHeight
+  });
+},
 //Music control permission validation
 _applyMusicControlPermissions() {
   const allowed = this._canControlMusic();
@@ -2282,6 +2389,7 @@ _applyMusicControlPermissions() {
   const seekSlider = document.getElementById('music-seek-slider');
   const nextBtn = document.getElementById('music-next-btn');
   const stopBtn = document.getElementById('music-stop-btn');
+  const qualitySelect = document.getElementById('music-quality-select');
   const pipPpBtn = document.getElementById('music-pip-pp');
   const pipStopBtn = document.getElementById('music-pip-close');
   if (ppBtn) {
@@ -2299,6 +2407,13 @@ _applyMusicControlPermissions() {
   if (stopBtn) {
     stopBtn.disabled = !allowed;
     stopBtn.title = allowed ? 'Close / stop music' : restricted;
+  }
+  if (qualitySelect) {
+    const hasMultipleQualities = (this._musicBilibiliAvailableHeights?.length || 0) > 1;
+    qualitySelect.disabled = !allowed || !hasMultipleQualities;
+    qualitySelect.title = allowed
+      ? 'Change the shared Bilibili room quality'
+      : restricted;
   }
   if (pipPpBtn) {
     pipPpBtn.disabled = !allowed;
@@ -2506,6 +2621,10 @@ _getEffectiveMusicSyncState(syncState) {
 },
 
 _withMusicTiming(callback) {
+  if (this._musicBiliPlayer) {
+    callback(this._musicBiliPlayer.getCurrentTime(), this._musicBiliPlayer.getDuration());
+    return;
+  }
   if (this._musicYTPlayer && this._musicYTPlayer.getCurrentTime && this._musicYTPlayer.getDuration) {
     const positionSeconds = this._musicYTPlayer.getCurrentTime() || 0;
     const durationSeconds = this._musicYTPlayer.getDuration() || 0;
@@ -2524,6 +2643,10 @@ _withMusicTiming(callback) {
 },
 
 _withMusicDuration(callback) {
+  if (this._musicBiliPlayer) {
+    callback(this._musicBiliPlayer.getDuration());
+    return;
+  }
   if (this._musicYTPlayer && this._musicYTPlayer.getDuration) {
     callback(this._musicYTPlayer.getDuration() || 0);
     return;
@@ -2568,6 +2691,12 @@ _restoreMusicSyncStateAfterMove(syncState) {
 _emitMusicControl(action) {
   if (!this.voice || !this.voice.inVoice) return;
   this._withMusicTiming((positionSeconds, durationSeconds) => {
+    this._musicAuthoritativeSyncState = {
+      isPlaying: action === 'play' ? true : action === 'pause' ? false : !!this._musicPlaying,
+      positionSeconds,
+      durationSeconds,
+      updatedAt: Date.now()
+    };
     this.socket.emit('music-control', {
       code: this.voice.currentChannel,
       action,
@@ -2593,6 +2722,12 @@ _emitMusicFinished(isSkip = false) {
 _emitMusicSeek(positionSeconds, durationSeconds) {
   if (!this.voice || !this.voice.inVoice) return;
   const pct = durationSeconds > 0 ? (positionSeconds / durationSeconds) * 100 : undefined;
+  this._musicAuthoritativeSyncState = {
+    isPlaying: !!this._musicPlaying,
+    positionSeconds,
+    durationSeconds,
+    updatedAt: Date.now()
+  };
   this.socket.emit('music-seek', {
     code: this.voice.currentChannel,
     position: pct,
@@ -2606,7 +2741,9 @@ _emitMusicSeek(positionSeconds, durationSeconds) {
 
 _seekMusicToSeconds(seconds) {
   try {
-    if (this._musicYTPlayer && this._musicYTPlayer.seekTo) {
+    if (this._musicBiliPlayer) {
+      this._musicBiliPlayer.seekTo(Math.max(0, seconds));
+    } else if (this._musicYTPlayer && this._musicYTPlayer.seekTo) {
       this._musicYTPlayer.seekTo(Math.max(0, seconds), true);
     } else if (this._musicSCWidget) {
       this._musicSCWidget.seekTo(Math.max(0, seconds) * 1000);
@@ -2616,9 +2753,14 @@ _seekMusicToSeconds(seconds) {
 
 _applyMusicSyncState(syncState) {
   if (!syncState) return;
+  this._musicAuthoritativeSyncState = syncState;
   const effectiveState = this._getEffectiveMusicSyncState(syncState);
-  if (!this._musicYTPlayer && !this._musicSCWidget) {
-    this._pendingMusicSyncState = effectiveState;
+  if (!this._musicBiliPlayer && !this._musicYTPlayer && !this._musicSCWidget) {
+    this._pendingMusicSyncState = syncState;
+    return;
+  }
+  if (this._musicBiliPlayer && this._musicBiliPlayer.isReady?.() === false) {
+    this._pendingMusicSyncState = syncState;
     return;
   }
   this._pendingMusicSyncState = null;
@@ -2871,7 +3013,9 @@ _musicToggleShuffle() {
 
 _playMusicEmbed() {
   try {
-    if (this._musicYTPlayer && this._musicYTPlayer.playVideo) {
+    if (this._musicBiliPlayer) {
+      this._musicBiliPlayer.play().catch(() => {});
+    } else if (this._musicYTPlayer && this._musicYTPlayer.playVideo) {
       this._musicYTPlayer.playVideo();
     } else if (this._musicSCWidget) {
       this._musicSCWidget.play();
@@ -2889,7 +3033,9 @@ _playMusicEmbed() {
 
 _pauseMusicEmbed() {
   try {
-    if (this._musicYTPlayer && this._musicYTPlayer.pauseVideo) {
+    if (this._musicBiliPlayer) {
+      this._musicBiliPlayer.pause();
+    } else if (this._musicYTPlayer && this._musicYTPlayer.pauseVideo) {
       this._musicYTPlayer.pauseVideo();
     } else if (this._musicSCWidget) {
       this._musicSCWidget.pause();
@@ -2906,6 +3052,7 @@ _pauseMusicEmbed() {
 
 _hideMusicPanel() {
   this._stopMusicTimeTracking();
+  this._destroyBilibiliPlayer?.();
   // Clean up PiP overlay if active
   if (this._musicPip) {
     this._musicPip.remove();
@@ -2919,6 +3066,7 @@ _hideMusicPanel() {
   this._removeMusicIndicator();
   this._musicActive = false;
   this._pendingMusicSyncState = null;
+  this._musicAuthoritativeSyncState = null;
   this._musicTrackId = null;
   this._musicRequestorId = null;
 },
@@ -2973,9 +3121,9 @@ _popOutMusicPlayer() {
       </div>
       <div class="music-pip-embed" id="music-pip-embed"></div>
       <div class="music-pip-controls">
-        <button class="music-pip-btn" id="music-pip-pp" title="Play/Pause"${isBilibili ? ' style="display:none"' : ''}>${playing ? '⏸' : '▶'}</button>
-        <span class="music-pip-vol-icon" id="music-pip-mute" title="Mute"${isBilibili ? ' style="display:none"' : ''}>🔊</span>
-        <input type="range" class="music-pip-vol" id="music-pip-vol" min="0" max="100" value="${volume}"${isBilibili ? ' style="display:none"' : ''}>
+        <button class="music-pip-btn" id="music-pip-pp" title="Play/Pause">${playing ? '⏸' : '▶'}</button>
+        <span class="music-pip-vol-icon" id="music-pip-mute" title="Mute">🔊</span>
+        <input type="range" class="music-pip-vol" id="music-pip-vol" min="0" max="100" value="${volume}">
         <span class="pip-opacity-divider"></span>
         <span class="music-pip-vol-icon" id="music-pip-opacity-icon" title="Window opacity">👁</span>
         <input type="range" class="music-pip-vol pip-opacity-slider" id="music-pip-opacity" min="20" max="100" value="${savedOpacity}">
@@ -3162,7 +3310,9 @@ _setMusicVolume(vol) {
   if (muteBtn) muteBtn.textContent = vol === 0 ? '🔇' : '🔊';
   // Apply to active player
   try {
-    if (this._musicYTPlayer && this._musicYTPlayer.setVolume) {
+    if (this._musicBiliPlayer) {
+      this._musicBiliPlayer.setVolume(vol);
+    } else if (this._musicYTPlayer && this._musicYTPlayer.setVolume) {
       this._musicYTPlayer.setVolume(vol);
     } else if (this._musicSCWidget) {
       this._musicSCWidget.setVolume(vol);
@@ -3188,7 +3338,10 @@ _toggleMusicMute() {
 // ── Seek bar & time tracking ──────────────────────────
 _seekMusic(pct) {
   try {
-    if (this._musicYTPlayer && this._musicYTPlayer.getDuration) {
+    if (this._musicBiliPlayer) {
+      const dur = this._musicBiliPlayer.getDuration();
+      if (Number.isFinite(dur) && dur > 0) this._musicBiliPlayer.seekTo(dur * pct / 100);
+    } else if (this._musicYTPlayer && this._musicYTPlayer.getDuration) {
       const dur = this._musicYTPlayer.getDuration();
       if (dur > 0) this._seekMusicToSeconds(dur * pct / 100);
     } else if (this._musicSCWidget) {
@@ -3204,11 +3357,43 @@ _startMusicTimeTracking() {
   const seekSlider = document.getElementById('music-seek-slider');
   const curEl = document.getElementById('music-time-current');
   const durEl = document.getElementById('music-time-duration');
-  const fmt = (s) => { const m = Math.floor(s / 60); return `${m}:${String(Math.floor(s % 60)).padStart(2, '0')}`; };
+  const fmt = (seconds) => {
+    const safeSeconds = Number.isFinite(Number(seconds)) ? Math.max(0, Number(seconds)) : 0;
+    const minutes = Math.floor(safeSeconds / 60);
+    return `${minutes}:${String(Math.floor(safeSeconds % 60)).padStart(2, '0')}`;
+  };
 
   this._musicTimeInterval = setInterval(() => {
     try {
-      if (this._musicYTPlayer && this._musicYTPlayer.getCurrentTime && this._musicYTPlayer.getDuration) {
+      if (this._musicBiliPlayer) {
+        const currentTime = Number(this._musicBiliPlayer.getCurrentTime());
+        const duration = Number(this._musicBiliPlayer.getDuration());
+        const cur = Number.isFinite(currentTime) ? Math.max(0, currentTime) : 0;
+        const dur = Number.isFinite(duration) && duration > 0 ? duration : 0;
+        const now = Date.now();
+        if (curEl) curEl.textContent = fmt(cur);
+        if (durEl) durEl.textContent = fmt(dur);
+        if (seekSlider && !this._musicSeeking && dur > 0) {
+          seekSlider.value = Math.max(0, Math.min(100, cur / dur * 100)).toFixed(1);
+        }
+        const authoritative = this._getEffectiveMusicSyncState(this._musicAuthoritativeSyncState);
+        const authoritativePosition = Number(authoritative?.positionSeconds);
+        const synchronizationDrift = Math.abs(cur - authoritativePosition);
+        const playerIsBuffering = this._musicBiliPlayer.isBuffering?.() === true;
+        const correctionTargetIsBuffered = this._musicBiliPlayer.canSeekTo?.(authoritativePosition) === true;
+        const correctionCooldownMs = synchronizationDrift > 8 ? 5000 : 8000;
+        if (authoritative?.isPlaying && !this._musicSeeking && !this._shouldSuppressMusicBroadcasts()
+          && Number.isFinite(authoritativePosition)
+          && !playerIsBuffering
+          && now - Number(this._musicLastCorrectionAt || 0) > correctionCooldownMs
+          && synchronizationDrift > 1.5
+          && (correctionTargetIsBuffered || synchronizationDrift > 8)) {
+          this._musicBiliPlayer.seekTo(authoritativePosition);
+          this._musicLastCorrectionAt = now;
+        }
+        this._musicLastTrackedPosition = cur;
+        this._musicLastTrackedAt = now;
+      } else if (this._musicYTPlayer && this._musicYTPlayer.getCurrentTime && this._musicYTPlayer.getDuration) {
         const cur = this._musicYTPlayer.getCurrentTime() || 0;
         const dur = this._musicYTPlayer.getDuration() || 0;
         const now = Date.now();
@@ -3259,6 +3444,7 @@ _stopMusicTimeTracking() {
   if (durEl) durEl.textContent = '0:00';
   this._musicLastTrackedPosition = null;
   this._musicLastTrackedAt = 0;
+  this._musicLastCorrectionAt = 0;
 },
 
 _getMusicEmbed(url, startSeconds = 0) {
@@ -3273,18 +3459,13 @@ _getMusicEmbed(url, startSeconds = 0) {
     const parsed = new URL(url);
     const host = parsed.hostname.toLowerCase();
     if (host === 'b23.tv' || host.endsWith('.b23.tv')) {
-      // The server expands short links before broadcasting the playable URL.
-      return 'https://player.bilibili.com/player.html';
+      return 'bilibili-native';
     }
     if (host === 'bilibili.com' || host.endsWith('.bilibili.com')) {
       const match = parsed.pathname.match(/\/video\/(BV[0-9A-Za-z]{10})(?:\/|$)/i);
       const queryBvid = parsed.searchParams.get('bvid');
       const bvid = match?.[1] || (/^BV[0-9A-Za-z]{10}$/i.test(queryBvid || '') ? queryBvid : null);
-      if (bvid) {
-        const page = Math.max(1, Number.parseInt(parsed.searchParams.get('p') || '1', 10) || 1);
-        const start = Math.max(0, Math.floor(Number(startSeconds) || 0));
-        return `https://player.bilibili.com/player.html?bvid=${encodeURIComponent(bvid)}&p=${page}&autoplay=1&danmaku=0&t=${start}`;
-      }
+      if (bvid) return 'bilibili-native';
     }
   } catch {}
   if (url.includes('soundcloud.com/')) {

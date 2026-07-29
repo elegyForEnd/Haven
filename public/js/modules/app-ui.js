@@ -1082,6 +1082,9 @@ _setupUI() {
   document.getElementById('music-popout-btn').addEventListener('click', () => this._popOutMusicPlayer());
   document.getElementById('music-play-pause-btn').addEventListener('click', () => this._toggleMusicPlayPause());
   document.getElementById('music-next-btn').addEventListener('click', () => this._musicTrackControl('next'));
+  document.getElementById('music-quality-select')?.addEventListener('change', (event) => {
+    this._setBilibiliRoomQuality(Number(event.target.value));
+  });
   document.getElementById('music-mute-btn').addEventListener('click', () => this._toggleMusicMute());
   document.getElementById('music-volume-slider').addEventListener('input', (e) => {
     this._setMusicVolume(parseInt(e.target.value));
@@ -1098,7 +1101,6 @@ _setupUI() {
       const positionSeconds = durationSeconds > 0 ? (durationSeconds * pct) / 100 : 0;
       this._emitMusicSeek(positionSeconds, durationSeconds);
     });
-    this._setMusicActivityHint('You seeked.');
   });
   document.getElementById('music-link-input').addEventListener('input', (e) => {
     this._previewMusicLink(e.target.value.trim());

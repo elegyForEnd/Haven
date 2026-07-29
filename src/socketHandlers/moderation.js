@@ -7,7 +7,7 @@ module.exports = function register(socket, ctx) {
   const { io, db, state, userHasPermission, getUserEffectiveLevel,
           emitOnlineUsers, broadcastVoiceUsers, getEnrichedChannels, logAudit,
           invalidateIpBanCache } = ctx;
-  const { channelUsers, voiceUsers } = state;
+  const { channelUsers, voiceUsers, clearDrawingChannelState } = state;
   const _audit = (typeof logAudit === 'function') ? logAudit : () => {};
   const _invalidateIpCache = (typeof invalidateIpBanCache === 'function') ? invalidateIpBanCache : () => {};
 
@@ -382,6 +382,7 @@ module.exports = function register(socket, ctx) {
     }
 
     const scrubMessages = !!data.scrubMessages;
+    const deletedDirectMessageChannels = [];
 
     for (const [code, users] of channelUsers) {
       if (users.has(uid)) {
@@ -449,6 +450,7 @@ module.exports = function register(socket, ctx) {
             db.prepare('DELETE FROM channel_members WHERE channel_id = ?').run(dm.id);
             _runIfTable('read_positions', 'DELETE FROM read_positions WHERE channel_id = ?', dm.id);
             db.prepare('DELETE FROM channels WHERE id = ?').run(dm.id);
+            deletedDirectMessageChannels.push(dm);
           }
         }
       } else {
@@ -468,6 +470,14 @@ module.exports = function register(socket, ctx) {
       // "Failed to delete account" message (#5376).
       const detail = err && err.message ? String(err.message).slice(0, 240) : 'Unknown error';
       return cb({ error: `Failed to delete account: ${detail}` });
+    }
+
+    for (const directMessageChannel of deletedDirectMessageChannels) {
+      io.to(`channel:${directMessageChannel.code}`).emit('channel-deleted', {
+        code: directMessageChannel.code,
+        reason: 'account-deleted',
+      });
+      clearDrawingChannelState(directMessageChannel.id);
     }
 
     console.log(`🗑️  User self-deleted: "${userRow.username}" (id: ${uid}, scrub: ${scrubMessages})`);

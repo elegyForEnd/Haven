@@ -79,6 +79,15 @@ webpush.setVapidDetails(vapidEmail, process.env.VAPID_PUBLIC_KEY, process.env.VA
 const { initDatabase } = require('./src/database');
 const { router: authRoutes, authLimiter, verifyToken } = require('./src/auth');
 const { setupSocketHandlers, sanitizeText } = require('./src/socketHandlers');
+const { lookupBilibiliStream } = require('./src/bilibiliMedia');
+const { createBilibiliMediaProxyHandler } = require('./src/bilibiliMediaProxy');
+const {
+  cleanupAllBilibiliPlaybackSessions,
+  lookupBilibiliHlsAsset,
+  pruneBilibiliPlaybackSessions
+} = require('./src/bilibiliMediaSession');
+const { initializeBilibiliHlsStorage } = require('./src/bilibiliHlsRemux');
+const { createBilibiliHlsAssetHandler } = require('./src/bilibiliHlsRoute');
 const { startTunnel, stopTunnel, getTunnelStatus, registerProcessCleanup } = require('./src/tunnel');
 const { startDdns, getDdnsStatus, triggerDdnsNow } = require('./src/ddns');
 const { initFcm } = require('./src/fcm');
@@ -200,7 +209,7 @@ app.use(helmet({
       fontSrc: ["'self'", "https://fonts.gstatic.com"],  // Google Fonts CDN
       workerSrc: ["'self'", "blob:", "https://unpkg.com"],  // service worker + Ruffle WebAssembly workers
       objectSrc: ["'none'"],
-      frameSrc: ["'self'", "https://open.spotify.com", "https://www.youtube.com", "https://www.youtube-nocookie.com", "https://w.soundcloud.com", "https://player.bilibili.com"],  // Listen Together embeds + game iframes
+      frameSrc: ["'self'", "https://open.spotify.com", "https://www.youtube.com", "https://www.youtube-nocookie.com", "https://w.soundcloud.com"],  // Listen Together embeds + game iframes
       baseUri: ["'self'"],
       formAction: ["'self'"],
       frameAncestors: ["'self'"],               // allow mobile app iframe, block third-party clickjacking
@@ -231,6 +240,28 @@ app.disable('x-powered-by');
 // where appropriate. (#5347 v3.15.7)
 app.use(express.json({ limit: '128kb' }));
 app.use(express.urlencoded({ extended: false, limit: '128kb' }));
+
+// Bilibili DASH URLs require a Bilibili Referer that browsers cannot set on
+// media elements. Only streams registered for an active random track ID can
+// be requested, so this cannot be used as a general-purpose outbound proxy.
+const bilibiliMediaProxyHandler = createBilibiliMediaProxyHandler({
+  lookupResource: lookupBilibiliStream
+});
+app.head('/api/bilibili-stream/:trackId/:mediaKind', bilibiliMediaProxyHandler);
+app.get('/api/bilibili-stream/:trackId/:mediaKind', bilibiliMediaProxyHandler);
+
+const bilibiliHlsAssetHandler = createBilibiliHlsAssetHandler({
+  lookupAsset: lookupBilibiliHlsAsset
+});
+app.head('/api/bilibili-hls/:trackId/:sessionVersion/:assetName', bilibiliHlsAssetHandler);
+app.get('/api/bilibili-hls/:trackId/:sessionVersion/:assetName', bilibiliHlsAssetHandler);
+
+const hlsJsModulePath = require.resolve('hls.js/dist/hls.mjs');
+app.get('/vendor/hls.mjs', (_request, response) => {
+  response.type('text/javascript');
+  response.setHeader('Cache-Control', 'public, max-age=86400');
+  response.sendFile(hlsJsModulePath);
+});
 
 // Package only the reviewed extension runtime files. Keeping an explicit
 // allowlist prevents unrelated files from being exposed if the directory later
@@ -4188,6 +4219,28 @@ app.set('io', io);   // expose to auth routes (session invalidation on password 
 activityRef.engine = setupSocketHandlers(io, db, { invalidateIpBanCache }).activity;
 registerProcessCleanup();
 
+initializeBilibiliHlsStorage()
+  .then(() => console.log('Bilibili HLS temporary storage is ready'))
+  .catch(error => console.warn(`Bilibili HLS storage initialization failed; DASH fallback remains available: ${error.message}`));
+
+const bilibiliHlsPruneTimer = setInterval(() => {
+  void pruneBilibiliPlaybackSessions().catch(error => {
+    console.warn(`Bilibili HLS cleanup failed: ${error.message}`);
+  });
+}, 15 * 60 * 1000);
+bilibiliHlsPruneTimer.unref?.();
+
+let bilibiliHlsCleanupPromise = null;
+const stopBilibiliHlsSessions = () => {
+  if (bilibiliHlsCleanupPromise) return bilibiliHlsCleanupPromise;
+  clearInterval(bilibiliHlsPruneTimer);
+  bilibiliHlsCleanupPromise = cleanupAllBilibiliPlaybackSessions();
+  return bilibiliHlsCleanupPromise;
+};
+process.on('SIGINT', stopBilibiliHlsSessions);
+process.on('SIGTERM', stopBilibiliHlsSessions);
+process.on('exit', stopBilibiliHlsSessions);
+
 // ── Auto-cleanup interval (runs every 15 minutes) ───────
 function runAutoCleanup() {
   try {
@@ -4844,13 +4897,18 @@ server.listen(PORT, HOST, () => {
   try { startDdns(); } catch (err) { console.warn('[ddns] failed to start:', err && err.message); }
 });
 
-function gracefulShutdown(signal) {
+async function gracefulShutdown(signal) {
   const ts = new Date().toISOString();
   const line = `[${ts}] Graceful shutdown: ${signal}\n`;
   try { rotateCrashLogIfNeeded(); fs.appendFileSync(CRASH_LOG, line); } catch {}
   console.log(`\n${signal} received — shutting down`);
   io.close();
-  server.close(() => process.exit(0));
+  const serverClosed = new Promise(resolve => server.close(resolve));
+  await Promise.race([
+    Promise.allSettled([serverClosed, stopBilibiliHlsSessions()]),
+    new Promise(resolve => setTimeout(resolve, 10000))
+  ]);
+  process.exit(0);
 }
-process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('SIGTERM', () => { void gracefulShutdown('SIGTERM'); });
+process.on('SIGINT', () => { void gracefulShutdown('SIGINT'); });

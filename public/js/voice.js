@@ -27,6 +27,10 @@ class VoiceManager {
     this.screenStream = null;       // Screen share MediaStream
     this.webcamStream = null;       // Webcam video MediaStream
     this.isScreenSharing = false;
+    // Browser screen-capture state used to tell the UI whether Chromium
+    // actually removed Haven's own output from a captured system-audio track.
+    this.screenOwnAudioRestrictionStatus = 'not-applicable';
+    this.screenDisplaySurface = null;
     this.isWebcamActive = false;
     this.peers = new Map();         // userId → { connection, stream, username }
     this.currentChannel = null;
@@ -1406,6 +1410,17 @@ class VoiceManager {
         displayMediaOptions.systemAudio = 'include';
         displayMediaOptions.windowAudio = 'window';
 
+        // Ask supported browsers to remove audio produced by this Haven tab
+        // from a full-system capture. Unknown MediaTrackConstraints are
+        // ignored, so requesting the constraint is safe even when feature
+        // detection is incomplete; the resulting track settings are checked
+        // below before the UI claims that filtering succeeded.
+        const supportedConstraints = navigator.mediaDevices.getSupportedConstraints?.() || {};
+        displayMediaOptions.audio.restrictOwnAudio = true;
+        this.screenOwnAudioRestrictionStatus = supportedConstraints.restrictOwnAudio === true
+          ? 'requested'
+          : 'unsupported';
+
         // Use CaptureController if available to manage the capture session
         if (typeof CaptureController !== 'undefined') {
           this._captureController = new CaptureController();
@@ -1417,24 +1432,40 @@ class VoiceManager {
 
       this.isScreenSharing = true;
 
+      const screenVideoTrack = this.screenStream.getVideoTracks()[0];
+      const screenVideoSettings = screenVideoTrack?.getSettings?.() || {};
+      this.screenDisplaySurface = screenVideoSettings.displaySurface || null;
+
       // 3.18.1 (#5379) — hint the encoder that this is motion content (games,
       // videos, scrolling). Without this hint, browsers may bias toward
       // "detail" mode which sacrifices framerate for sharpness, the opposite
       // of what most screen-share use cases want.
       try {
-        const vTrack = this.screenStream.getVideoTracks()[0];
-        if (vTrack && 'contentHint' in vTrack) vTrack.contentHint = 'motion';
+        if (screenVideoTrack && 'contentHint' in screenVideoTrack) screenVideoTrack.contentHint = 'motion';
       } catch { /* unsupported — ignore */ }
 
       // When user clicks browser "Stop sharing" button
-      this.screenStream.getVideoTracks()[0].onended = () => {
-        this.stopScreenShare();
-      };
+      if (screenVideoTrack) {
+        screenVideoTrack.onended = () => {
+          this.stopScreenShare();
+        };
+      }
 
       // If screen audio track dies independently, update flag
       const screenAudioTrack = this.screenStream.getAudioTracks()[0];
       if (screenAudioTrack) {
         screenAudioTrack.onended = () => { this.screenHasAudio = false; };
+
+        if (!isElectron) {
+          const screenAudioSettings = screenAudioTrack.getSettings?.() || {};
+          if (screenAudioSettings.restrictOwnAudio === true) {
+            this.screenOwnAudioRestrictionStatus = 'applied';
+          } else if (this.screenOwnAudioRestrictionStatus === 'requested') {
+            this.screenOwnAudioRestrictionStatus = 'not-applied';
+          }
+        }
+      } else {
+        this.screenOwnAudioRestrictionStatus = 'no-audio';
       }
 
       // Tell the server we're sharing BEFORE renegotiating with peers, so
@@ -1464,6 +1495,8 @@ class VoiceManager {
       console.error('Screen share failed:', err);
       this.isScreenSharing = false;
       this.screenStream = null;
+      this.screenOwnAudioRestrictionStatus = 'not-applicable';
+      this.screenDisplaySurface = null;
       return false;
     }
   }
@@ -1512,6 +1545,8 @@ class VoiceManager {
     this.screenStream = null;
     this.isScreenSharing = false;
     this._captureController = null;
+    this.screenOwnAudioRestrictionStatus = 'not-applicable';
+    this.screenDisplaySurface = null;
 
     this.socket.emit('screen-share-stopped', { code: this.currentChannel });
     // Notify local UI — pass localUserId so tile is found by its real ID

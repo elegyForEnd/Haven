@@ -45,13 +45,17 @@ const DB_PATH      = path.join(DATA_DIR, 'haven.db');
 const ENV_PATH     = path.join(DATA_DIR, '.env');
 const CERTS_DIR    = path.join(DATA_DIR, 'certs');
 const UPLOADS_DIR  = path.join(DATA_DIR, 'uploads');
+const TEMP_DIR     = path.join(DATA_DIR, 'temp');
+const BILIBILI_HLS_DIR = path.join(TEMP_DIR, 'bilibili-hls');
 
 const DELETED_ATTACHMENTS_DIR = path.join(UPLOADS_DIR, 'deleted-attachments');
 
 // Ensure sub-directories exist
 fs.mkdirSync(CERTS_DIR,                { recursive: true });
-fs.mkdirSync(UPLOADS_DIR,             { recursive: true });
-fs.mkdirSync(DELETED_ATTACHMENTS_DIR, { recursive: true });
+fs.mkdirSync(UPLOADS_DIR,              { recursive: true });
+fs.mkdirSync(TEMP_DIR,                 { recursive: true });
+fs.mkdirSync(BILIBILI_HLS_DIR,         { recursive: true });
+fs.mkdirSync(DELETED_ATTACHMENTS_DIR,  { recursive: true });
 
 // ── One-time migration: move data from old project-dir locations ─────
 const PROJECT_ROOT = path.join(__dirname, '..');
@@ -93,4 +97,14 @@ migrateFile('.env',           ENV_PATH);
 migrateDir('certs',           CERTS_DIR);
 migrateDir('public/uploads',  UPLOADS_DIR);
 
-module.exports = { getDataDir, DATA_DIR, DB_PATH, ENV_PATH, CERTS_DIR, UPLOADS_DIR, DELETED_ATTACHMENTS_DIR };
+module.exports = {
+  getDataDir,
+  DATA_DIR,
+  DB_PATH,
+  ENV_PATH,
+  CERTS_DIR,
+  UPLOADS_DIR,
+  TEMP_DIR,
+  BILIBILI_HLS_DIR,
+  DELETED_ATTACHMENTS_DIR
+};

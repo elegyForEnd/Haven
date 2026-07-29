@@ -69,6 +69,7 @@ _setupSocketListeners() {
     document.getElementById('admin-controls').style.display = canCreateChannel ? 'block' : 'none';
     if (this.user.isAdmin) {
       document.getElementById('admin-mod-panel').style.display = 'block';
+      this.socket.emit('get-bilibili-auth-status');
     } else {
       document.getElementById('admin-mod-panel').style.display = (canModerate || this._hasPerm('manage_emojis') || this._hasPerm('manage_stickers') || this._hasPerm('manage_soundboard') || this._hasPerm('view_audit_log')) ? 'block' : 'none';
     }
@@ -521,17 +522,10 @@ _setupSocketListeners() {
       if (oldEntry) rotatedChannelId = oldEntry.id;
     }
 
-    // Preserve any DM channels that were added client-side (via dm-opened
-    // events). The server only sends server channels in channels-list, so
-    // overwriting would wipe DM entries and break E2E decryption until the
-    // user reopens the DM.
-    const existingDMs = (this.channels || []).filter(c => c.is_dm);
+    // The server list includes both normal channels and DMs and is
+    // authoritative. Replacing the full list also removes DMs that were
+    // deleted while this client was disconnected.
     this.channels = channels;
-    for (const dm of existingDMs) {
-      if (!this.channels.find(c => c.code === dm.code)) {
-        this.channels.push(dm);
-      }
-    }
     // Seed client-side unreadCounts from server-reported values so the
     // desktop badge, tab title, and DM section badge stay in sync.
     // Only import counts for channels we haven't touched yet this session.
@@ -615,7 +609,9 @@ _setupSocketListeners() {
     if (rotatedChannelId !== null) {
       const updated = channels.find(c => c.id === rotatedChannelId);
       if (updated) {
+        const previousChannelCode = this.currentChannel;
         this.currentChannel = updated.code;
+        this._handleDrawingChannelChanged?.(previousChannelCode, updated.code);
         const codeDisplay = document.getElementById('channel-code-display');
         if (codeDisplay) codeDisplay.textContent = updated.display_code || updated.code;
         this.socket.emit('enter-channel', { code: this.currentChannel });
@@ -629,6 +625,15 @@ _setupSocketListeners() {
         this._historyAfter = null;
         this.socket.emit('get-messages', { code: this.currentChannel });
         this.socket.emit('get-channel-members', { code: this.currentChannel });
+      } else {
+        // The channel was deleted while this client was disconnected rather
+        // than merely receiving a new code. Move to a valid fallback so the
+        // main view and drawing overlay do not remain bound to a tombstone.
+        const removedChannelCode = this.currentChannel;
+        this.currentChannel = null;
+        this._handleDrawingChannelChanged?.(removedChannelCode, null);
+        const fallbackChannel = channels.find(c => !c.is_dm) || channels[0];
+        if (fallbackChannel) this.switchChannel(fallbackChannel.code);
       }
     }
   });
@@ -1359,6 +1364,25 @@ _setupSocketListeners() {
   this.socket.on('music-queue-update', (data) => {
     this._updateMusicQueueState(data);
   });
+  this.socket.on('music-quality-result', result => {
+    if (result?.trackId !== this._musicTrackId) return;
+    const pendingRequest = this._pendingMusicQualityRequest;
+    if (pendingRequest && Number(result.requestId) !== pendingRequest.requestId) return;
+    if (!result.success) {
+      const authoritativeVideoHeight = Number(result.selectedVideoHeight)
+        || Number(pendingRequest?.previousVideoHeight)
+        || Number(this._musicBilibiliSelectedHeight)
+        || 360;
+      const qualitySelect = document.getElementById('music-quality-select');
+      if (qualitySelect?.querySelector(`option[value="${authoritativeVideoHeight}"]`)) {
+        qualitySelect.value = String(authoritativeVideoHeight);
+      }
+      this._musicBilibiliSelectedHeight = authoritativeVideoHeight;
+    }
+    this._pendingMusicQualityRequest = null;
+    this._setMusicActivityHint('');
+    this._applyMusicControlPermissions();
+  });
 
   // ── Voice kicked ────────────────────────────────
   this.socket.on('voice-kicked', (data) => {
@@ -1860,7 +1884,9 @@ _setupSocketListeners() {
   this.socket.on('kicked', (data) => {
     this._showToast(data.reason ? t('toasts.kicked_from_server_reason', { reason: data.reason }) : t('toasts.kicked_from_server'), 'error');
     if (this.currentChannel === data.channelCode) {
+      const removedChannelCode = this.currentChannel;
       this.currentChannel = null;
+      this._handleDrawingChannelChanged?.(removedChannelCode, null);
       this._showWelcome();
     }
   });

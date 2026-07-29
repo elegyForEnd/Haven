@@ -10,7 +10,7 @@
   <link rel="manifest" href="/manifest.webmanifest">
   <title>Ciacord</title>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDAgMTAwIj48cG9seWdvbiBwb2ludHM9IjUwLDMgOTMsMjggOTMsNzIgNTAsOTcgNyw3MiA3LDI4IiBmaWxsPSJub25lIiBzdHJva2U9IiM2YjRmZGIiIHN0cm9rZS13aWR0aD0iOCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPjx0ZXh0IHg9IjUwIiB5PSI2MyIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC1mYW1pbHk9IkFyaWFsLEhlbHZldGljYSxzYW5zLXNlcmlmIiBmb250LXdlaWdodD0iYm9sZCIgZm9udC1zaXplPSIzOCIgZmlsbD0iIzZiNGZkYiIgb3BhY2l0eT0iMC45NSI+SDwvdGV4dD48L3N2Zz4=">
-  <link rel="stylesheet" href="/css/style.css?v=3.37.2">
+  <link rel="stylesheet" href="/css/style.css?v=3.37.8">
   <script src="/js/theme-init.js?v=3.16.15"></script>
 </head>
 <body>
@@ -295,6 +295,7 @@
             <button id="search-toggle-btn" class="icon-btn small" data-i18n-title="header.search_messages" title="Search messages (Ctrl+F)">🔍</button>
             <button id="pinned-toggle-btn" class="icon-btn small" data-i18n-title="header.pinned_messages" title="Pinned messages">📌</button>
             <button id="gallery-toggle-btn" class="icon-btn small" data-i18n-title="header.media_gallery" title="View files & media">🖼</button>
+            <button id="drawing-toggle-btn" class="icon-btn small" data-i18n-title="drawing.open" title="Open channel drawing board">✏️</button>
             <button id="move-select-btn" class="icon-btn small" data-i18n-title="header.select_messages_to_move" title="Select messages to move" style="display:none">☰</button>
             <div class="e2e-menu-wrapper" style="display:none" id="e2e-menu-wrapper">
               <button id="e2e-menu-btn" class="icon-btn small" data-i18n-title="header.encryption_options" title="Encryption options">🔐</button>
@@ -318,6 +319,7 @@
           <div style="flex:1"></div>
           <!-- Right-side: dynamic indicators, then voice (always furthest right) -->
           <div class="voice-controls">
+            <button id="drawing-toggle-mobile-btn" class="mobile-drawing-btn" data-i18n-title="drawing.open" data-i18n-aria-label="drawing.open" title="Open channel drawing board" aria-label="Open channel drawing board" style="display:none">✏️</button>
             <button id="mobile-users-btn" class="mobile-users-btn" title="Members" aria-label="Members">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
                 <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
@@ -410,6 +412,9 @@
                 <button id="music-queue-btn" class="icon-btn small" data-i18n-title="media.music_queue" title="Queue">☰</button>
                 <button id="music-play-pause-btn" class="icon-btn small" data-i18n-title="media.music_play_pause" title="Play/Pause">⏸</button>
                 <button id="music-next-btn" class="icon-btn small" data-i18n-title="media.music_next" title="Next track" style="display:none">⏭</button>
+                <select id="music-quality-select" class="music-quality-select" title="Bilibili room video quality" style="display:none" disabled>
+                  <option value="360">360p (default)</option>
+                </select>
                 <span id="music-time-current" class="music-time">0:00</span>
                 <input type="range" id="music-seek-slider" class="music-seek-slider" min="0" max="100" value="0" step="0.1" data-i18n-title="media.music_seek" title="Seek">
                 <span id="music-time-duration" class="music-time">0:00</span>
@@ -1144,6 +1149,7 @@
           </div>
           <div class="settings-nav-admin-group" style="display:none">
           <div class="settings-nav-item settings-nav-admin" data-target="section-update" style="display:none">⬆️ <span data-i18n="settings.nav.server_updates">Server Updates</span></div>
+          <div class="settings-nav-item settings-nav-admin" data-target="section-bilibili" style="display:none">📺 Bilibili</div>
           <div class="settings-nav-item settings-nav-admin" data-target="section-branding" style="display:none">🏠 <span data-i18n="settings.nav.branding">Branding</span></div>
           <div class="settings-nav-item settings-nav-admin" data-target="section-members" style="display:none">👥 <span data-i18n="settings.nav.members">Members</span></div>
           <div class="settings-nav-item settings-nav-admin" data-target="section-whitelist" style="display:none">🛡️ <span data-i18n="settings.nav.whitelist">Whitelist</span></div>
@@ -1911,6 +1917,28 @@
             <button class="btn-sm" id="update-run-btn" disabled data-i18n="settings.admin.update_run_btn">Update Now</button>
           </div>
           <div id="update-status" style="margin-top:10px;padding:8px;border:1px solid var(--border);border-radius:4px;display:none"></div>
+        </div>
+
+        <!-- Server-wide Bilibili account used only by the media resolver. -->
+        <div class="admin-settings" id="section-bilibili" style="margin-top:10px; padding-top:10px; border-top:1px solid var(--border);">
+          <h5 class="settings-section-subtitle">📺 Bilibili Account</h5>
+          <small class="settings-hint">Bind a Bilibili account by QR code so Haven can resolve video streams without yt-dlp. The login cookie is encrypted on the server and is never sent to listeners.</small>
+          <div id="bilibili-auth-account" class="bilibili-auth-account">
+            <div id="bilibili-auth-avatar" class="bilibili-auth-avatar">B</div>
+            <div class="bilibili-auth-account-copy">
+              <strong id="bilibili-auth-name">Not bound</strong>
+              <span id="bilibili-auth-detail" class="muted-text">Bind an account to reduce anonymous API risk-control failures.</span>
+            </div>
+          </div>
+          <div id="bilibili-auth-qr-area" class="bilibili-auth-qr-area" style="display:none">
+            <img id="bilibili-auth-qr-image" alt="Bilibili login QR code">
+            <span id="bilibili-auth-qr-status">Scan with the Bilibili mobile app</span>
+            <button type="button" class="btn-sm" id="bilibili-auth-cancel-btn">Cancel</button>
+          </div>
+          <div class="bilibili-auth-actions">
+            <button type="button" class="btn-sm btn-accent" id="bilibili-auth-bind-btn">Bind with QR Code</button>
+            <button type="button" class="btn-sm btn-danger-fill" id="bilibili-auth-unbind-btn" style="display:none">Unbind Account</button>
+          </div>
         </div>
 
         <!-- Server Branding -->
@@ -3426,6 +3454,41 @@
   <!-- Stackable effect overlay container -->
   <div id="fx-layers"></div>
 
+  <!-- Channel drawing board: transparent full-screen canvas with a persistent toolbar. -->
+  <div id="drawing-overlay" class="drawing-overlay" hidden aria-hidden="true">
+    <canvas id="drawing-canvas" class="drawing-canvas" aria-label="Channel drawing canvas"></canvas>
+    <div id="drawing-toolbar" class="drawing-toolbar" role="toolbar" aria-label="Drawing tools">
+      <div class="drawing-toolbar-heading">
+        <span class="drawing-toolbar-icon">✏️</span>
+        <span id="drawing-channel-name" class="drawing-channel-name" data-i18n="drawing.title">Channel Drawing</span>
+        <span id="drawing-participant-count" class="drawing-participant-count">0</span>
+        <span id="drawing-status" class="drawing-status" data-state="offline" data-i18n="drawing.connecting">Connecting...</span>
+      </div>
+      <div class="drawing-toolbar-controls">
+        <div class="drawing-tool-group" role="group" aria-label="Drawing tool">
+          <button id="drawing-pen-btn" class="drawing-tool-btn active" type="button" data-tool="pen" data-i18n-title="drawing.pen" title="Pen">✏️</button>
+          <button id="drawing-eraser-btn" class="drawing-tool-btn" type="button" data-tool="eraser" data-i18n-title="drawing.eraser" title="Eraser">⌫</button>
+        </div>
+        <label class="drawing-color-control" data-i18n-title="drawing.color" title="Color">
+          <input id="drawing-color-input" type="color" value="#ff4d8d" aria-label="Drawing color">
+        </label>
+        <label class="drawing-width-control" data-i18n-title="drawing.width" title="Brush width">
+          <span class="drawing-width-preview"></span>
+          <input id="drawing-width-input" type="range" min="1" max="48" value="5" step="1" aria-label="Brush width">
+          <output id="drawing-width-output" for="drawing-width-input">5</output>
+        </label>
+        <span class="drawing-toolbar-divider"></span>
+        <button id="drawing-undo-btn" class="drawing-tool-btn" type="button" data-i18n-title="drawing.undo" title="Undo your last stroke">↶</button>
+        <button id="drawing-clear-btn" class="drawing-tool-btn drawing-danger-btn" type="button" data-i18n-title="drawing.clear" title="Clear board" style="display:none">🗑</button>
+        <button id="drawing-interaction-btn" class="drawing-mode-btn" type="button" data-mode="draw" data-i18n-title="drawing.switch_to_passthrough" title="Switch to interface mode">
+          <span class="drawing-mode-icon">✏️</span>
+          <span class="drawing-mode-label" data-i18n="drawing.draw_mode">Draw</span>
+        </button>
+        <button id="drawing-close-btn" class="drawing-tool-btn drawing-close-btn" type="button" data-i18n-title="drawing.close" title="Close drawing board">×</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Push Notification Error Modal (center-screen, requires acknowledgement) -->
   <!-- Activities / Games Launcher Modal -->
   <div class="modal-overlay" id="activities-modal" style="display:none">
@@ -3576,7 +3639,7 @@
   <script src="/js/voice.js?v=3.37.3"></script>
   <script src="/js/modmode.js?v=3.16.15"></script>
   <script src="/js/e2e.js?v=3.16.15"></script>
-  <script type="module" src="/js/app.js?v=3.37.4"></script>
+  <script type="module" src="/js/app.js?v=3.37.14"></script>
   <script src="/js/plugin-loader.js?v=3.16.15"></script>
   <script src="/js/modules/stream-debug.js?v=3.16.15"></script>
   <script src="/js/password-eye.js?v=3.17.1"></script>

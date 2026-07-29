@@ -4,7 +4,8 @@
    â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 @import url('https://fonts.googleapis.com/css2?family=VT323&family=Share+Tech+Mono&display=swap');
 @import url('/css/voice.css?v=3.34.0');
-@import url('/css/music.css?v=3');
+@import url('/css/music.css?v=4');
+@import url('/css/drawing.css?v=1');
 
 /* ─── THEME: Haven (Default) ───────────────────────────── */
 :root, [data-theme="haven"] {
@@ -9552,6 +9553,73 @@ html:not([data-toolbaricons="emoji"]):not([data-toolbaricons="color"]) .tb-icon-
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+.bilibili-auth-account {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.bilibili-auth-avatar {
+  width: 42px;
+  height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  overflow: hidden;
+  border-radius: 50%;
+  background: #fb7299;
+  color: white;
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.bilibili-auth-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.bilibili-auth-account-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.bilibili-auth-account-copy span {
+  overflow-wrap: anywhere;
+}
+
+.bilibili-auth-qr-area {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  text-align: center;
+}
+
+.bilibili-auth-qr-area img {
+  width: min(280px, 100%);
+  height: auto;
+  border-radius: 6px;
+  background: white;
+}
+
+.bilibili-auth-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 /* Admin save bar — fixed at bottom of settings modal */

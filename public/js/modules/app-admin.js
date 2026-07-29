@@ -46,6 +46,157 @@ const PERM_LABELS = {
 
 export default {
 
+_setupBilibiliAdmin() {
+  if (this._bilibiliAdminSetup) return;
+  this._bilibiliAdminSetup = true;
+
+  const bindButton = document.getElementById('bilibili-auth-bind-btn');
+  const unbindButton = document.getElementById('bilibili-auth-unbind-btn');
+  const cancelButton = document.getElementById('bilibili-auth-cancel-btn');
+
+  bindButton?.addEventListener('click', () => {
+    if (!this.user?.isAdmin || bindButton.disabled) return;
+    bindButton.disabled = true;
+    bindButton.textContent = 'Creating QR Code...';
+    this.socket.emit('start-bilibili-qr-login');
+  });
+
+  cancelButton?.addEventListener('click', () => {
+    if (this._bilibiliQrSessionId) {
+      this.socket.emit('cancel-bilibili-qr-login', {
+        sessionId: this._bilibiliQrSessionId
+      });
+    }
+    this._stopBilibiliQrPolling();
+    this._renderBilibiliQrState({ state: 'cancelled' });
+  });
+
+  unbindButton?.addEventListener('click', async () => {
+    if (!this.user?.isAdmin || unbindButton.disabled) return;
+    const confirmed = await this._showConfirmModal(
+      'Unbind the server Bilibili account?',
+      'New Bilibili media requests will use anonymous API access. Existing playback sessions may continue until they expire.',
+      { danger: true }
+    );
+    if (!confirmed) return;
+    unbindButton.disabled = true;
+    this.socket.emit('unbind-bilibili-account');
+  });
+
+  this.socket.on('bilibili-auth-status', status => {
+    this._renderBilibiliAuthStatus(status);
+  });
+
+  this.socket.on('bilibili-qr-login-started', loginSession => {
+    bindButton.disabled = false;
+    bindButton.textContent = 'Generate New QR Code';
+    this._bilibiliQrSessionId = loginSession?.sessionId || null;
+    this._renderBilibiliQrState(loginSession);
+    this._startBilibiliQrPolling();
+  });
+
+  this.socket.on('bilibili-qr-login-status', result => {
+    this._renderBilibiliQrState(result);
+    if (['success', 'expired', 'cancelled', 'error'].includes(result?.state)) {
+      this._stopBilibiliQrPolling();
+    } else {
+      this._scheduleBilibiliQrPoll(Number(result?.retryAfterMs) || 2000);
+    }
+  });
+
+  this.socket.on('bilibili-auth-error', error => {
+    bindButton.disabled = false;
+    bindButton.textContent = 'Bind with QR Code';
+    unbindButton.disabled = false;
+    this._stopBilibiliQrPolling();
+    this._showToast(error?.message || 'Bilibili account operation failed', 'error');
+  });
+},
+
+_startBilibiliQrPolling() {
+  this._stopBilibiliQrPolling(false);
+  if (!this._bilibiliQrSessionId) return;
+  this._scheduleBilibiliQrPoll(0);
+},
+
+_scheduleBilibiliQrPoll(delayMilliseconds) {
+  if (this._bilibiliQrPollTimer) clearTimeout(this._bilibiliQrPollTimer);
+  this._bilibiliQrPollTimer = setTimeout(() => {
+    this._bilibiliQrPollTimer = null;
+    if (!this._bilibiliQrSessionId || !this.socket?.connected) return;
+    this.socket.emit('poll-bilibili-qr-login', {
+      sessionId: this._bilibiliQrSessionId
+    });
+  }, Math.max(0, Number(delayMilliseconds) || 0));
+},
+
+_stopBilibiliQrPolling(clearSession = true) {
+  if (this._bilibiliQrPollTimer) {
+    clearTimeout(this._bilibiliQrPollTimer);
+    this._bilibiliQrPollTimer = null;
+  }
+  if (clearSession) this._bilibiliQrSessionId = null;
+},
+
+_renderBilibiliAuthStatus(status) {
+  const bound = status?.bound === true;
+  const nameElement = document.getElementById('bilibili-auth-name');
+  const detailElement = document.getElementById('bilibili-auth-detail');
+  const avatarElement = document.getElementById('bilibili-auth-avatar');
+  const bindButton = document.getElementById('bilibili-auth-bind-btn');
+  const unbindButton = document.getElementById('bilibili-auth-unbind-btn');
+
+  if (nameElement) nameElement.textContent = bound ? (status.displayName || 'Bilibili account') : 'Not bound';
+  if (detailElement) {
+    detailElement.textContent = bound
+      ? `UID ${status.uid || 'unknown'} - encrypted server credential`
+      : 'Bind an account to reduce anonymous API risk-control failures.';
+  }
+  if (avatarElement) {
+    avatarElement.innerHTML = '';
+    if (bound && /^https:\/\//i.test(status.avatarUrl || '')) {
+      const avatarImage = document.createElement('img');
+      avatarImage.src = status.avatarUrl;
+      avatarImage.alt = '';
+      avatarImage.referrerPolicy = 'no-referrer';
+      avatarElement.appendChild(avatarImage);
+    } else {
+      avatarElement.textContent = 'B';
+    }
+  }
+  if (bindButton) {
+    bindButton.disabled = false;
+    bindButton.textContent = bound ? 'Rebind with QR Code' : 'Bind with QR Code';
+  }
+  if (unbindButton) {
+    unbindButton.disabled = false;
+    unbindButton.style.display = bound ? '' : 'none';
+  }
+  if (bound) this._renderBilibiliQrState({ state: 'success' });
+},
+
+_renderBilibiliQrState(result) {
+  const qrArea = document.getElementById('bilibili-auth-qr-area');
+  const qrImage = document.getElementById('bilibili-auth-qr-image');
+  const statusElement = document.getElementById('bilibili-auth-qr-status');
+  if (!qrArea || !statusElement) return;
+
+  if (result?.qrDataUrl && qrImage) qrImage.src = result.qrDataUrl;
+  const stateMessages = {
+    not_scanned: 'Scan with the Bilibili mobile app',
+    waiting: 'Waiting for Bilibili...',
+    scanned_waiting_confirmation: 'Scanned - confirm login in the Bilibili app',
+    success: 'Bilibili account bound successfully',
+    expired: 'QR code expired. Generate a new one.',
+    cancelled: 'QR login cancelled',
+    error: result?.message || 'Bilibili login failed'
+  };
+  statusElement.textContent = stateMessages[result?.state] || 'Waiting for Bilibili...';
+  qrArea.style.display = ['not_scanned', 'waiting', 'scanned_waiting_confirmation'].includes(result?.state)
+    ? 'flex'
+    : 'none';
+},
+
 // ── First-Time Setup Wizard ─────────────────────────────
 
 _maybeShowSetupWizard() {

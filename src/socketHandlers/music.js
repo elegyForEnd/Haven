@@ -8,9 +8,23 @@ module.exports = function register(socket, ctx) {
           resolveSpotifyToYouTube, resolveBilibiliLink, searchYouTube, fetchYouTubePlaylist, resolveMusicMetadata,
           getActiveMusicSyncState, updateActiveMusicPlaybackState,
           startQueuedMusic, popNextQueuedMusic, isNaturalMusicFinish,
+          emitMusicSharedToRoom, clearMusicMedia,
           broadcastMusicQueue, getMusicQueuePayload, sanitizeQueueEntry,
           trimMusicText, stripYouTubePlaylistParam } = ctx;
   const { voiceUsers, activeMusic, musicQueues } = state;
+
+  function enqueueBilibiliMediaOperation(current, operation) {
+    const previousOperation = current.mediaRefreshBroadcastPromise;
+    const operationTask = Promise.resolve(previousOperation)
+      .catch(() => {})
+      .then(operation);
+    current.mediaRefreshBroadcastPromise = operationTask;
+    return operationTask.finally(() => {
+      if (current.mediaRefreshBroadcastPromise === operationTask) {
+        delete current.mediaRefreshBroadcastPromise;
+      }
+    });
+  }
 
   // ── Share a track ───────────────────────────────────────
   socket.on('music-share', async (data) => {
@@ -80,7 +94,7 @@ module.exports = function register(socket, ctx) {
     if (!entry) return;
 
     if (!activeMusic.get(data.code)) {
-      startQueuedMusic(data.code, entry);
+      await startQueuedMusic(data.code, entry);
       return;
     }
 
@@ -148,6 +162,110 @@ module.exports = function register(socket, ctx) {
     }
   });
 
+  socket.on('music-refresh-media', async (data) => {
+    if (!data || typeof data !== 'object') return;
+    if (!isString(data.code, 8, 8) || !isString(data.trackId, 1, 64)) return;
+    const voiceRoom = voiceUsers.get(data.code);
+    if (!voiceRoom || !voiceRoom.has(socket.user.id)) return;
+    const current = activeMusic.get(data.code);
+    if (!current || current.id !== data.trackId || current.resolvedFrom !== 'bilibili') return;
+    const refreshRequestedAt = Date.now();
+    if (refreshRequestedAt - Number(current.lastMediaRefreshAt || 0) < 30000) {
+      return socket.emit('toast', {
+        message: 'Bilibili media was refreshed recently. Please wait before retrying.',
+        type: 'info'
+      });
+    }
+    current.lastMediaRefreshAt = refreshRequestedAt;
+    try {
+      if (current.mediaRefreshBroadcastPromise) {
+        await current.mediaRefreshBroadcastPromise;
+        return;
+      }
+      await enqueueBilibiliMediaOperation(current, async () => {
+        if (activeMusic.get(data.code) !== current) return false;
+        return emitMusicSharedToRoom(data.code, current, {
+          force: true,
+          preferredVideoHeight: current.bilibiliVideoHeight
+        });
+      });
+    } catch (error) {
+      socket.emit('error-msg', `Could not refresh Bilibili media: ${String(error?.message || 'resolution failed').slice(0, 200)}`);
+    }
+  });
+
+  socket.on('music-set-quality', async (data) => {
+    if (!data || typeof data !== 'object') return;
+    if (!isString(data.code, 8, 8) || !isString(data.trackId, 1, 64)) return;
+    const requestedVideoHeight = Number(data.videoHeight);
+    const requestId = Number.isSafeInteger(Number(data.requestId)) ? Number(data.requestId) : null;
+    if (!Number.isInteger(requestedVideoHeight) || requestedVideoHeight < 144 || requestedVideoHeight > 1080) {
+      socket.emit('error-msg', 'Invalid Bilibili video quality');
+      return socket.emit('music-quality-result', { success: false, trackId: data.trackId, requestId });
+    }
+    const voiceRoom = voiceUsers.get(data.code);
+    if (!voiceRoom || !voiceRoom.has(socket.user.id)) return;
+    const current = activeMusic.get(data.code);
+    if (!current || current.id !== data.trackId || current.resolvedFrom !== 'bilibili') return;
+    const availableVideoHeights = Array.isArray(current.media?.availableVideoHeights)
+      ? current.media.availableVideoHeights.map(Number).filter(Number.isInteger)
+      : [];
+    if (!availableVideoHeights.includes(requestedVideoHeight)) {
+      socket.emit('error-msg', 'That Bilibili video quality is not available for this video');
+      return socket.emit('music-quality-result', {
+        success: false,
+        trackId: current.id,
+        requestId,
+        selectedVideoHeight: Number(current.media?.selectedVideoHeight) || null
+      });
+    }
+
+    if (socket.user.id !== current.userId && !socket.user.isAdmin) {
+      const channel = db.prepare('SELECT id FROM channels WHERE code = ?').get(data.code);
+      if (!channel || !userHasPermission(socket.user.id, 'manage_music_queue', channel.id)) {
+        socket.emit('error-msg', 'Only the requestor or a moderator can change video quality');
+        return socket.emit('music-quality-result', {
+          success: false,
+          trackId: current.id,
+          requestId,
+          selectedVideoHeight: Number(current.media?.selectedVideoHeight) || null
+        });
+      }
+    }
+
+    try {
+      await enqueueBilibiliMediaOperation(current, async () => {
+        if (activeMusic.get(data.code) !== current) return false;
+        return emitMusicSharedToRoom(data.code, current, {
+          force: false,
+          preferredVideoHeight: requestedVideoHeight
+        });
+      });
+      if (activeMusic.get(data.code) !== current) return;
+      const selectedHeight = Number(current.media?.selectedVideoHeight) || requestedVideoHeight;
+      io.to(`voice:${data.code}`).emit('toast', {
+        message: `${socket.user.displayName} changed Bilibili quality to ${selectedHeight}p`,
+        type: 'info'
+      });
+      socket.emit('music-quality-result', {
+        success: true,
+        trackId: current.id,
+        requestId,
+        requestedVideoHeight,
+        selectedVideoHeight: selectedHeight
+      });
+    } catch (error) {
+      socket.emit('error-msg', `Could not change Bilibili quality: ${String(error?.message || 'resolution failed').slice(0, 200)}`);
+      socket.emit('music-quality-result', {
+        success: false,
+        trackId: current.id,
+        requestId,
+        requestedVideoHeight,
+        selectedVideoHeight: Number(current.media?.selectedVideoHeight) || null
+      });
+    }
+  });
+
   // ── Stop music ──────────────────────────────────────────
   socket.on('music-stop', (data) => {
     if (!data || typeof data !== 'object') return;
@@ -162,6 +280,7 @@ module.exports = function register(socket, ctx) {
         return socket.emit('error-msg', 'Only the requestor or a moderator can stop playback');
       }
     }
+    clearMusicMedia(current);
     activeMusic.delete(data.code);
     musicQueues.delete(data.code);
     for (const [uid, user] of voiceRoom) {
@@ -254,7 +373,7 @@ module.exports = function register(socket, ctx) {
   });
 
   // ── Track finished ──────────────────────────────────────
-  socket.on('music-finished', (data) => {
+  socket.on('music-finished', async (data) => {
     if (!data || typeof data !== 'object') return;
     if (!isString(data.code, 8, 8)) return;
     const voiceRoom = voiceUsers.get(data.code);
@@ -274,9 +393,10 @@ module.exports = function register(socket, ctx) {
     } else if (!isPrivileged && !isNaturalMusicFinish(current, Number(data.positionSeconds), Number(data.durationSeconds))) {
       return;
     }
+    clearMusicMedia(current);
     const next = popNextQueuedMusic(data.code);
     if (next) {
-      startQueuedMusic(data.code, next);
+      await startQueuedMusic(data.code, next);
       return;
     }
     activeMusic.delete(data.code);

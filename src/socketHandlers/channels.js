@@ -38,9 +38,12 @@ module.exports = function register(socket, ctx) {
     io, db, state, userHasPermission, getUserEffectiveLevel,
     broadcastChannelLists, getEnrichedChannels, emitOnlineUsers,
     handleVoiceLeave, broadcastVoiceUsers, generateChannelCode,
-    applyRoleChannelAccess, logAudit, fireWebhookEvent
+    applyRoleChannelAccess, logAudit, fireWebhookEvent, clearMusicMedia
   } = ctx;
-  const { channelUsers, voiceUsers, activeMusic, musicQueues } = state;
+  const {
+    channelUsers, voiceUsers, activeMusic, musicQueues,
+    clearDrawingChannelState
+  } = state;
   const _audit = (typeof logAudit === 'function') ? logAudit : () => {};
 
   // (#5389) Auto-grant a channel's default_role_id to a user when they join
@@ -623,6 +626,8 @@ module.exports = function register(socket, ctx) {
 
     channelUsers.delete(code);
     voiceUsers.delete(code);
+    clearDrawingChannelState(channel.id);
+    clearMusicMedia(activeMusic.get(code));
     activeMusic.delete(code);
     musicQueues.delete(code);
 
@@ -1547,6 +1552,7 @@ module.exports = function register(socket, ctx) {
       db.prepare('DELETE FROM channels WHERE id = ?').run(chId);
     });
     deleteAll(channel.id);
+    clearDrawingChannelState(channel.id);
 
     for (const name of filenames) moveUploadToDeleted(name);
 

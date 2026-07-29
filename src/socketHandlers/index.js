@@ -12,6 +12,13 @@ const HAVEN_VERSION = require('../../package.json').version;
 
 const { sanitizeText, utcStamp, isString, isInt, isValidUploadPath, VALID_ROLE_PERMS } = require('./helpers');
 const { resolveSpotifyToYouTube, resolveBilibiliLink, searchYouTube, fetchYouTubePlaylist, extractYouTubeVideoId, resolveMusicMetadata } = require('./musicResolver');
+const {
+  createBilibiliMediaPayload
+} = require('../bilibiliMedia');
+const {
+  ensureBilibiliPlaybackSession,
+  releaseBilibiliPlaybackSession
+} = require('../bilibiliMediaSession');
 const createPermissions = require('./permissions');
 
 const { createActivity } = require('../activity');
@@ -24,6 +31,8 @@ const registerUsers      = require('./users');
 const registerModeration = require('./moderation');
 const registerRoles      = require('./roles');
 const registerAdmin      = require('./admin');
+const registerBilibiliAdmin = require('./bilibiliAdmin');
+const registerDrawing    = require('./drawing');
 
 const ADMIN_USERNAME = (process.env.ADMIN_USERNAME || 'admin').toLowerCase();
 
@@ -51,13 +60,37 @@ function setupSocketHandlers(io, db, opts = {}) {
   const slowModeTracker     = new Map(); // "slow:{userId}:{channelId}" → timestamp
   const pendingTempDelete   = new Map(); // code → timeout handle (grace-period before deleting temp-voice channel)
   const pendingVoiceLeave   = new Map(); // `${userId}:${code}` → { timer, oldSocketId } (grace-period before evicting a transiently-disconnected voice user)
+  const drawingBoards       = new Map(); // channelId → temporary board state for the current server process
+  const drawingParticipants = new Map(); // channelId → Map<socketId, participant>
+  const drawingStateSyncLimits = new Map(); // userId → recent full-board synchronization timestamps
 
   const state = {
     channelUsers, voiceUsers, voiceLastActivity,
     activeMusic, musicQueues,
     activeScreenSharers, activeWebcamUsers, streamViewers,
-    slowModeTracker, pendingTempDelete, pendingVoiceLeave
+    slowModeTracker, pendingTempDelete, pendingVoiceLeave,
+    drawingBoards, drawingParticipants, drawingStateSyncLimits
   };
+
+  function clearDrawingChannelState(channelId) {
+    const normalizedChannelId = Number(channelId);
+    if (!Number.isInteger(normalizedChannelId) || normalizedChannelId <= 0) return;
+
+    const participants = drawingParticipants.get(normalizedChannelId);
+    if (participants) {
+      for (const socketId of participants.keys()) {
+        const participantSocket = io.of('/').sockets.get(socketId);
+        if (participantSocket?.drawingChannelId === normalizedChannelId) {
+          participantSocket.drawingChannelId = null;
+        }
+      }
+    }
+
+    drawingBoards.delete(normalizedChannelId);
+    drawingParticipants.delete(normalizedChannelId);
+    io.in(`drawing:${normalizedChannelId}`).socketsLeave(`drawing:${normalizedChannelId}`);
+  }
+  state.clearDrawingChannelState = clearDrawingChannelState;
 
   // ── Rich presence ───────────────────────────────────────
   // Owns the in-memory "what is this user doing" map and the Steam/Spotify
@@ -244,24 +277,134 @@ function setupSocketHandlers(io, db, opts = {}) {
     state.activity.setHavenMusic(listeners, { title: music.title, channelName });
   }
 
-  function emitMusicSharedToRoom(code, music) {
-    const voiceRoom = voiceUsers.get(code);
-    if (!voiceRoom || !music) return;
-    for (const [, user] of voiceRoom) {
-      io.to(user.socketId).emit('music-shared', {
-        userId: music.userId, username: music.username,
-        url: music.url, title: music.title, trackId: music.id,
-        channelCode: code, resolvedFrom: music.resolvedFrom,
-        syncState: getActiveMusicSyncState(music)
+  function getMusicSharedPayload(code, music) {
+    const bilibiliMedia = music.resolvedFrom === 'bilibili'
+      ? createBilibiliMediaPayload(music.media)
+      : null;
+    return {
+      userId: music.userId,
+      username: music.username,
+      url: music.url,
+      title: music.title,
+      trackId: music.id,
+      channelCode: code,
+      resolvedFrom: music.resolvedFrom,
+      media: bilibiliMedia,
+      syncState: getActiveMusicSyncState(music)
+    };
+  }
+
+  async function ensureBilibiliMusicMedia(music, force = false, preferredVideoHeight = null) {
+    if (!music || music.resolvedFrom !== 'bilibili') return null;
+    if (music.mediaResolvePromise) return music.mediaResolvePromise;
+    const hadMedia = !!music.media;
+    const explicitVideoHeight = Number(preferredVideoHeight);
+    const rememberedVideoHeight = Number(music.bilibiliVideoHeight);
+    const requestedVideoHeight = Number.isInteger(explicitVideoHeight)
+      ? explicitVideoHeight
+      : Number.isInteger(rememberedVideoHeight)
+        ? rememberedVideoHeight
+        : 360;
+    const mediaResolutionGeneration = Number(music.mediaResolutionGeneration || 0) + 1;
+    music.mediaResolutionGeneration = mediaResolutionGeneration;
+    const isRequestedQualityLoaded = Number(music.media?.requestedVideoHeight) === requestedVideoHeight;
+    if (!force && isRequestedQualityLoaded && music.media && Number(music.media.expiresAt) - Date.now() > 120000) {
+      return music.media;
+    }
+
+    const task = (async () => {
+      const media = await ensureBilibiliPlaybackSession({
+        force,
+        trackId: music.id,
+        sourcePageUrl: music.url,
+        preferredVideoHeight: requestedVideoHeight
       });
+      if (music.mediaResolutionGeneration !== mediaResolutionGeneration) {
+        releaseBilibiliPlaybackSession(music.id);
+        throw new Error('Bilibili media resolution was cancelled');
+      }
+      const refreshedState = hadMedia ? getActiveMusicSyncState(music) : null;
+      music.media = media;
+      music.bilibiliVideoHeight = media.requestedVideoHeight || requestedVideoHeight;
+      if (Number.isFinite(media.duration) && media.duration > 0) {
+        music.durationSeconds = media.duration;
+        music.playbackState = {
+          isPlaying: refreshedState?.isPlaying !== false,
+          positionSeconds: hadMedia
+            ? clampMusicPosition(refreshedState?.positionSeconds || 0, media.duration)
+            : 0,
+          durationSeconds: media.duration,
+          updatedAt: Date.now()
+        };
+      }
+      return media;
+    })();
+
+    music.mediaResolvePromise = task;
+    try {
+      return await task;
+    } finally {
+      if (music.mediaResolvePromise === task) delete music.mediaResolvePromise;
     }
   }
 
-  function startQueuedMusic(code, entry) {
+  function clearMusicMedia(music) {
+    if (!music || music.resolvedFrom !== 'bilibili') return;
+    music.mediaResolutionGeneration = Number(music.mediaResolutionGeneration || 0) + 1;
+    releaseBilibiliPlaybackSession(music.id);
+    delete music.media;
+    delete music.mediaResolvePromise;
+    delete music.mediaRefreshBroadcastPromise;
+  }
+
+  async function emitMusicSharedToSocket(targetSocket, code, music, options = {}) {
+    if (!targetSocket || !music) return false;
+    await ensureBilibiliMusicMedia(music, options.force === true, options.preferredVideoHeight);
+    if (activeMusic.get(code) !== music) return false;
+    targetSocket.emit('music-shared', getMusicSharedPayload(code, music));
+    return true;
+  }
+
+  async function emitMusicSharedToRoom(code, music, options = {}) {
+    const voiceRoom = voiceUsers.get(code);
+    if (!voiceRoom || !music) return false;
+    await ensureBilibiliMusicMedia(music, options.force === true, options.preferredVideoHeight);
+    if (activeMusic.get(code) !== music) return false;
+    const payload = getMusicSharedPayload(code, music);
+    for (const [, user] of voiceRoom) {
+      io.to(user.socketId).emit('music-shared', payload);
+    }
+    return true;
+  }
+
+  async function startQueuedMusic(code, entry) {
     const music = setActiveMusic(code, entry);
-    if (!music) return;
-    emitMusicSharedToRoom(code, music);
-    broadcastMusicQueue(code);
+    if (!music) return null;
+    try {
+      const emitted = await emitMusicSharedToRoom(code, music);
+      if (activeMusic.get(code) !== music) {
+        clearMusicMedia(music);
+        return null;
+      }
+      if (!emitted) {
+        activeMusic.delete(code);
+        clearMusicMedia(music);
+        return null;
+      }
+      broadcastMusicQueue(code);
+      return music;
+    } catch (error) {
+      if (activeMusic.get(code) === music) activeMusic.delete(code);
+      clearMusicMedia(music);
+      io.to(`voice:${code}`).emit('toast', {
+        message: `Could not start Bilibili playback: ${String(error?.message || 'media resolution failed').slice(0, 240)}`,
+        type: 'error'
+      });
+      const next = popNextQueuedMusic(code);
+      broadcastMusicQueue(code);
+      if (next) return startQueuedMusic(code, next);
+      return null;
+    }
   }
 
   function popNextQueuedMusic(code) {
@@ -525,6 +668,7 @@ function setupSocketHandlers(io, db, opts = {}) {
     }
     if (room.size === 0) {
       voiceUsers.delete(code);
+      clearMusicMedia(activeMusic.get(code));
       activeMusic.delete(code);
       syncMusicActivity(code);
       musicQueues.delete(code);
@@ -536,6 +680,7 @@ function setupSocketHandlers(io, db, opts = {}) {
           db.prepare('DELETE FROM messages WHERE channel_id = ?').run(ch.id);
           db.prepare('DELETE FROM channel_members WHERE channel_id = ?').run(ch.id);
           db.prepare('DELETE FROM channels WHERE id = ?').run(ch.id);
+          clearDrawingChannelState(ch.id);
           io.emit('channel-deleted', { code, reason: 'temp-empty' });
           channelUsers.delete(code);
           console.log(`[Temporary] Temp voice channel "${code}" deleted (pruned empty)`);
@@ -772,6 +917,7 @@ function setupSocketHandlers(io, db, opts = {}) {
     broadcastVoiceUsers(code);
     broadcastStreamInfo(code);
     if (voiceRoom.size === 0) {
+      clearMusicMedia(activeMusic.get(code));
       activeMusic.delete(code);
       syncMusicActivity(code);
       musicQueues.delete(code);
@@ -789,6 +935,7 @@ function setupSocketHandlers(io, db, opts = {}) {
             db.prepare('DELETE FROM messages WHERE channel_id = ?').run(ch.id);
             db.prepare('DELETE FROM channel_members WHERE channel_id = ?').run(ch.id);
             db.prepare('DELETE FROM channels WHERE id = ?').run(ch.id);
+            clearDrawingChannelState(ch.id);
             io.emit('channel-deleted', { code, reason: 'temp-empty' });
             channelUsers.delete(code);
             voiceUsers.delete(code);
@@ -1107,11 +1254,13 @@ function setupSocketHandlers(io, db, opts = {}) {
           db.prepare('DELETE FROM messages WHERE channel_id = ?').run(ch.id);
           db.prepare('DELETE FROM channel_members WHERE channel_id = ?').run(ch.id);
           db.prepare('DELETE FROM channels WHERE id = ?').run(ch.id);
+          clearDrawingChannelState(ch.id);
           io.to(`channel:${ch.code}`).to(`voice:${ch.code}`).emit('channel-deleted', { code: ch.code, reason: 'expired' });
           channelUsers.delete(ch.code);
           voiceUsers.delete(ch.code);
+          clearMusicMedia(activeMusic.get(ch.code));
           activeMusic.delete(ch.code);
-      syncMusicActivity(ch.code);
+          syncMusicActivity(ch.code);
           musicQueues.delete(ch.code);
           console.log(`[Temporary] Channel "${ch.code}" expired and was deleted`);
         }
@@ -1152,11 +1301,13 @@ function setupSocketHandlers(io, db, opts = {}) {
         db.prepare('DELETE FROM messages WHERE channel_id = ?').run(ch.id);
         db.prepare('DELETE FROM channel_members WHERE channel_id = ?').run(ch.id);
         db.prepare('DELETE FROM channels WHERE id = ?').run(ch.id);
+        clearDrawingChannelState(ch.id);
         io.emit('channel-deleted', { code: ch.code, reason: 'temp-empty' });
         channelUsers.delete(ch.code);
         voiceUsers.delete(ch.code);
+        clearMusicMedia(activeMusic.get(ch.code));
         activeMusic.delete(ch.code);
-      syncMusicActivity(ch.code);
+        syncMusicActivity(ch.code);
         musicQueues.delete(ch.code);
         console.log(`[Temporary] Empty temp voice channel "${ch.code}" pruned by safety-net sweep`);
       }
@@ -1436,6 +1587,7 @@ function setupSocketHandlers(io, db, opts = {}) {
       'request-screen-renegotiate',
       'voice-speaking', 'webcam-started', 'webcam-stopped',
       'stream-viewer-joined', 'stream-viewer-left',
+      'drawing-stroke-begin', 'drawing-stroke-points',
       'visibility-change'
     ]);
 
@@ -1549,7 +1701,8 @@ function setupSocketHandlers(io, db, opts = {}) {
       resolveSpotifyToYouTube, resolveBilibiliLink, searchYouTube, fetchYouTubePlaylist,
       extractYouTubeVideoId, resolveMusicMetadata,
       getActiveMusicSyncState, updateActiveMusicPlaybackState,
-      setActiveMusic, emitMusicSharedToRoom, startQueuedMusic,
+      setActiveMusic, emitMusicSharedToSocket, emitMusicSharedToRoom, startQueuedMusic,
+      clearMusicMedia,
       popNextQueuedMusic, isNaturalMusicFinish,
       broadcastMusicQueue, getMusicQueuePayload,
       sanitizeQueueEntry, trimMusicText, stripYouTubePlaylistParam,
@@ -1578,6 +1731,8 @@ function setupSocketHandlers(io, db, opts = {}) {
     registerModeration(socket, ctx);
     registerRoles(socket, ctx);
     registerAdmin(socket, ctx);
+    registerBilibiliAdmin(socket, ctx);
+    registerDrawing(socket, ctx);
 
     // ── Disconnect handler ────────────────────────────────
     socket.on('disconnect', () => {

@@ -4,6 +4,7 @@ export default {
 
 async switchChannel(code) {
   if (this.currentChannel === code) return;
+  const previousChannelCode = this.currentChannel;
 
   // Clear any pending image queue from previous channel
   this._clearImageQueue();
@@ -11,6 +12,7 @@ async switchChannel(code) {
   // Voice persists across channel switches — no auto-disconnect
 
   this.currentChannel = code;
+  this._handleDrawingChannelChanged?.(previousChannelCode, code);
   // Reset pin indicator until message-history reports the count for this channel
   this._updatePinIndicator?.(this._pinnedCountByChannel?.[code] || 0);
   this._coupledToBottom = true;
