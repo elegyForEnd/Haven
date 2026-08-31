@@ -174,6 +174,7 @@
   },
   "toasts": {
     "roles_updated": "您的角色已更新",
+    "role_server_no_response": "服务器无响应。它可能运行的是旧版 Haven。请更新服务器文件并完全重启服务器，然后重试。",
     "status_pending_reconnect": "状态将在重新连接后更新",
     "channel_created": "频道 \"#{{name}}\" 已创建！\n邀请码：{{code}}",
     "channel_deleted": "频道已删除",
@@ -400,6 +401,7 @@
     "rename_sub_channel": "重命名子频道",
     "set_channel_topic": "设置频道话题",
     "manage_sub_channels": "管理子频道",
+    "manage_channel_settings": "管理频道设置",
     "create_channel": "创建频道",
     "upload_files": "上传文件",
     "use_voice": "使用语音聊天",
@@ -409,6 +411,7 @@
     "mention_everyone": "提及 @everyone",
     "view_history": "查看消息记录",
     "view_all_members": "查看所有服务器成员",
+    "view_all_channels": "查看所有频道（自动加入）",
     "manage_emojis": "管理自定义表情",
     "manage_soundboard": "管理音效板",
     "promote_user": "提升用户权限",
@@ -690,6 +693,7 @@
     "language_section": {
       "title": "语言",
       "label": "语言",
+      "auto": "自动",
       "hint": "更改立即生效"
     },
     "layout_density": {
@@ -919,6 +923,8 @@
       "max_sound_hint": "音效板最大上传大小（256–10240 KB，默认1024 / 1 MB）",
       "max_emoji_hint": "自定义表情最大上传大小（64–1024 KB，默认256）",
       "max_poll_hint": "每个投票的最大选项数（2–25，默认10）",
+      "max_invite_uses": "邀请链接最大使用次数",
+      "max_invite_uses_hint": "可为邀请链接设置的最大使用次数。管理员和拥有服务器管理权限的用户不受此限制。 (0 = 无限制)",
       "sounds_hint": "上传音频文件作为自定义通知声音",
       "emojis_hint": "上传图片作为自定义服务器表情",
       "emojis_upload_hint": "上传图片作为自定义服务器表情（最大256 KB，png/gif/webp）。名称须为小写，不含空格。",

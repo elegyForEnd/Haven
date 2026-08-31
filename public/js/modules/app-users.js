@@ -5,8 +5,21 @@ export default {
 _renderOnlineUsers(users) {
   this._lastOnlineUsers = users;
   const el = document.getElementById('online-users');
+  const searchWrap = document.getElementById('user-search-wrap');
+  if (searchWrap) searchWrap.style.display = users.length ? '' : 'none';
   if (users.length === 0) {
     el.innerHTML = `<p class="muted-text">${t('users.no_one_here')}</p>`;
+    return;
+  }
+
+  // Member search. Filtering here rather than hiding rows in the DOM keeps the
+  // group counts honest, so "Online 3" means three matches and not three people
+  // of whom you can see one. The roster re-renders on every presence change, so
+  // the term lives on the instance to survive that.
+  const term = (this._userFilter || '').trim().toLowerCase();
+  if (term) users = users.filter(u => (u.username || '').toLowerCase().includes(term));
+  if (users.length === 0) {
+    el.innerHTML = `<p class="muted-text">${t('users.no_search_matches')}</p>`;
     return;
   }
 
@@ -22,11 +35,22 @@ _renderOnlineUsers(users) {
     }
   });
 
-  // Sort: online first, then alphabetical
+  // Sort: online first, then by role level, then alphabetically inside each
+  // level. Straight alphabetical buried whoever is actually in charge somewhere
+  // in the middle of the list, which is the opposite of what you want when you
+  // are looking for someone who can help. (#5470 follow-up, asked by @birdcrazy)
+  //
+  // The level already accounts for the channel you are in: the server sends the
+  // highest role that applies here, merging server-wide and channel-scoped ones.
+  // A user whose role badge is hidden reports no role and sorts as level 0, so
+  // hiding the admin badge does not out them by position either.
+  const levelOf = (u) => (u.role && Number.isFinite(u.role.level)) ? u.role.level : 0;
   const sorted = [...users].sort((a, b) => {
     const aOn = a.online !== false;
     const bOn = b.online !== false;
     if (aOn !== bOn) return aOn ? -1 : 1;
+    const lv = levelOf(b) - levelOf(a);
+    if (lv !== 0) return lv;
     return a.username.toLowerCase().localeCompare(b.username.toLowerCase());
   });
 
@@ -85,13 +109,20 @@ _showUserGearMenu(anchorEl, userId, username) {
   const canMod = this.user.isAdmin || this._canModerate();
   const canPromote = this._hasPerm('promote_user');
   const isAdmin = this.user.isAdmin;
+  // Ban was gated on isAdmin here, which meant a moderator holding ban_user
+  // could ban from the admin members list but not from the sidebar they
+  // actually work in. The server has always accepted ban_user; this menu was
+  // the only thing hiding it. (v3.43.0)
+  const canBan = isAdmin || this._hasPerm('ban_user');
 
   // Mirror of the right-click context menu's invite filter: any non-DM,
   // non-private channel the user can see (admins also see private channels).
   // Showing the entry only when there's at least one channel available.
+  // Same rule as the right-click menu: the server accepts invites to a private
+  // channel from its creator or a moderator in it, not admins alone. (#5466)
   const inviteChannels = (this.channels || []).filter(ch =>
     !ch.is_dm && ch.name && !ch.parent_channel_id &&
-    ((!ch.is_private && ch.code_visibility !== 'private') || isAdmin)
+    ((!ch.is_private && ch.code_visibility !== 'private') || isAdmin || ch.canInvitePrivate)
   );
   const canInvite = inviteChannels.length > 0 && userId !== this.user?.id;
 
@@ -100,7 +131,7 @@ _showUserGearMenu(anchorEl, userId, username) {
   if (canInvite) items += `<button class="gear-menu-item" data-action="add-to-channel">➕ ${t('users.gear_menu.add_to_channel')}</button>`;
   if (canMod) items += `<button class="gear-menu-item" data-action="kick">👢 ${t('users.gear_menu.kick')}</button>`;
   if (canMod) items += `<button class="gear-menu-item" data-action="mute">🔇 ${t('users.gear_menu.mute')}</button>`;
-  if (isAdmin) items += `<button class="gear-menu-item gear-menu-danger" data-action="ban">⛔ ${t('users.gear_menu.ban')}</button>`;
+  if (canBan) items += `<button class="gear-menu-item gear-menu-danger" data-action="ban">⛔ ${t('users.gear_menu.ban')}</button>`;
   if (isAdmin) items += `<button class="gear-menu-item gear-menu-danger" data-action="delete-user">🗑️ ${t('users.gear_menu.delete_user')}</button>`;
   // Admin password reset (#5300): gated on server setting AND target is not self.
   if (isAdmin && this.serverSettings?.admin_password_reset_enabled === 'true' && userId !== this.user?.id) {
@@ -244,11 +275,11 @@ _renderUserItem(u, scoreLookup) {
   const initial = u.username.charAt(0).toUpperCase();
   const shapeClass = 'avatar-' + (u.avatarShape || 'circle');
   const avatarImg = u.avatar
-    ? `<img class="user-item-avatar user-item-avatar-img ${shapeClass}" src="${this._escapeHtml(u.avatar)}" alt="${initial}"><div class="user-item-avatar ${shapeClass}" style="background-color:${color};display:none">${initial}</div>`
+    ? `<img class="user-item-avatar user-item-avatar-img ${shapeClass}"${this._animAttr(u.animateProfile)} src="${this._escapeHtml(u.avatar)}" alt="${initial}"><div class="user-item-avatar ${shapeClass}" style="background-color:${color};display:none">${initial}</div>`
     : `<div class="user-item-avatar ${shapeClass}" style="background-color:${color}">${initial}</div>`;
 
   // Wrap avatar + status dot together (Discord-style overlay)
-  const avatarHtml = `<div class="user-avatar-wrapper">${avatarImg}<span class="user-status-dot${statusClass ? ' ' + statusClass : ''}"></span></div>`;
+  const avatarHtml = `<div class="user-avatar-wrapper">${avatarImg}${this._pfpBorderMarker(u.border, u.borderTransform, u.animateProfile)}<span class="user-status-dot${statusClass ? ' ' + statusClass : ''}"></span></div>`;
 
   // Role: color dot to the left of name + tooltip on hover
   // Role display mode
@@ -293,23 +324,38 @@ _renderUserItem(u, scoreLookup) {
   // Show DM + Gear icon. Gear opens a dropdown with mod actions.
   const canModThis = (this.user.isAdmin || this._canModerate()) && u.id !== this.user.id;
   const canPromote = this._hasPerm('promote_user') && u.id !== this.user.id;
-  const hasGear = canModThis || canPromote;
+  // A moderator whose role grants ban_user but who sits below the level-25
+  // _canModerate() threshold still needs the gear to appear. (v3.43.0)
+  const canBanThis = this._hasPerm('ban_user') && u.id !== this.user.id;
+  const hasGear = canModThis || canPromote || canBanThis;
   const gearBtn = hasGear
     ? `<button class="user-action-btn user-gear-btn" data-uid="${u.id}" data-uname="${this._escapeHtml(u.username)}" title="${t('users.more_actions')}">⚙️</button>`
     : '';
   const modBtns = (dmBtn || gearBtn)
     ? `<div class="user-admin-actions">${dmBtn}${gearBtn}</div>`
     : '';
+  // The name gets a line to itself. Everything used to sit on one row, so a
+  // custom status and an activity together squeezed the username down to a
+  // couple of characters and an ellipsis. Whatever the person is doing now
+  // goes on a smaller second line underneath, and only one thing is shown
+  // there: a game beats music (picked in _sidebarActivityHtml), and any
+  // activity beats a custom status, which is the least specific of the three.
+  const subLine = activityHtml || statusTextHtml;
+  const subLineHtml = subLine ? `<div class="user-item-sub">${subLine}</div>` : '';
+
   return `
-    <div class="user-item${onlineClass}" data-user-id="${u.id}">
+    <div class="user-item${onlineClass}${subLineHtml ? ' has-sub' : ''}" data-user-id="${u.id}">
       ${avatarHtml}
-      ${roleDot}${roleIconBefore}
-      <span class="user-item-name"${nameStyle}${this._nicknames[u.id] ? ` title="${this._escapeHtml(u.username)}"` : ''}>${this._escapeHtml(this._getNickname(u.id, u.username))}</span>
-      ${roleIconAfter}
-      ${roleBadge}
-      ${guestBadge}
-      ${statusTextHtml}
-      ${activityHtml}
+      <div class="user-item-text">
+        <div class="user-item-line">
+          ${roleDot}${roleIconBefore}
+          <span class="user-item-name"${nameStyle}${this._nicknames[u.id] ? ` title="${this._escapeHtml(u.username)}"` : ''}>${this._escapeHtml(this._getNickname(u.id, u.username))}</span>
+          ${roleIconAfter}
+          ${roleBadge}
+          ${guestBadge}
+        </div>
+        ${subLineHtml}
+      </div>
       ${scoreBadge}
       ${modBtns}
     </div>
@@ -373,9 +419,11 @@ _renderConnections() {
     // Spotify is collapsed behind a disclosure. It needs a registered developer
     // app and its development-mode user allowlist caps it at roughly 25 people,
     // so steering everyone here by default sends them down the hardest path for
-    // a worse result than Last.fm.
+    // a worse result than Last.fm. Spotify then restricted the Web API to
+    // Premium accounts (#5528), which makes that even more true: the steps used
+    // to say a free account was fine, and following them on one now dead-ends.
     { id: 'spotify', icon: '🎧', name: 'Spotify', advanced: true,
-      blurb: 'Direct connection. Harder to set up and limited to ~25 users — prefer Last.fm above.',
+      blurb: 'Direct connection. Needs a Spotify Premium account, is harder to set up, and is limited to ~25 users. Prefer Last.fm above.',
       help: 'https://developer.spotify.com/dashboard',
       helpLabel: 'Open the Spotify developer dashboard',
       // Two things trip people up here, both worth stating outright:
@@ -387,7 +435,7 @@ _renderConnections() {
       //     registering a name so Spotify knows who is asking.
       steps: [
         'Use the link above — it goes to <b>developer.spotify.com</b>.',
-        'Sign in with your normal Spotify account (free works). Accept the developer terms if it asks.',
+        'Sign in with your Spotify account. <b>This needs Spotify Premium.</b> As of 2026 the Web API is no longer available on free accounts, so the rest of these steps will not work without it (#5528). Accept the developer terms if it asks.',
         'Click <b>Create app</b>. You are not building software — this just registers a name. Call it "Haven".',
         'Paste this into <b>Redirect URI</b>:<code class="setup-uri">' + location.origin + '/connect/spotify/callback</code>',
         'Tick <b>Web API</b>, save, then open <b>Settings</b> on the app you just made.',
@@ -434,6 +482,10 @@ _renderConnections() {
       // Surface a way to paste a fresh one without hand-editing .env.
       if (isAdmin) {
         btn += `<button class="btn-sm connection-rekey" data-provider="${p.id}">Change key</button>`;
+        // (#5529) Setting a provider up was one-way: the form could replace a
+        // key but never clear one, so an admin had no way to switch an
+        // integration back off without editing .env by hand.
+        if (configured) btn += `<button class="btn-sm connection-forget" data-provider="${p.id}">Remove key</button>`;
       }
     } else if (p.linkType === 'username') {
       // No OAuth for this provider — the whole link flow is one text field.
@@ -441,12 +493,20 @@ _renderConnections() {
       btn += `<button class="btn-sm btn-accent connection-username-toggle" data-provider="${p.id}">Connect</button>`;
       if (isAdmin) {
         btn += `<button class="btn-sm connection-rekey" data-provider="${p.id}">Change key</button>`;
+        // (#5529) Setting a provider up was one-way: the form could replace a
+        // key but never clear one, so an admin had no way to switch an
+        // integration back off without editing .env by hand.
+        if (configured) btn += `<button class="btn-sm connection-forget" data-provider="${p.id}">Remove key</button>`;
       }
     } else {
       sub = p.blurb;
       btn += `<button class="btn-sm btn-accent connection-link" data-provider="${p.id}">Link</button>`;
       if (isAdmin) {
         btn += `<button class="btn-sm connection-rekey" data-provider="${p.id}">Change key</button>`;
+        // (#5529) Setting a provider up was one-way: the form could replace a
+        // key but never clear one, so an admin had no way to switch an
+        // integration back off without editing .env by hand.
+        if (configured) btn += `<button class="btn-sm connection-forget" data-provider="${p.id}">Remove key</button>`;
       }
     }
 
@@ -565,6 +625,20 @@ _renderConnections() {
         form.hidden = !form.hidden;
         if (!form.hidden) form.querySelector('input')?.focus();
       }
+    });
+  });
+  // (#5529) Remove the provider's credentials entirely. Confirmed first,
+  // because it turns the integration off for everyone on the server, and it
+  // clears every key the provider uses so Spotify cannot be left with an id
+  // but no secret.
+  host.querySelectorAll('.connection-forget').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const provider = PROVIDERS.find(x => x.id === btn.dataset.provider);
+      if (!provider) return;
+      const keys = provider.fields.map(f => f.key);
+      const label = provider.name;
+      if (!confirm(`Remove the ${label} key from this server? Anyone linked to ${label} will stop showing what they are playing until a new key is set.`)) return;
+      this.socket.emit('clear-integration-key', { keys });
     });
   });
   host.querySelectorAll('.connection-cancel').forEach(btn => {
@@ -709,7 +783,7 @@ _showProfilePopup(profile) {
   const shapeClass = 'avatar-' + (profile.avatarShape || 'circle');
 
   const avatarHtml = profile.avatar
-    ? `<img class="profile-popup-avatar ${shapeClass}" src="${this._escapeHtml(profile.avatar)}" alt="${initial}">`
+    ? `<img class="profile-popup-avatar ${shapeClass}"${this._animAttr(profile.animateProfile)} src="${this._escapeHtml(profile.avatar)}" alt="${initial}">`
     : `<div class="profile-popup-avatar profile-popup-avatar-fallback ${shapeClass}" style="background-color:${color}">${initial}</div>`;
 
   // Status dot
@@ -754,7 +828,7 @@ _showProfilePopup(profile) {
     : '';
   const actionsHtml = isSelf
     ? `<button class="profile-popup-action-btn profile-edit-btn" id="profile-popup-edit-btn">✏️ ${t('users.edit_profile')}</button><button class="profile-popup-action-btn profile-dm-btn" data-dm-uid="${profile.id}" title="Notes to self">📝 Notes to self</button>`
-    : `<button class="profile-popup-action-btn profile-dm-btn" data-dm-uid="${profile.id}">💬 ${t('users.message_btn')}</button><button class="profile-popup-action-btn profile-nick-btn" data-nick-uid="${profile.id}" data-nick-uname="${this._escapeHtml(profile.username)}">${nickBtnLabel}</button>${gearBtnHtml}`;
+    : `<button class="profile-popup-action-btn profile-dm-btn" data-dm-uid="${profile.id}">💬 ${t('users.message_btn')}</button><button class="profile-popup-action-btn profile-nick-btn" data-nick-uid="${profile.id}" data-nick-uname="${this._escapeHtml(profile.username)}" data-nick-dname="${this._escapeHtml(profile.displayName)}">${nickBtnLabel}</button>${gearBtnHtml}`;
 
   const popup = document.createElement('div');
   popup.id = 'profile-popup';
@@ -765,6 +839,7 @@ _showProfilePopup(profile) {
     </div>
     <div class="profile-popup-avatar-wrapper">
       ${avatarHtml}
+      ${this._pfpBorderMarker(profile.border, profile.borderTransform, profile.animateProfile)}
       <span class="profile-popup-status-dot ${statusClass}" title="${statusLabel}"></span>
     </div>
     <div class="profile-popup-body">
@@ -792,6 +867,10 @@ _showProfilePopup(profile) {
   }
 
   document.body.appendChild(popup);
+
+  // Opening the profile card is a trigger context: flag the card so the freeze
+  // observer leaves its animated pfp (avatar and later-folded border) playing.
+  popup.dataset.animPlay = '1';
 
   // Position near the anchor element
   this._positionProfilePopup(popup);
@@ -842,8 +921,9 @@ _showProfilePopup(profile) {
     nickBtnEl.addEventListener('click', () => {
       const uid = parseInt(nickBtnEl.dataset.nickUid);
       const uname = nickBtnEl.dataset.nickUname;
+      const dname = nickBtnEl.dataset.nickDname;
       this._closeProfilePopup();
-      this._showNicknameDialog(uid, uname);
+      this._showNicknameDialog(uid, uname, dname);
     });
   }
 
@@ -872,6 +952,7 @@ _showProfilePopup(profile) {
       const bioInput = document.getElementById('edit-profile-bio');
       if (bioInput) bioInput.value = this.user.bio || '';
       this._updateAvatarPreview();
+      this._resetBorderEditState();
       const picker = document.getElementById('avatar-shape-picker');
       if (picker) {
         const currentShape = this.user.avatarShape || localStorage.getItem('haven_avatar_shape') || 'circle';
@@ -1113,13 +1194,15 @@ _renderVoiceUsers(users, channelCode) {
     const statusIconsHtml = statusIcons.length
       ? `<span class="voice-status-icons">${statusIcons.join('')}</span>`
       : '';
+    const botBadge = u.isBot ? '<span class="bot-badge">BOT</span>' : '';
     return `
-      <div class="user-item voice-user-item${talking ? ' talking' : ''}" data-user-id="${u.id}"${dotColor ? ` style="--voice-dot-color:${dotColor}"` : ''}>
+      <div class="user-item voice-user-item${talking ? ' talking' : ''}" data-user-id="${u.id}" data-is-bot="${u.isBot ? 'true' : 'false'}"${dotColor ? ` style="--voice-dot-color:${dotColor}"` : ''}>
         <span class="user-dot voice"${dotStyle}></span>
         <span class="user-item-name"${this._nicknames[u.id] ? ` title="${this._escapeHtml(u.username)}"` : ''}>${this._escapeHtml(this._getNickname(u.id, u.username))}</span>
+        ${botBadge}
         ${streamBadge}
         ${statusIconsHtml}
-        ${isSelf ? '' : `<button class="voice-user-menu-btn" data-user-id="${u.id}" data-username="${this._escapeHtml(u.username)}" title="${t('users.more_actions')}">⋯</button>`}
+        ${isSelf || u.isBot ? '' : `<button class="voice-user-menu-btn" data-user-id="${u.id}" data-username="${this._escapeHtml(u.username)}" title="${t('users.more_actions')}">⋯</button>`}
       </div>
     `;
   }).join('');
@@ -1137,7 +1220,7 @@ _renderVoiceUsers(users, channelCode) {
   // Bind voice user names/items to open profile popup (same as sidebar)
   el.querySelectorAll('.voice-user-item').forEach(item => {
     const nameEl = item.querySelector('.user-item-name');
-    if (nameEl) {
+    if (nameEl && item.dataset.isBot !== 'true') {
       nameEl.style.cursor = 'pointer';
       nameEl.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -1152,7 +1235,7 @@ _renderVoiceUsers(users, channelCode) {
     // Right-click on voice user → same options as "..." button
     item.addEventListener('contextmenu', (e) => {
       const userId = parseInt(item.dataset.userId);
-      if (isNaN(userId) || userId === this.user.id) return;
+      if (isNaN(userId) || userId === this.user.id || item.dataset.isBot === 'true') return;
       e.preventDefault();
       e.stopPropagation();
       const btn = item.querySelector('.voice-user-menu-btn');
@@ -1357,8 +1440,12 @@ _setNickname(userId, nickname) {
   }
 },
 
-_showNicknameDialog(userId, currentUsername) {
+_showNicknameDialog(userId, currentUsername, currentDisplayName) {
   const existing = this._nicknames[userId] || '';
+  const displayName = currentDisplayName || currentUsername;
+  // Members with Manage Display Names can flip this modal into editing the
+  // target's real (server-wide) display name instead of a private nickname.
+  const canManageNames = userId !== this.user?.id && this._hasPerm('manage_display_names');
   const dialog = document.createElement('div');
   dialog.className = 'modal-overlay';
   dialog.style.display = 'flex';
@@ -1368,8 +1455,15 @@ _showNicknameDialog(userId, currentUsername) {
       <h3 style="margin-top:0">${t('users.set_nickname_title')}</h3>
       <p class="muted-text" style="margin:0 0 12px">${t('users.nickname_hint', { name: `<strong>${this._escapeHtml(currentUsername)}</strong>` })}</p>
       <input type="text" id="nickname-input" class="modal-input" value="${this._escapeHtml(existing)}" placeholder="${this._escapeHtml(currentUsername)}" maxlength="32" style="width:100%;box-sizing:border-box">
+      ${canManageNames ? `
+      <label class="toggle-row" style="margin-top:12px">
+        <span>${t('users.edit_display_name_toggle')}</span>
+        <input type="checkbox" id="nickname-global-toggle">
+      </label>
+      <p class="muted-text" id="nickname-global-note" style="display:none;margin:8px 0 0;padding:8px 10px;border-radius:6px;background:var(--bg-tertiary);border:1px solid var(--border-light);color:var(--text-secondary)">${t('users.edit_display_name_note')}</p>
+      ` : ''}
       <div class="modal-actions" style="margin-top:12px">
-        ${existing ? `<button class="btn-sm" id="nickname-clear">${t('users.nickname_clear_btn')}</button>` : ''}
+        <button class="btn-sm" id="nickname-clear" style="${existing ? '' : 'display:none'}">${t('users.nickname_clear_btn')}</button>
         <button class="btn-sm" id="nickname-cancel">${t('modals.common.cancel')}</button>
         <button class="btn-sm btn-accent" id="nickname-save">${t('modals.common.save')}</button>
       </div>
@@ -1384,24 +1478,52 @@ _showNicknameDialog(userId, currentUsername) {
   dialog.querySelector('#nickname-cancel').addEventListener('click', close);
   dialog.addEventListener('click', (e) => { if (e.target === dialog) close(); });
 
+  const globalToggle = dialog.querySelector('#nickname-global-toggle');
+  const globalNote = dialog.querySelector('#nickname-global-note');
   const clearBtn = dialog.querySelector('#nickname-clear');
-  if (clearBtn) {
-    clearBtn.addEventListener('click', () => {
-      this._setNickname(userId, null);
-      this._refreshNicknameDisplays();
-      this._showToast(t('users.nickname_cleared'), 'info');
-      close();
+  const isGlobal = () => !!(globalToggle && globalToggle.checked);
+
+  if (globalToggle) {
+    globalToggle.addEventListener('change', () => {
+      const on = globalToggle.checked;
+      // Checked: prefill the target's current display name and reveal the
+      // warning. Unchecked: fall back to the private nickname exactly as before.
+      input.value = on ? displayName : existing;
+      input.maxLength = on ? 20 : 32;
+      globalNote.style.display = on ? '' : 'none';
+      clearBtn.style.display = (on || existing) ? '' : 'none';
+      clearBtn.textContent = on ? t('users.display_name_reset_btn') : t('users.nickname_clear_btn');
+      input.focus();
+      input.select();
     });
   }
 
+  clearBtn.addEventListener('click', () => {
+    if (isGlobal()) {
+      // Reset the target's display name back to their username
+      this.socket.emit('rename-user-global', { targetId: userId, displayName: '' });
+      this._showToast(t('users.display_name_reset'), 'info');
+    } else {
+      this._setNickname(userId, null);
+      this._refreshNicknameDisplays();
+      this._showToast(t('users.nickname_cleared'), 'info');
+    }
+    close();
+  });
+
   dialog.querySelector('#nickname-save').addEventListener('click', () => {
     const val = input.value.trim();
-    this._setNickname(userId, val || null);
-    this._refreshNicknameDisplays();
-    if (val) {
-      this._showToast(t('users.nickname_set', { name: val }), 'success');
+    if (isGlobal()) {
+      this.socket.emit('rename-user-global', { targetId: userId, displayName: val });
+      this._showToast(t('users.display_name_updated', { name: val || displayName }), 'success');
     } else {
-      this._showToast(t('users.nickname_cleared'), 'info');
+      this._setNickname(userId, val || null);
+      this._refreshNicknameDisplays();
+      if (val) {
+        this._showToast(t('users.nickname_set', { name: val }), 'success');
+      } else {
+        this._showToast(t('users.nickname_cleared'), 'info');
+      }
     }
     close();
   });

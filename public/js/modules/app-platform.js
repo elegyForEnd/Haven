@@ -53,8 +53,16 @@ async _checkForUpdates() {
         title: t('header.update_title', { remote: remoteVersion, local: localVersion }),
         href: zipAsset ? zipAsset.browser_download_url : release.html_url
       };
-      this._applyUpdateBanner();
+    } else {
+      // Already current. This has to clear, because the check re-runs every 30
+      // minutes on a page that may have been open since before the update: the
+      // banner was only ever switched on, never off, so once it appeared it
+      // stayed until a full reload even after the server had been updated.
+      // Most visible on a machine that always runs the newest build, which
+      // would show "update available" for its own version. (#update-banner)
+      this._pendingUpdate = null;
     }
+    this._applyUpdateBanner();
   } catch (e) {
     // Silently fail — update check is non-critical
   }
@@ -70,7 +78,10 @@ async _checkForUpdates() {
 _applyUpdateBanner() {
   const banner = document.getElementById('update-banner');
   if (!banner) return;
-  if (!this._pendingUpdate) return; // no update detected yet
+  // No update pending: hide it. This used to return early and leave whatever
+  // was on screen, which is how a stale banner survived once the server had
+  // caught up.
+  if (!this._pendingUpdate) { banner.style.display = 'none'; return; }
 
   const adminOnly = this.serverSettings?.update_banner_admin_only === 'true';
   const canSee = !adminOnly || this.user?.isAdmin;
@@ -105,8 +116,25 @@ _isNewerVersion(remote, local) {
  *  itself is shown via the unified welcome-popup queue (see
  *  `_initWelcomePopups`) — this function only handles the persistent banner. */
 _initDesktopAppBanner() {
-  // Don't show if already in the desktop app
-  if (window.havenDesktop || navigator.userAgent.includes('Electron')) return;
+  // Don't advertise the desktop app to someone already running it. This checks
+  // every signal the rest of the client uses rather than just two: the preload
+  // exposes window.havenDesktop late in a long file, so anything that throws
+  // above it leaves that undefined, and the runtime does not always carry
+  // "Electron" in the user agent. data-desktop-app is set independently by the
+  // preload, so any one of them surviving is enough to recognise the app.
+  const inDesktopApp = !!(
+    window.havenDesktop?.isDesktopApp ||
+    window.havenDesktop ||
+    navigator.userAgent.includes('Electron') ||
+    document.documentElement.hasAttribute('data-desktop-app')
+  );
+  if (inDesktopApp) {
+    // Hide rather than just bail: the banner may already be on screen from a
+    // check that ran before the desktop signals landed.
+    const b = document.getElementById('desktop-app-banner');
+    if (b) b.style.display = 'none';
+    return;
+  }
 
   // Don't show on mobile / tablet — desktop app isn't relevant there
   if (/Android|iPhone|iPad|iPod|Mobile|Tablet/i.test(navigator.userAgent)) return;
@@ -288,13 +316,13 @@ _initWelcomePopups() {
     const remaining = queue.length - idx - 1;
     const footer = document.createElement('div');
     footer.className = 'haven-welcome-queue-footer';
-    footer.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:14px;padding-top:12px;border-top:1px solid var(--border, rgba(255,255,255,0.08));font-size:12px;color:var(--text-muted, #888);';
+    footer.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:14px;padding-top:12px;border-top:1px solid var(--border, rgba(255,255,255,0.08));font-size:0.75rem;color:var(--text-muted, #888);';
     const isLast = remaining === 0;
     footer.innerHTML = `
       <span class="haven-welcome-queue-pos">${idx + 1} of ${queue.length}</span>
       <span style="display:flex;align-items:center;gap:8px;">
-        ${queue.length > 1 && !isLast ? `<button type="button" class="haven-welcome-queue-skip" style="background:none;border:none;color:var(--text-muted, #888);text-decoration:underline;cursor:pointer;font-size:12px;padding:4px 8px;">Skip all</button>` : ''}
-        <button type="button" class="haven-welcome-queue-next" style="background:var(--accent, #5865f2);color:#fff;border:none;border-radius:6px;padding:6px 14px;cursor:pointer;font-size:12px;font-weight:600;">${isLast ? 'Done' : 'Next'}</button>
+        ${queue.length > 1 && !isLast ? `<button type="button" class="haven-welcome-queue-skip" style="background:none;border:none;color:var(--text-muted, #888);text-decoration:underline;cursor:pointer;font-size:0.75rem;padding:4px 8px;">Skip all</button>` : ''}
+        <button type="button" class="haven-welcome-queue-next" style="background:var(--accent, #5865f2);color:#fff;border:none;border-radius:6px;padding:6px 14px;cursor:pointer;font-size:0.75rem;font-weight:600;">${isLast ? 'Done' : 'Next'}</button>
       </span>
     `;
     // Find the deepest single-child div to append into; falls back gracefully
@@ -948,6 +976,17 @@ _showE2EPasswordModal() {
   submitBtn.disabled = false;
   submitBtn.textContent = 'Unlock';
 
+  // (#12) An SSO account has no Haven password — its key is wrapped with the
+  // separate encryption passphrase set at first sign-in. Ask for that instead,
+  // or the prompt tells the user to enter a password they do not have.
+  if (this.user?.isSso) {
+    const titleEl = modal.querySelector('h3 span');
+    const descEl = modal.querySelector('.e2e-pw-desc');
+    if (titleEl) titleEl.textContent = 'Passphrase Required';
+    if (descEl) descEl.textContent = 'Enter the encryption passphrase you set when you first signed in, to unlock your private messages on this device.';
+    input.placeholder = 'Enter your encryption passphrase';
+  }
+
   // Check rate limit
   const now = Date.now();
   this._e2ePwAttempts = (this._e2ePwAttempts || []).filter(t => now - t < 60_000);
@@ -999,13 +1038,18 @@ async _submitE2EPassword() {
   errorEl.style.display = 'none';
 
   try {
-    // Verify password on server
-    const resp = await fetch('/api/auth/verify-password', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: this.user.username, password })
-    });
-    const data = await resp.json();
+    // (#12) SSO accounts have nothing on the server to check this against —
+    // the passphrase is deliberately never sent anywhere, so the server has no
+    // copy and no hash of it. Unwrapping the key IS the check: a wrong
+    // passphrase fails the AES-GCM auth tag below, and init() leaves the
+    // existing backup untouched rather than regenerating over it.
+    const data = this.user?.isSso
+      ? { valid: true }
+      : await (await fetch('/api/auth/verify-password', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: this.user.username, password })
+        })).json();
 
     if (!data.valid) {
       const remaining = 5 - this._e2ePwAttempts.length;
@@ -1149,10 +1193,10 @@ async _showE2EVerification() {
     overlay.innerHTML = `
       <div class="modal" style="max-width:420px;text-align:center">
         <h3 style="margin-bottom:8px">🔐 ${t('header.verify_encryption')}</h3>
-        <p style="font-size:13px;color:var(--text-muted);margin-bottom:16px">
+        <p style="font-size:0.8125rem;color:var(--text-muted);margin-bottom:16px">
           ${t('modals.e2e_verify.desc', { name: this._escapeHtml(partnerName) })}
         </p>
-        <div class="e2e-safety-number" style="font-family:monospace;font-size:18px;letter-spacing:2px;line-height:2;padding:16px;background:var(--bg-secondary);border-radius:var(--radius-md);border:1px solid var(--border);user-select:all;word-break:break-all">${code}</div>
+        <div class="e2e-safety-number" style="font-family:monospace;font-size:1.125rem;letter-spacing:2px;line-height:2;padding:16px;background:var(--bg-secondary);border-radius:var(--radius-md);border:1px solid var(--border);user-select:all;word-break:break-all">${code}</div>
         <div style="margin-top:16px;display:flex;gap:8px;justify-content:center">
           <button class="btn-sm btn-accent" id="e2e-copy-code-btn">${t('modals.e2e_verify.copy_btn')}</button>
           <button class="btn-sm" id="e2e-close-verify-btn">${t('modals.common.close')}</button>
@@ -1214,7 +1258,7 @@ _showE2EResetConfirmation() {
         ${t('modals.e2e_reset.warning_permanent')}
       </div>
       <div class="e2e-confirm-type">
-        <p style="font-size:13px;color:var(--text-muted);margin-bottom:8px">${t('modals.e2e_reset.type_confirm')}</p>
+        <p style="font-size:0.8125rem;color:var(--text-muted);margin-bottom:8px">${t('modals.e2e_reset.type_confirm')}</p>
         <input type="text" id="e2e-reset-confirm-input" placeholder="${t('modals.e2e_reset.confirm_placeholder')}" autocomplete="off" spellcheck="false">
       </div>
       <div class="e2e-reset-actions">
@@ -1341,6 +1385,10 @@ async _decryptMessages(messages, channelCode = null) {
         msg._e2e = true;
       }
     }
+    // This is the only place the attachment URLs of an encrypted DM are ever
+    // in the clear. Note them now so deleting the message can tell the server
+    // which files to remove. (#5487)
+    this._rememberDmAttachments?.(msg);
     // Also decrypt the reply preview text if the replied-to message was encrypted
     if (msg.replyContext && msg.replyContext.content && HavenE2E.isEncrypted(msg.replyContext.content)) {
       if (!partnerJwk) {
@@ -1508,6 +1556,13 @@ _decryptE2EImages(root) {
       .then(buf => this.e2e.decryptBytes(new Uint8Array(buf), partner.userId, partner.publicKeyJwk))
       .then(plain => {
         const blob = new Blob([plain], { type: mime });
+        // Hand the blob back once the browser has decoded it. Without this the
+        // object URL keeps the decrypted bytes alive for the life of the tab,
+        // so scrolling a media-heavy DM slowly locks up hundreds of MB. Same
+        // revoke-on-load pattern the upload previews use. (#5426)
+        img.addEventListener('load', () => {
+          try { URL.revokeObjectURL(img.src); } catch {}
+        }, { once: true });
         img.src = URL.createObjectURL(blob);
         img.classList.remove('e2e-img-loading');
       })

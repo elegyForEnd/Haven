@@ -4,18 +4,20 @@
 //           notifications, volume sliders, status bar
 // ═══════════════════════════════════════════════════════════
 
-import SocketMethods   from './modules/app-socket.js?v=3.37.10';
-import UIBindMethods   from './modules/app-ui.js?v=3.37.12';
-import MediaMethods    from './modules/app-media.js?v=3.37.3';
-import ContextMethods  from './modules/app-context.js?v=3.34.0';
-import ChannelMethods  from './modules/app-channels.js?v=3.16.12';
-import MessageMethods  from './modules/app-messages.js?v=3.16.12';
+import SocketMethods   from './modules/app-socket.js?v=3.51.0';
+import UIBindMethods   from './modules/app-ui.js?v=3.51.0';
+import MediaMethods    from './modules/app-media.js?v=3.51.0';
+import ContextMethods  from './modules/app-context.js?v=3.44.3';
+import ChannelMethods  from './modules/app-channels.js?v=3.44.3';
+import MessageMethods  from './modules/app-messages.js?v=3.51.0';
 import UserMethods     from './modules/app-users.js?v=3.25.3';
 import VoiceMethods    from './modules/app-voice.js?v=3.37.12';
 import MusicPlayerMethods from './modules/app-music-player.js?v=8';
 import UtilityMethods  from './modules/app-utilities.js?v=3.34.0';
-import AdminMethods    from './modules/app-admin.js?v=3.37.9';
+import AdminMethods    from './modules/app-admin.js?v=3.51.0';
 import PlatformMethods from './modules/app-platform.js?v=3.16.12';
+import SearchMethods   from './modules/app-search.js?v=3.49.0';
+import FerryMethods    from './modules/app-ferry.js?v=3.51.4';
 import DrawingMethods  from './modules/app-drawing.js?v=1';
 
 class HavenApp {
@@ -255,6 +257,17 @@ class HavenApp {
   // ── Initialization ────────────────────────────────────
 
   _init() {
+    // Kick this off before anything can render a message. Until it resolves,
+    // _imgSrcAttr parks remote images in data-mp-src rather than emitting a
+    // raw external src, so there is no window in which an image leaks. (v3.43.0)
+    this._mediaProxyEnabled = true;   // assume on: fail closed, not open
+    this._mediaToken = null;
+    this._loadMediaToken?.();
+    this._startMediaTokenRefresh?.();   // the token expires after ~2 days
+    this._setupMediaTokenRetry?.();     // and a stale one used to fail silently
+    // Link policy for decrypted DM content (#5483). Requested once the socket
+    // exists, below, since it travels over the authenticated connection.
+
     this.socket = io({
       auth: { token: this.token },
       reconnectionDelay: 1500,
@@ -272,6 +285,7 @@ class HavenApp {
 
     this._setupSocketListeners();
     this._setupDrawing();
+    this._initLinkPolicy?.();
     this._setupUI();
     this._setupThemes();
     this._setupServerBar();
@@ -304,7 +318,10 @@ class HavenApp {
     this.modMode = typeof ModMode === 'function' ? new ModMode() : null;
     this.modMode?.init();
     this._setupDensityPicker();
-    this._setupFontSizePicker();
+    this._setupToggleStylePicker();
+    this._setupAnimatePfpPicker();
+    this._setupAnimateChatPicker();
+    this._setupZoomSlider();
     this._setupEmojiSizePicker();
     this._setupImageModePicker();
     this._setupEmbedSizePicker();
@@ -351,6 +368,9 @@ class HavenApp {
     }
     if (this.user.isAdmin || this._hasPerm('manage_roles') || this._hasPerm('manage_server')) {
       document.getElementById('admin-mod-panel').style.display = 'block';
+    }
+    if (this.user.isAdmin || this._hasGlobalPerm('invite_users') || this._hasPerm('manage_server')) {
+      document.getElementById('sidebar-invite-panel').style.display = 'block';
     }
     const organizeBtn = document.getElementById('organize-channels-btn');
     if (organizeBtn) organizeBtn.style.display = '';
@@ -399,6 +419,8 @@ Object.assign(HavenApp.prototype,
   AdminMethods,
   PlatformMethods,
   DrawingMethods,
+  SearchMethods,
+  FerryMethods,
 );
 
 // ── Boot ───────────────────────────────────────────────

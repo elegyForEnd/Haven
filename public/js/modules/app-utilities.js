@@ -293,8 +293,9 @@ _isImageUrl(str) {
   if (trimmed.startsWith('e2e-img:')) return true;
   if (/^\/uploads\/(stickers\/)?[\w\-.]+\.(jpg|jpeg|png|gif|webp|svg)$/i.test(trimmed)) return true;
   if (/^https?:\/\/.+\.(jpg|jpeg|png|gif|webp|svg)(\?[^"'<>]*)?$/i.test(trimmed)) return true;
-  // GIPHY GIF URLs (may not have file extensions)
+  // GIPHY / Tenor GIF URLs (may not have file extensions)
   if (/^https:\/\/media\d*\.giphy\.com\/.+/i.test(trimmed)) return true;
+  if (/^https:\/\/(media|c)\.tenor\.com\/.+/i.test(trimmed)) return true;
   return false;
 },
 
@@ -303,24 +304,48 @@ _isImageUrl(str) {
 // E2E DM attachments whose URL is hidden inside the ciphertext.
 _getMessageAttachments(messageId) {
   if (!messageId) return [];
+  // Messages that arrived live are appended straight to the DOM and never
+  // land in _lastRenderedMessages, which only holds the last full render.
+  // So an image you just posted in a DM had no URLs to hand the server, and
+  // deleting it left the file on disk forever. The hint map below is filled
+  // at decrypt time and covers exactly that gap. (#5487)
+  const hinted = this._dmAttachmentHints && this._dmAttachmentHints.get(messageId);
+  if (hinted && hinted.length) return hinted.slice();
   const msgs = this._lastRenderedMessages || [];
   const msg = msgs.find(m => m && m.id === messageId);
   if (!msg || typeof msg.content !== 'string') return [];
+  return this._extractUploadUrls(msg.content);
+},
+
+_extractUploadUrls(content) {
+  if (typeof content !== 'string' || !content) return [];
   const out = [];
   const re = /\/uploads\/((?!deleted-attachments)[\w\-.]+)/g;
   let m;
-  while ((m = re.exec(msg.content)) !== null) out.push('/uploads/' + m[1]);
+  while ((m = re.exec(content)) !== null) out.push('/uploads/' + m[1]);
   return out;
 },
 
-// Client-side DM message search — walks _lastRenderedMessages (already decrypted)
-// and renders results into the shared search-results-panel. (#5248)
-_searchDmCacheLocally(query) {
-  const panel = document.getElementById('search-results-panel');
-  const list  = document.getElementById('search-results-list');
-  const count = document.getElementById('search-results-count');
-  if (!panel || !list || !count) return;
+// Remember which uploads a decrypted DM message points at, so a later delete
+// can tell the server which files to clean up. Only DM messages need this —
+// everywhere else the server reads the URLs straight out of the stored
+// content. Capped so a long session can't grow it without bound. (#5487)
+_rememberDmAttachments(message) {
+  if (!message || !message.id || typeof message.content !== 'string') return;
+  const urls = this._extractUploadUrls(message.content);
+  if (!urls.length) return;
+  if (!(this._dmAttachmentHints instanceof Map)) this._dmAttachmentHints = new Map();
+  this._dmAttachmentHints.set(message.id, urls);
+  const MAX_HINTS = 500;
+  while (this._dmAttachmentHints.size > MAX_HINTS) {
+    this._dmAttachmentHints.delete(this._dmAttachmentHints.keys().next().value);
+  }
+},
 
+// Client-side DM message search — walks _lastRenderedMessages (already
+// decrypted) and hands matches to the search panel. DMs are E2E-encrypted so
+// the server never sees plaintext; each DM keeps its own panel context. (#5248)
+_searchDmCacheLocally(query) {
   const q = query.toLowerCase();
   // Newest-first so the most recent matches appear at the top
   const msgs = (this._lastRenderedMessages || []).slice().reverse();
@@ -328,30 +353,7 @@ _searchDmCacheLocally(query) {
     .filter(m => m && typeof m.content === 'string' && m.content.toLowerCase().includes(q))
     .slice(0, 50);
 
-  count.innerHTML = `${matches.length} result${matches.length === 1 ? '' : 's'} for "${this._escapeHtml(query)}" <span class="search-filter-tag">DM (local)</span>`;
-
-  if (matches.length === 0) {
-    list.innerHTML = `<p class="muted-text" style="padding:12px">${t('header.search_no_results')}</p>`;
-  } else {
-    list.innerHTML = matches.map(r => `
-      <div class="search-result-item" data-msg-id="${r.id}">
-        <span class="search-result-author" style="color:${this._getUserColor(r.username)}">${this._escapeHtml(this._getNickname(r.user_id, r.username))}</span>
-        <span class="search-result-time">${this._formatTime(r.created_at)}</span>
-        <div class="search-result-content">${this._highlightSearch(this._escapeHtml(r.content), query)}</div>
-      </div>
-    `).join('');
-  }
-  panel.style.display = 'block';
-
-  list.querySelectorAll('.search-result-item').forEach(item => {
-    item.addEventListener('click', () => {
-      const msgId = parseInt(item.dataset.msgId, 10);
-      panel.style.display = 'none';
-      document.getElementById('search-container').style.display = 'none';
-      document.getElementById('search-input').value = '';
-      this._jumpToMessage(msgId);
-    });
-  });
+  this._searchReceiveResults(`dm:${this.currentChannel}`, { results: matches, query, isDM: true });
 },
 
 _highlightSearch(escapedHtml, query) {
@@ -373,8 +375,10 @@ _isEmojiOnly(str) {
   });
   let s = str.replace(/:([a-zA-Z0-9_-]+):/g, ' ');
   try {
-    // Strip unicode emoji, modifiers, ZWJ, variation selectors, flags
-    s = s.replace(/[\p{Extended_Pictographic}\u{FE00}-\u{FEFF}\u{200D}\u{20E3}\u{1F1E0}-\u{1F1FF}]/gu, '');
+    // Strip unicode emoji, skin-tone modifiers, ZWJ, variation selectors, flags.
+    // Skin tones (1F3FB–1F3FF) are Emoji_Modifier, not Extended_Pictographic, so
+    // they need their own range or a toned emoji leaves a leftover and misses jumbo.
+    s = s.replace(/[\p{Extended_Pictographic}\u{1F3FB}-\u{1F3FF}\u{FE00}-\u{FEFF}\u{200D}\u{20E3}\u{1F1E0}-\u{1F1FF}]/gu, '');
   } catch {
     s = s.replace(/[\u{1F000}-\u{1FFFF}\u{2600}-\u{27BF}\u{FE00}-\u{FEFF}\u{200D}\u{20E3}]/gu, '');
   }
@@ -572,7 +576,7 @@ _formatContent(str) {
     const idx = mdLinks.length;
     mdLinks.push((this._isImageHidden && this._isImageHidden(safeUrl))
       ? this._hiddenImagePlaceholder(safeUrl)
-      : `<img src="${safeUrl}" class="chat-image" alt="${alt || 'image'}">`);
+      : `<img ${this._imgSrcAttr(safeUrl)} class="chat-image" alt="${alt || 'image'}">`);
     return `\x00MDLINK_${idx}\x00`;
   });
   // [text](url)
@@ -594,10 +598,11 @@ _formatContent(str) {
       const safeUrl = url.replace(/['"<>]/g, '');
       const idx = autoLinks.length;
       if (/\.(jpg|jpeg|png|gif|webp)(\?[^"'<>]*)?$/i.test(safeUrl) ||
-          /^https:\/\/media\d*\.giphy\.com\//i.test(safeUrl)) {
+          /^https:\/\/media\d*\.giphy\.com\//i.test(safeUrl) ||
+          /^https:\/\/(media|c)\.tenor\.com\//i.test(safeUrl)) {
         autoLinks.push((this._isImageHidden && this._isImageHidden(safeUrl))
           ? this._hiddenImagePlaceholder(safeUrl)
-          : `<img src="${safeUrl}" class="chat-image" alt="image" loading="lazy">`);
+          : `<img ${this._imgSrcAttr(safeUrl)} class="chat-image" alt="image" loading="lazy">`);
       } else {
         autoLinks.push(`<a href="${safeUrl}" target="_blank" rel="noopener noreferrer nofollow">${safeUrl}</a>`);
       }
@@ -942,6 +947,40 @@ _scrollToBottom(force) {
   }
 },
 
+// Jump to the newest message. Shared by the jump-to-bottom button and the
+// Escape hotkey. When the DOM window has been trimmed (_noMoreFuture === false)
+// the newest messages aren't loaded, so re-fetch from the present; otherwise a
+// plain scroll reaches the true bottom instantly.
+_jumpToLatest() {
+  document.getElementById('jump-to-bottom')?.classList.remove('visible');
+  if (this._noMoreFuture === false) {
+    this._reloadChannelFromPresent();
+  } else {
+    this._scrollToBottom(true);
+    this._coupledToBottom = true;
+  }
+},
+
+// Snap the feed back to the live present by re-running the fresh channel load.
+// Needed when the DOM window has been trimmed (newest messages aren't in the
+// DOM, i.e. _noMoreFuture === false) — a plain _scrollToBottom only reaches the
+// artificial bottom of the loaded window. This mirrors the reset the own-message
+// and tab-resync paths already use, so message-history renders the initial-load
+// branch and _renderMessages lands at the true bottom.
+_reloadChannelFromPresent() {
+  if (!this.currentChannel || !this.socket?.connected) return;
+  this._coupledToBottom = true;
+  this._oldestMsgId = null;
+  this._noMoreHistory = false;
+  this._loadingHistory = false;
+  this._historyBefore = null;
+  this._newestMsgId = null;
+  this._noMoreFuture = true;
+  this._loadingFuture = false;
+  this._historyAfter = null;
+  this.socket.emit('get-messages', { code: this.currentChannel });
+},
+
 // Debounced version used by image/media load handlers. Multiple images in the
 // same batch (e.g. 5 photos loaded from history) all collapse into a single
 // scroll call instead of firing an individual hard-snap per image, which is
@@ -1043,7 +1082,7 @@ _showExternalLinkWarning(displayText, url) {
       <div class="risky-download-icon">🔗</div>
       <h3 style="color:var(--text-primary,#dbdee1)">External Link</h3>
       <p>You're about to visit:</p>
-      <p style="background:var(--bg-tertiary,#232428);padding:8px 12px;border-radius:6px;font-size:13px;word-break:break-all;color:var(--accent,#5865f2)">${this._escapeHtml(url)}</p>
+      <p style="background:var(--bg-tertiary,#232428);padding:8px 12px;border-radius:6px;font-size:0.8125rem;word-break:break-all;color:var(--accent,#5865f2)">${this._escapeHtml(url)}</p>
       <p class="risky-download-desc">Make sure you trust this link before continuing.</p>
       <div class="risky-download-actions">
         <button class="risky-download-cancel">Cancel</button>
@@ -1128,12 +1167,15 @@ _saveEmojiSkinTone(tone) {
 _applySkinTone(emoji, tone) {
   const mod = SKIN_TONE_MODIFIERS[tone];
   if (!mod || typeof emoji !== 'string') return emoji;
+  // Prefer the set derived from the server's emoji list; fall back to the
+  // built-in one when the standard list hasn't loaded.
+  const base = this._emojiModifierBase || EMOJI_MODIFIER_BASE;
   const cps = [...emoji];
-  if (cps.filter(c => EMOJI_MODIFIER_BASE.has(c)).length !== 1) return emoji;
+  if (cps.filter(c => base.has(c)).length !== 1) return emoji;
   const out = [];
   for (let i = 0; i < cps.length; i++) {
     out.push(cps[i]);
-    if (EMOJI_MODIFIER_BASE.has(cps[i])) {
+    if (base.has(cps[i])) {
       out.push(mod);
       if (cps[i + 1] === '\uFE0F') i++; // skip VS16: the modifier already implies emoji style
     }
@@ -1244,7 +1286,7 @@ _toggleEmojiPicker(anchorEl) {
         list = stickers.filter(s => (s.pack_name || 'General') === self._activeStickerPack);
       }
       if (list.length === 0) {
-        grid.innerHTML = `<p class="muted-text" style="padding:12px;font-size:12px;width:100%;text-align:center">${
+        grid.innerHTML = `<p class="muted-text" style="padding:12px;font-size:0.75rem;width:100%;text-align:center">${
           stickers.length === 0
             ? (t('emoji.no_stickers') || 'No stickers yet — an admin can upload some from the Manage Stickers panel')
             : (t('emoji.no_results') || 'No results')
@@ -1368,7 +1410,12 @@ _toggleEmojiPicker(anchorEl) {
       const section = catSections[cat];
       // Scroll to the section wrapper, not its header: the wrapper isn't
       // sticky, so its offsetTop is always the true layout position.
-      if (section) grid.scrollTop = section.offsetTop;
+      if (section) {
+        grid.scrollTop = section.offsetTop;
+        // Move the keyboard highlight to this category's first emoji, so
+        // arrowing/Enter continues from where the user just jumped to.
+        highlightFirstEmoji(section);
+      }
       setActiveTab(cat);
     });
     catTabs[cat] = tab;
@@ -1417,6 +1464,16 @@ _toggleEmojiPicker(anchorEl) {
     parent.appendChild(btn);
   }
 
+  // Keyboard nav: highlight the first emoji so arrow keys + Enter work the
+  // moment the picker opens (Discord-style). Re-run after every grid render.
+  // Pass a section to highlight the first emoji within it (e.g. after a
+  // category jump); defaults to the first emoji in the whole grid.
+  const highlightFirstEmoji = (scope) => {
+    grid.querySelectorAll('.emoji-item.kb-active').forEach(el => el.classList.remove('kb-active'));
+    const first = (scope || grid).querySelector('.emoji-item');
+    if (first) first.classList.add('kb-active');
+  };
+
   function renderGrid(filter) {
     grid.innerHTML = '';
     for (const k in catSections) delete catSections[k];
@@ -1444,13 +1501,14 @@ _toggleEmojiPicker(anchorEl) {
         });
       }
       if (matched.size === 0) {
-        grid.innerHTML = `<p class="muted-text" style="padding:12px;font-size:12px;width:100%;text-align:center">${t('emoji.no_results')}</p>`;
+        grid.innerHTML = `<p class="muted-text" style="padding:12px;font-size:0.75rem;width:100%;text-align:center">${t('emoji.no_results')}</p>`;
         return;
       }
       const results = document.createElement('div');
       results.className = 'emoji-cat-grid';
       matched.forEach(e => appendEmojiButton(results, e));
       grid.appendChild(results);
+      highlightFirstEmoji();
       return;
     }
     // No filter: render every category as its own section (sticky header +
@@ -1470,6 +1528,7 @@ _toggleEmojiPicker(anchorEl) {
       grid.appendChild(section);
       catSections[cat] = section;
     }
+    highlightFirstEmoji();
   }
 
   // Scroll-spy: highlight the tab of whichever section is at the top. Compares
@@ -1495,6 +1554,44 @@ _toggleEmojiPicker(anchorEl) {
   });
 
   renderGrid();
+
+  // Arrow-key navigation + Enter to pick, bound once to the picker. Reads its
+  // state from the DOM on each keypress so it survives the grid being rebuilt
+  // on search/category changes. Enter reuses the emoji's own click handler, so
+  // there's a single source of truth for what "picking" an emoji does.
+  if (!picker._havenNavBound) {
+    picker._havenNavBound = true;
+    picker.addEventListener('keydown', (e) => {
+      if (picker.style.display === 'none') return;
+      const items = [...picker.querySelectorAll('.emoji-grid .emoji-item')];
+      if (!items.length) return;
+      const active = picker.querySelector('.emoji-item.kb-active');
+      const setActive = (el) => {
+        if (!el) return;
+        items.forEach(i => i.classList.remove('kb-active'));
+        el.classList.add('kb-active');
+        el.scrollIntoView({ block: 'nearest' });
+      };
+      if (e.key === 'ArrowRight' || e.key === 'ArrowLeft' || e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+        e.preventDefault();
+        const idx = active ? items.indexOf(active) : -1;
+        if (idx === -1) { setActive(items[0]); return; }
+        if (e.key === 'ArrowRight') setActive(items[Math.min(idx + 1, items.length - 1)]);
+        else if (e.key === 'ArrowLeft') setActive(items[Math.max(idx - 1, 0)]);
+        else setActive(this._emojiGridVerticalNav(items, idx, e.key === 'ArrowDown' ? 1 : -1));
+      } else if (e.key === 'Enter' && active) {
+        e.preventDefault();
+        active.click(); // insert the selected emoji (same as clicking it)
+        if (e.shiftKey) {
+          // Shift+Enter: keep the menu open to pick more; clicking moved focus
+          // to the message box, so hand it back to the search field.
+          picker.querySelector('.emoji-search-input')?.focus();
+        } else {
+          this._toggleEmojiPicker(); // plain Enter closes after one pick
+        }
+      }
+    });
+  }
 
   // On mobile with the iOS keyboard open, dynamically position the picker
   // above the input area using the visual viewport so it doesn't push
@@ -1528,6 +1625,32 @@ _toggleEmojiPicker(anchorEl) {
 
   picker.style.display = 'flex';
   searchInput.focus();
+
+  // Always open scrolled to the top, so the view and the keyboard highlight
+  // both start on the first category in every browser. Chromium discards the
+  // old scroll when the grid is rebuilt; Firefox/Safari can preserve it, which
+  // would leave the view on the last-used category while the highlight resets.
+  grid.scrollTop = 0;
+},
+
+// Find the emoji one visual row above/below the current one (dir: -1 up, 1 down).
+// Emoji wrap into rows of varying counts across category sections, so this walks
+// by geometry rather than a fixed column count: nearest row wins first, then the
+// closest horizontal neighbour in that row.
+_emojiGridVerticalNav(items, idx, dir) {
+  const cur = items[idx].getBoundingClientRect();
+  const curX = cur.left + cur.width / 2;
+  const curY = cur.top + cur.height / 2;
+  let best = null, bestScore = Infinity;
+  for (let i = 0; i < items.length; i++) {
+    if (i === idx) continue;
+    const r = items[i].getBoundingClientRect();
+    const dy = (r.top + r.height / 2) - curY;
+    if (dir === 1 ? dy <= 2 : dy >= -2) continue; // must be strictly below/above
+    const score = Math.abs(dy) * 1000 + Math.abs((r.left + r.width / 2) - curX);
+    if (score < bestScore) { bestScore = score; best = items[i]; }
+  }
+  return best || items[idx];
 },
 
 // ═══════════════════════════════════════════════════════
@@ -1629,6 +1752,14 @@ _switchGifTab(tab) {
   }
 },
 
+// The proxy reports which provider served the batch — keep the picker
+// footer honest ("Powered by Tenor" vs "Powered by GIPHY").
+_setGifFooter(provider) {
+  if (!provider) return;
+  const footer = document.querySelector('.gif-picker-footer');
+  if (footer) footer.textContent = provider === 'tenor' ? 'Powered by Tenor' : 'Powered by GIPHY';
+},
+
 _loadTrendingGifs() {
   const grid = document.getElementById('gif-grid');
   grid.innerHTML = '<div class="gif-picker-empty">Loading...</div>';
@@ -1646,6 +1777,7 @@ _loadTrendingGifs() {
         grid.innerHTML = `<div class="gif-picker-empty">${this._escapeHtml(data.error)}</div>`;
         return;
       }
+      this._setGifFooter(data.provider);
       this._renderGifGrid(data.results || []);
     })
     .catch(() => {
@@ -1676,6 +1808,7 @@ _searchGifs(query) {
         grid.innerHTML = `<div class="gif-picker-empty">${t('gifs.no_results')}</div>`;
         return;
       }
+      this._setGifFooter(data.provider);
       this._renderGifGrid(results);
     })
     .catch(() => {
@@ -1687,29 +1820,50 @@ _searchGifs(query) {
 _showGifSetupGuide(grid) {
   const isAdmin = this.user && this.user.isAdmin;
   if (isAdmin) {
-    grid.innerHTML = `
-      <div class="gif-setup-guide">
-        <h3>🎞️ ${t('gifs.setup.title')}</h3>
-        <p>${t('gifs.setup.powered_by')}</p>
+    // Tenor steps render by default — GIPHY stopped issuing API keys to
+    // new applications, so it is kept only as the legacy choice for
+    // admins who already hold a working key.
+    const guides = {
+      tenor: `<p>${t('gifs.setup.tenor_powered_by')}</p>
+        <ol>
+          <li>${t('gifs.setup.tenor_step_1')}</li>
+          <li>${t('gifs.setup.tenor_step_2')}</li>
+          <li>${t('gifs.setup.tenor_step_3')}</li>
+        </ol>`,
+      giphy: `<p>${t('gifs.setup.powered_by')}</p>
         <ol>
           <li>${t('gifs.setup.step_1')}</li>
           <li>${t('gifs.setup.step_2')}</li>
           <li>${t('gifs.setup.step_3')}</li>
           <li>${t('gifs.setup.step_4')}</li>
           <li>${t('gifs.setup.step_5')}</li>
-        </ol>
+        </ol>`,
+    };
+    grid.innerHTML = `
+      <div class="gif-setup-guide">
+        <h3>🎞️ ${t('gifs.setup.title')}</h3>
+        <div id="gif-setup-steps">${guides.tenor}</div>
         <div class="gif-setup-input-row">
-          <input type="text" id="gif-giphy-key-input" placeholder="${t('gifs.setup.key_placeholder')}" spellcheck="false" autocomplete="off" />
-          <button id="gif-giphy-key-save">${t('gifs.setup.save_btn')}</button>
+          <select id="gif-provider-select" title="${t('gifs.setup.provider')}">
+            <option value="tenor">Tenor</option>
+            <option value="giphy">GIPHY</option>
+          </select>
+          <input type="text" id="gif-provider-key-input" placeholder="${t('gifs.setup.key_placeholder')}" spellcheck="false" autocomplete="off" />
+          <button id="gif-provider-key-save">${t('gifs.setup.save_btn')}</button>
         </div>
         <p class="gif-setup-note">💡 ${t('gifs.setup.note')}</p>
       </div>`;
-    const saveBtn = document.getElementById('gif-giphy-key-save');
-    const input = document.getElementById('gif-giphy-key-input');
+    const saveBtn = document.getElementById('gif-provider-key-save');
+    const input = document.getElementById('gif-provider-key-input');
+    const select = document.getElementById('gif-provider-select');
+    select.addEventListener('change', () => {
+      document.getElementById('gif-setup-steps').innerHTML = guides[select.value] || guides.tenor;
+    });
     saveBtn.addEventListener('click', () => {
       const key = input.value.trim();
       if (!key) return;
-      this.socket.emit('update-server-setting', { key: 'giphy_api_key', value: key });
+      const settingKey = select.value === 'giphy' ? 'giphy_api_key' : 'tenor_api_key';
+      this.socket.emit('update-server-setting', { key: settingKey, value: key });
       grid.innerHTML = `<div class="gif-picker-empty">${t('gifs.setup.saved')}</div>`;
       setTimeout(() => this._loadTrendingGifs(), 500);
     });
@@ -1891,7 +2045,7 @@ _showGifSlashResults(query) {
     .then(r => r.json())
     .then(data => {
       if (data.error === 'gif_not_configured') {
-        picker.innerHTML = '<div class="gif-slash-loading">GIF search not configured — an admin needs to set up the GIPHY API key (use the GIF button 🎞️)</div>';
+        picker.innerHTML = '<div class="gif-slash-loading">GIF search not configured — an admin needs to set up a Tenor (or GIPHY) API key (use the GIF button 🎞️)</div>';
         return;
       }
       if (data.error) { picker.innerHTML = `<div class="gif-slash-loading">${this._escapeHtml(data.error)}</div>`; return; }
@@ -2117,7 +2271,7 @@ _showQuickEmojiEditor(picker, msgEl, msgId) {
 
   const hint = document.createElement('p');
   hint.className = 'muted-text';
-  hint.style.cssText = 'font-size:11px;padding:0 8px 6px;margin:0';
+  hint.style.cssText = 'font-size:0.6875rem;padding:0 8px 6px;margin:0';
   hint.textContent = t('emoji.customize_quick_hint');
   editor.appendChild(hint);
 
@@ -2975,6 +3129,9 @@ _appendDMPiPMessage(msg) {
   try { this._setupVideos?.(el); } catch {}
   try { this._decryptE2EImages?.(el); } catch {}
   try { this._decryptE2EFiles?.(el); } catch {}
+  // DM PiP is unambiguously a DM view, so enforce directly rather than
+  // routing through _isDmContainer. (#5483)
+  try { this._enforceDmLinkPolicy?.(el); } catch {}
   try { this._wireBurnMessages?.(el); } catch {}
   if (wasAtBottom) list.scrollTop = list.scrollHeight;
 },
@@ -2993,6 +3150,10 @@ _renderDMPiPHistory(messages) {
   try { this._setupVideos?.(list); } catch {}
   try { this._decryptE2EImages?.(list); } catch {}
   try { this._decryptE2EFiles?.(list); } catch {}
+  // DM PiP is unambiguously a DM view, so enforce directly rather than
+  // routing through _isDmContainer. (#5483)
+  try { this._enforceDmLinkPolicy?.(list); } catch {}
+  try { this._maybeShowDmSafetyNotice?.(list); } catch {}
   try { this._wireBurnMessages?.(list); } catch {}
   list.scrollTop = list.scrollHeight;
 },
@@ -3242,19 +3403,29 @@ _sendThreadMessage() {
   const input = document.getElementById('thread-input');
   if (!input) return;
   const content = input.value.trim();
-  if (!content) return;
   const parentId = this._activeThreadParent;
   if (!parentId) return;
+  const hasPending = !!(this._threadPending && this._threadPending.length);
+  // Nothing to send — no text and no held attachments.
+  if (!content && !hasPending) return;
   const replyTo = this._threadReplyingTo ? this._threadReplyingTo.id : null;
 
-  this.socket.emit('send-thread-message', { parentId, content, replyTo }, (resp) => {
-    if (resp && resp.error) {
-      this._showToast(resp.error, 'error');
-      return;
-    }
-    this._clearThreadReply();
-  });
-  input.value = '';
+  if (content) {
+    this.socket.emit('send-thread-message', { parentId, content, replyTo }, (resp) => {
+      if (resp && resp.error) {
+        this._showToast(resp.error, 'error');
+        return;
+      }
+      this._clearThreadReply();
+    });
+    input.value = '';
+  }
+
+  // Flush any pasted/dropped attachments that were held until now.
+  if (hasPending) {
+    this._flushThreadPending?.(parentId);
+    if (!content) this._clearThreadReply();
+  }
 },
 
 _appendThreadMessage(msg) {
@@ -3359,6 +3530,7 @@ _appendThreadMessage(msg) {
   container.appendChild(el);
   try { this._decryptE2EImages?.(el); } catch {}
   try { this._decryptE2EFiles?.(el); } catch {}
+  try { if (this._isDmContainer(el)) this._enforceDmLinkPolicy?.(el); } catch {}
   try { this._setupVideos?.(el); } catch {}
   container.scrollTop = container.scrollHeight;
 },
@@ -3575,7 +3747,20 @@ _startEditMessage(msgEl, msgId) {
     e.stopPropagation();
     e.preventDefault();
     let newContent = textarea.value.trim();
-    if (!newContent) return cancel();
+    if (!newContent) {
+      // Discord-style: clearing the whole message and confirming the edit
+      // offers to delete the message rather than silently cancelling it.
+      // Enter confirms the prompt via the shared confirm modal.
+      cancel();
+      if (await this._showConfirmModal(t('confirm.delete_message'), '', { danger: true, confirmLabel: t('msg_toolbar.delete') })) {
+        const pip = msgEl.closest('#dm-pip-messages') ? this._activeDMPip : null;
+        const attachments = this._getMessageAttachments?.(msgId);
+        this.socket.emit('delete-message', pip
+          ? { messageId: msgId, channelCode: pip, attachments }
+          : { messageId: msgId, attachments });
+      }
+      return;
+    }
     if (newContent === rawText) return cancel();
 
     // E2E: encrypt edited DM content. The PiP can edit a DM that isn't
@@ -3648,6 +3833,306 @@ _startEditMessage(msgEl, msgId) {
   contentEl.addEventListener('click', (e) => {
     e.stopPropagation();
   }, { once: false });
+},
+
+// ═══════════════════════════════════════════════════════
+// CLIENT-SIDE LINK POLICY (#5483, v3.44.0)
+// ═══════════════════════════════════════════════════════
+//
+// End-to-end encrypted DMs are ciphertext by the time they reach the server,
+// so the send-message automod path cannot see their links at all. The setting
+// existed and did nothing for them, which is worse than not having it.
+//
+// The recipient's client CAN see them, after decryption and before rendering,
+// and that is the check worth having. A hostile sender can run a patched
+// client and skip any check on their own side, but they cannot reach into the
+// recipient's browser and switch this off. So the enforcement that protects
+// the person at risk is the one that runs where the risk lands.
+//
+// The rules themselves come from /js/automod-rules.js, the same file the
+// server requires, so the two cannot drift into disagreeing.
+
+// Is this container showing DM content?
+//
+// The first version of this looked for a [data-dm-render] attribute that does
+// not exist: the DM PiP renderer marks a JS property on the message object,
+// not the DOM. So the only branch that ever fired was the current-channel
+// check, and a DM popped out over a normal channel was never recognised.
+// @birdcrazy caught it (#5483). Detect the PiP container by its actual id.
+_isDmContainer(containerEl) {
+  try {
+    if (containerEl) {
+      if (containerEl.id === 'dm-pip-messages') return true;
+      if (containerEl.closest && containerEl.closest('#dm-pip-messages, #dm-pip')) return true;
+      if (containerEl.querySelector && containerEl.querySelector('#dm-pip-messages')) return true;
+    }
+    const ch = (this.channels || []).find(c => c.code === this.currentChannel);
+    return !!(ch && ch.is_dm);
+  } catch { return false; }
+},
+
+_initLinkPolicy() {
+  this._linkPolicy = null;
+  const apply = (p) => { this._linkPolicy = p && p.enabled ? p : null; };
+  this.socket.on('link-policy', apply);
+  this.socket.emit('get-link-policy', null, apply);
+},
+
+// Returns null when the text is fine, or { rule, host, url, message }.
+// Safe to call before the policy has loaded: no policy means no verdict.
+_checkLinkPolicy(text) {
+  if (!this._linkPolicy || !window.HavenAutomodRules) return null;
+  try {
+    return window.HavenAutomodRules.checkText(text, this._linkPolicy);
+  } catch { return null; }
+},
+
+// True when links in this text should be rendered inert rather than clickable.
+// Applied to DM content specifically, since that is the path the server cannot
+// inspect. Channel messages were already blocked at send time.
+_dmLinkBlocked(text) {
+  if (!this._linkPolicy || !this._linkPolicy.scanDms) return null;
+  return this._checkLinkPolicy(text);
+},
+
+// One-time identity disclosure on DMs. Haven does not verify who anyone is,
+// and on an open server someone can register a display name that matches a
+// person you trust (the owner, a mod) and DM you as them. This is a nudge to
+// check, not a control. Dismissed globally, remembered in localStorage.
+_maybeShowDmSafetyNotice(container) {
+  if (!container) return;
+  try { if (localStorage.getItem('haven_dm_safety_dismissed') === '1') return; } catch {}
+  // Already present in this container — don't stack copies on re-render.
+  if (container.querySelector(':scope > .dm-safety-notice')) return;
+
+  const notice = document.createElement('div');
+  notice.className = 'dm-safety-notice';
+  notice.innerHTML =
+    '<span class="dm-safety-icon" aria-hidden="true">🛡️</span>' +
+    '<span class="dm-safety-text">Haven can\'t verify anyone\'s identity. Names aren\'t unique, so make sure you actually know who you\'re talking to before sharing anything.</span>' +
+    '<button type="button" class="dm-safety-dismiss">Got it, don\'t show again</button>';
+
+  notice.querySelector('.dm-safety-dismiss').addEventListener('click', () => {
+    try { localStorage.setItem('haven_dm_safety_dismissed', '1'); } catch {}
+    // Clear it everywhere it might be showing (main pane + any open PiP).
+    document.querySelectorAll('.dm-safety-notice').forEach(n => n.remove());
+  });
+
+  container.insertBefore(notice, container.firstChild);
+},
+
+// Neutralise disallowed links in an already-rendered DM message container.
+//
+// Scoped to DMs on purpose. Channel messages were checked at send time, so
+// running this there would only ever affect history that predates the current
+// policy, and silently breaking old links nobody complained about is not a
+// trade worth making.
+//
+// Anchors become plain text with a warning; images from disallowed hosts
+// become a click-to-reveal placeholder rather than loading. The media proxy
+// already stops the IP leak, so this is about the click, not the fetch.
+_enforceDmLinkPolicy(containerEl) {
+  if (!containerEl) return;
+  const policy = this._linkPolicy;
+  const R = window.HavenAutomodRules;
+  if (!policy || !policy.scanDms || !R) return;
+
+  const hostBlocked = (rawUrl) => {
+    if (!rawUrl) return false;
+    try {
+      const u = new URL(rawUrl, location.href);
+      if (u.origin === location.origin) return false;   // our own uploads / proxy
+      return !R.checkHost(u.hostname, policy).allowed;
+    } catch { return false; }
+  };
+
+  containerEl.querySelectorAll('.message-content a[href]').forEach(a => {
+    if (a.dataset.policyChecked) return;
+    a.dataset.policyChecked = '1';
+    if (!hostBlocked(a.href)) return;
+
+    let host = a.href;
+    try { host = new URL(a.href).hostname; } catch {}
+    const span = document.createElement('span');
+    span.className = 'blocked-link';
+    span.title = `Links to ${host} are not allowed on this server, so this was not made clickable.`;
+    span.textContent = a.textContent;
+    const badge = document.createElement('span');
+    badge.className = 'blocked-link-badge';
+    badge.textContent = ' ⚠ blocked link';
+    span.appendChild(badge);
+    a.replaceWith(span);
+  });
+
+  containerEl.querySelectorAll('.message-content img[data-mp-origin], .message-content img.chat-image').forEach(img => {
+    if (img.dataset.policyChecked) return;
+    img.dataset.policyChecked = '1';
+    const origin = img.dataset.mpOrigin || img.getAttribute('data-mp-src') || img.src;
+    if (!hostBlocked(origin)) return;
+    const ph = document.createElement('span');
+    ph.className = 'hidden-image';
+    ph.setAttribute('role', 'button');
+    ph.tabIndex = 0;
+    ph.dataset.hiddenSrc = origin;
+    ph.textContent = '⚠ Image from a blocked domain — click to load anyway';
+    img.replaceWith(ph);
+  });
+},
+
+// ═══════════════════════════════════════════════════════
+// MEDIA PROXY (v3.43.0)
+// ═══════════════════════════════════════════════════════
+//
+// Remote images are fetched by the Haven server and served from its cache, so
+// the browser never contacts a third-party host. Before this, simply scrolling
+// past a message containing an image URL sent your IP address and browser
+// details to whoever owned that URL.
+//
+// The rule this code enforces: NEVER emit a raw external src. If the media
+// token has not arrived yet, the URL is parked in data-mp-src and filled in
+// once the token lands. Failing closed means a slow token fetch costs a moment
+// of blank image, not a silent leak.
+
+async _loadMediaToken() {
+  try {
+    const r = await fetch('/api/media-token', {
+      headers: { 'Authorization': `Bearer ${this.token}` }
+    });
+    if (!r.ok) throw new Error('media token request failed');
+    const d = await r.json();
+    this._mediaProxyEnabled = d.enabled !== false;
+    this._mediaToken = d.token || null;
+  } catch {
+    // Older server, or the endpoint is unavailable. Fall back to direct
+    // loading so images do not silently break on a mismatched version.
+    this._mediaProxyEnabled = false;
+    this._mediaToken = null;
+  }
+  this._flushPendingMedia();
+},
+
+// The media token carries a day stamp and the server honours only today's and
+// yesterday's, so it goes stale after about two days. It used to be fetched
+// once at startup and never again, which was fine for a tab that gets closed
+// and fatal for one that does not: leave Haven open over a weekend and every
+// remote image posted after the token expired came back 401 and rendered as a
+// blank gap, with no error and no retry. Reloading fixed it, which is why this
+// looked random and unreproducible. Refreshed on a timer, on reconnect, and on
+// a failed image below.
+_renderSessionsList(sessions) {
+  const el = document.getElementById('sessions-list');
+  if (!el) return;
+  if (!sessions.length) {
+    el.innerHTML = `<p class="muted-text">${this._escapeHtml(t('settings.sessions_section.none'))}</p>`;
+    return;
+  }
+  const rel = (ms) => {
+    if (!ms) return '';
+    const mins = Math.floor((Date.now() - ms) / 60000);
+    if (mins < 1) return t('settings.sessions_section.just_now');
+    if (mins < 60) return t('settings.sessions_section.mins', { n: mins });
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return t('settings.sessions_section.hours', { n: hrs });
+    return t('settings.sessions_section.days', { n: Math.floor(hrs / 24) });
+  };
+  el.innerHTML = sessions.map(s => {
+    const tag = s.current
+      ? `<span class="session-current-tag">${this._escapeHtml(t('settings.sessions_section.this_device'))}</span>`
+      : '';
+    const ip = s.ip ? this._escapeHtml(s.ip) : '';
+    return `<div class="session-item${s.current ? ' is-current' : ''}">
+      <span class="session-device">${this._escapeHtml(s.device || '')}</span>${tag}
+      <span class="session-meta">${ip}${ip && s.since ? '<br>' : ''}${this._escapeHtml(rel(s.since))}</span>
+    </div>`;
+  }).join('');
+},
+
+// Ask for the list when the pane is actually on screen. There is no session
+// table behind this, so it is a snapshot of live sockets, not history.
+_refreshSessions() {
+  this.socket?.emit('get-sessions');
+},
+
+_refreshMediaToken() {
+  // One request even when a screen full of images fails at the same moment.
+  if (!this._mediaTokenRefresh) {
+    this._mediaTokenRefresh = Promise.resolve(this._loadMediaToken())
+      .finally(() => { this._mediaTokenRefresh = null; });
+  }
+  return this._mediaTokenRefresh;
+},
+
+// Re-fetch well inside the window rather than near the edge, so a machine that
+// sleeps through the boundary still wakes up with time to spare.
+_startMediaTokenRefresh() {
+  if (this._mediaTokenTimer) return;
+  this._mediaTokenTimer = setInterval(() => {
+    if (this._mediaProxyEnabled !== false) this._refreshMediaToken();
+  }, 6 * 60 * 60 * 1000);
+},
+
+// Last line of defence: an image the proxy refused gets one more go with a
+// fresh token. Covers the cases a timer cannot, like a laptop asleep past the
+// rollover or a clock that disagrees with the server's.
+_setupMediaTokenRetry() {
+  if (this._mediaRetryBound) return;
+  this._mediaRetryBound = true;
+  // Capture phase: `error` from an <img> does not bubble.
+  document.addEventListener('error', (e) => {
+    const el = e.target;
+    if (!el || el.tagName !== 'IMG') return;
+    const src = el.getAttribute('src') || '';
+    if (!src.startsWith('/api/media-proxy?')) return;
+    if (el.dataset.mpRetried) return;       // one retry per image, never a loop
+    el.dataset.mpRetried = '1';
+    const stale = this._mediaToken;
+    this._refreshMediaToken().then(() => {
+      if (!this._mediaToken || this._mediaToken === stale) return;
+      try {
+        const u = new URL(src, location.href);
+        u.searchParams.set('mt', this._mediaToken);
+        el.setAttribute('src', u.pathname + u.search);
+      } catch { /* malformed src, leave it alone */ }
+    });
+  }, true);
+},
+
+// Returns a URL safe to put in a src attribute, or null when proxying is on
+// but the token has not arrived yet (caller must defer).
+_proxyMediaUrl(url) {
+  if (typeof url !== 'string' || !url) return url;
+  // Local paths, data: URIs and blobs never leave the origin.
+  if (!/^https?:\/\//i.test(url)) return url;
+  if (this._mediaProxyEnabled === false) return url;
+  try {
+    if (new URL(url, location.href).origin === location.origin) return url;
+  } catch { return url; }
+  if (!this._mediaToken) return null;   // enabled but not ready — defer
+  return `/api/media-proxy?url=${encodeURIComponent(url)}&mt=${encodeURIComponent(this._mediaToken)}`;
+},
+
+// Builds the src attribute for an <img>, deferring when necessary. Returns an
+// already-escaped attribute string.
+// data-mp-origin keeps the original remote URL alongside the proxied src, so
+// the DM link policy can judge the real host rather than the proxy URL that
+// always points back at us. (#5483)
+_imgSrcAttr(url) {
+  const p = this._proxyMediaUrl(url);
+  const origin = /^https?:\/\//i.test(url || '') ? ` data-mp-origin="${this._escapeHtml(url)}"` : '';
+  return (p !== null
+    ? `src="${this._escapeHtml(p)}"`
+    : `data-mp-src="${this._escapeHtml(url)}"`) + origin;
+},
+
+// Fill in any images that rendered before the token was available.
+_flushPendingMedia() {
+  document.querySelectorAll('[data-mp-src]').forEach(el => {
+    const raw = el.getAttribute('data-mp-src');
+    const p = this._proxyMediaUrl(raw);
+    if (p === null) return;            // still not ready
+    el.removeAttribute('data-mp-src');
+    el.setAttribute('src', p);
+  });
 },
 
 // ═══════════════════════════════════════════════════════
@@ -3733,8 +4218,17 @@ _showAdminActionModal(action, userId, username) {
   const banIpGroup = document.getElementById('admin-ban-ip-group');
   const banIpCheckbox = document.getElementById('admin-ban-ip-checkbox');
   if (banIpGroup) {
-    const canBanIp = !!(this.user && this.user.isAdmin) ||
-                     !!(this.user && Array.isArray(this.user.permissions) && this.user.permissions.includes('ban_ip'));
+    // ban_ip is a server-wide permission, so it arrives in globalPermissions;
+    // checking only `permissions` (the channel-scoped set) meant the option
+    // stayed hidden for moderators who genuinely held it. (v3.43.0)
+    const _has = (p) => {
+      if (!this.user) return false;
+      if (this.user.isAdmin) return true;
+      const scoped = Array.isArray(this.user.permissions) ? this.user.permissions : [];
+      const global = Array.isArray(this.user.globalPermissions) ? this.user.globalPermissions : [];
+      return scoped.includes('*') || global.includes('*') || scoped.includes(p) || global.includes(p);
+    };
+    const canBanIp = _has('ban_ip');
     banIpGroup.style.display = (action === 'ban' && canBanIp) ? 'block' : 'none';
     if (banIpCheckbox) banIpCheckbox.checked = false;
   }
@@ -3893,8 +4387,12 @@ _showAdminResetPwReveal(username, tempPassword) {
 },
 
 _confirmTransferAdmin(userId, username) {
-  // Build a custom modal for transfer admin with password verification
+  // Build a custom modal for transfer admin with a confirmation step.
+  // An SSO admin has no Haven password, so they confirm with an authenticator
+  // code instead. The server decides which it will accept and rejects the
+  // wrong one, this only picks which field to put in front of you. (#5539)
   this._closeUserGearMenu();
+  const ssoConfirm = !!this.user?.isSso;
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay transfer-admin-overlay';
   overlay.style.display = 'flex';
@@ -3913,8 +4411,8 @@ _confirmTransferAdmin(userId, username) {
         </div>
         <p class="transfer-admin-note">${t('modals.transfer_admin.note')}</p>
         <div class="form-group">
-          <label class="form-label">${t('modals.transfer_admin.password_label')}</label>
-          <input type="password" id="transfer-admin-pw" class="form-input" placeholder="${t('modals.transfer_admin.password_placeholder')}" autocomplete="current-password">
+          <label class="form-label">${ssoConfirm ? t('modals.transfer_admin.totp_label') : t('modals.transfer_admin.password_label')}</label>
+          <input type="${ssoConfirm ? 'text' : 'password'}" id="transfer-admin-pw" class="form-input" placeholder="${ssoConfirm ? t('modals.transfer_admin.totp_placeholder') : t('modals.transfer_admin.password_placeholder')}" ${ssoConfirm ? 'inputmode="numeric" maxlength="6" autocomplete="one-time-code"' : 'autocomplete="current-password"'}>
         </div>
         <p id="transfer-admin-error" class="transfer-admin-error"></p>
       </div>
@@ -3939,16 +4437,19 @@ _confirmTransferAdmin(userId, username) {
   pwInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') confirmBtn.click(); });
 
   confirmBtn.addEventListener('click', () => {
-    const password = pwInput.value.trim();
-    if (!password) {
-      errorEl.textContent = t('modals.transfer_admin.error_required');
+    const secret = pwInput.value.trim();
+    if (!secret) {
+      errorEl.textContent = ssoConfirm
+        ? t('modals.transfer_admin.error_totp_required')
+        : t('modals.transfer_admin.error_required');
       errorEl.style.display = '';
       pwInput.focus();
       return;
     }
     confirmBtn.disabled = true;
     confirmBtn.textContent = t('modals.transfer_admin.transferring');
-    this.socket.emit('transfer-admin', { userId, password }, (res) => {
+    const payload = ssoConfirm ? { userId, totpCode: secret } : { userId, password: secret };
+    this.socket.emit('transfer-admin', payload, (res) => {
       if (res && res.error) {
         errorEl.textContent = res.error;
         errorEl.style.display = '';

@@ -2,28 +2,41 @@
 
 const path = require('path');
 const fs   = require('fs');
-const { utcStamp, isString, isInt, sanitizeText, isValidUploadPath } = require('./helpers');
+const { utcStamp, isString, isInt, sanitizeText, isValidUploadPath, normalizeDisplayName, sanitizeBorderTransform, parseBorderTransform } = require('./helpers');
 const { generateConnectToken } = require('../auth');
-const { setEnvValue, isWritableKey } = require('../envStore');
+const { setEnvValue, clearEnvValue, isWritableKey } = require('../envStore');
 
 module.exports = function register(socket, ctx) {
-  const { io, db, state, getChannelRoleChain, userHasPermission,
+  const { io, db, state, getChannelRoleChain, userHasPermission, getUserEffectiveLevel,
           emitOnlineUsers, broadcastVoiceUsers, generateToken,
-          touchVoiceActivity, DATA_DIR, logAudit } = ctx;
+          touchVoiceActivity, enforceAutomod, DATA_DIR, logAudit, getAdminRoleDisplay } = ctx;
   const { channelUsers, voiceUsers } = state;
   const _audit = (typeof logAudit === 'function') ? logAudit : () => {};
 
   // ── Rename (display name) ───────────────────────────────
   socket.on('rename-user', (data) => {
     if (!data || typeof data !== 'object') return;
-    const newName = typeof data.username === 'string' ? data.username.trim().replace(/\s+/g, ' ') : '';
+    const checked = normalizeDisplayName(typeof data.username === 'string' ? data.username : '');
+    if (checked.error) return socket.emit('error-msg', checked.error);
+    const newName = checked.value;
 
-    if (!newName || newName.length < 2 || newName.length > 20) {
-      return socket.emit('error-msg', 'Display name must be 2-20 characters');
+    // (#5482) A moderator-set display name holds. Otherwise the whole
+    // Manage Display Names permission is decorative — the moderated user
+    // renames themselves straight back and nothing has been moderated.
+    // Cleared when a moderator resets them to their username. Admins are
+    // never locked, so nobody can end up permanently stuck with a name.
+    if (!socket.user.isAdmin) {
+      const lock = db.prepare('SELECT display_name_locked FROM users WHERE id = ?').get(socket.user.id);
+      if (lock && lock.display_name_locked) {
+        return socket.emit('error-msg', 'A moderator set your display name — you cannot change it yourself');
+      }
     }
-    if (!/^[a-zA-Z0-9_ ]+$/.test(newName)) {
-      return socket.emit('error-msg', 'Letters, numbers, underscores, and spaces only');
-    }
+
+    // The charset still rules out dots, so a display name cannot carry a
+    // working URL. Run it through automod anyway so the deny-list can be
+    // used to reserve impersonation-prone names (e.g. "Admin", "Moderator"),
+    // which is also the only answer to homoglyph lookalikes (#5509).
+    if (enforceAutomod(newName, { surface: 'profile' })) return;
 
     // Reject if another user on this server already uses this display name
     // (case-insensitive). Mentions resolve by login username, but allowing
@@ -132,6 +145,38 @@ module.exports = function register(socket, ctx) {
     }
   });
 
+  // Border is a pfp overlay saved like the avatar; broadcast so live views
+  // can pick it up without a reconnect.
+  socket.on('set-border', (data) => {
+    if (!data || typeof data !== 'object') return;
+    const url = typeof data.url === 'string' ? data.url.trim() : '';
+    if (url && !isValidUploadPath(url)) return;
+    socket.user.border = url || null;
+    console.log(`[Border] ${socket.user.username} broadcast border: ${url || '(removed)'}`);
+    for (const [code, users] of channelUsers) {
+      if (users.has(socket.user.id)) {
+        users.get(socket.user.id).border = url || null;
+        emitOnlineUsers(code);
+      }
+    }
+  });
+
+  // Border fit (op log) broadcast, so live views re-render the overlay without
+  // a reconnect. The DB is already written by /api/set-border-transform; this
+  // just fans the sanitized value out to open channels.
+  socket.on('set-border-transform', (data) => {
+    if (!data || typeof data !== 'object') return;
+    const transform = sanitizeBorderTransform(data.transform);
+    const value = (transform && transform.length) ? transform : null;
+    socket.user.borderTransform = value;
+    for (const [code, users] of channelUsers) {
+      if (users.has(socket.user.id)) {
+        users.get(socket.user.id).borderTransform = value;
+        emitOnlineUsers(code);
+      }
+    }
+  });
+
   socket.on('set-avatar-shape', (data) => {
     if (!data || typeof data !== 'object') return;
     const validShapes = ['circle', 'rounded', 'squircle', 'hex', 'diamond'];
@@ -152,12 +197,35 @@ module.exports = function register(socket, ctx) {
     }
   });
 
+  socket.on('set-animate-profile', (data) => {
+    if (!data || typeof data !== 'object') return;
+    const valid = ['trigger', 'disabled'];
+    const mode = valid.includes(data.mode) ? data.mode : 'trigger';
+    try {
+      db.prepare('UPDATE users SET animate_profile = ? WHERE id = ?').run(mode, socket.user.id);
+      socket.user.animate_profile = mode;
+      for (const [code, users] of channelUsers) {
+        if (users.has(socket.user.id)) {
+          users.get(socket.user.id).animate_profile = mode;
+          emitOnlineUsers(code);
+        }
+      }
+      socket.emit('animate-profile-updated', { mode });
+    } catch (err) {
+      console.error('Set animate profile error:', err);
+    }
+  });
+
   // ── Status ──────────────────────────────────────────────
   socket.on('set-status', (data) => {
     if (!data || typeof data !== 'object') return;
     const validStatuses = ['online', 'away', 'dnd', 'invisible'];
     const status = validStatuses.includes(data.status) ? data.status : 'online';
     const statusText = isString(data.statusText, 0, 128) ? data.statusText.trim() : '';
+
+    // A status line is displayed next to the name in every member list, so a
+    // link parked there is as good as posting it in every channel at once.
+    if (statusText && enforceAutomod(statusText, { surface: 'profile' })) return;
 
     try {
       db.prepare('UPDATE users SET status = ?, status_text = ? WHERE id = ?')
@@ -187,7 +255,7 @@ module.exports = function register(socket, ctx) {
     try {
       const row = db.prepare(
         `SELECT u.id, u.username, COALESCE(u.display_name, u.username) as displayName,
-                u.avatar, u.avatar_shape, u.status, u.status_text, u.bio, u.created_at
+                u.avatar, u.avatar_shape, u.border, u.border_transform, u.animate_profile, u.status, u.status_text, u.bio, u.created_at
          FROM users u WHERE u.id = ?`
       ).get(data.userId);
       if (!row) return;
@@ -231,7 +299,8 @@ module.exports = function register(socket, ctx) {
       const isAdmin = db.prepare('SELECT is_admin FROM users WHERE id = ?').get(data.userId);
       if (isAdmin && isAdmin.is_admin) {
         roles.length = 0;
-        roles.push({ id: -1, name: 'Admin', level: 100, color: '#e74c3c' });
+        const d = getAdminRoleDisplay();
+        if (d.visible) roles.push({ id: -1, name: d.name, level: 100, color: d.color, icon: d.icon });
       } else if (roles.length > 1) {
         const userRoleIdx = roles.findIndex(r => r.name === 'User' && r.level <= 1);
         if (userRoleIdx !== -1) roles.splice(userRoleIdx, 1);
@@ -248,6 +317,9 @@ module.exports = function register(socket, ctx) {
         displayName: row.displayName,
         avatar: row.avatar || null,
         avatarShape: row.avatar_shape || 'circle',
+        border: row.border || null,
+        borderTransform: parseBorderTransform(row.border_transform),
+        animateProfile: row.animate_profile || 'trigger',
         status: row.status || 'online',
         statusText: row.status_text || '',
         bio: row.bio || '',
@@ -268,6 +340,7 @@ module.exports = function register(socket, ctx) {
   socket.on('set-bio', (data) => {
     if (!data || typeof data.bio !== 'string') return;
     const bio = sanitizeText(data.bio.trim().slice(0, 190));
+    if (bio && enforceAutomod(bio, { surface: 'profile' })) return;
     try {
       db.prepare('UPDATE users SET bio = ? WHERE id = ?').run(bio, socket.user.id);
       socket.emit('bio-updated', { bio });
@@ -288,11 +361,19 @@ module.exports = function register(socket, ctx) {
     try { const u = new URL(endpoint); if (u.protocol !== 'https:') return; } catch { return; }
 
     try {
-      db.prepare(`
-        INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth)
-        VALUES (?, ?, ?, ?)
-        ON CONFLICT(user_id, endpoint) DO UPDATE SET p256dh = excluded.p256dh, auth = excluded.auth
-      `).run(socket.user.id, endpoint, keys.p256dh, keys.auth);
+      // One endpoint is one browser/device, and only one account is signed
+      // into it at a time. Because the table is UNIQUE(user_id, endpoint), a
+      // previous account's row for this same device would otherwise survive,
+      // and fan-out only skips rows whose user_id is the sender, so that stale
+      // row pushed the sender their own messages. Claim it for this user.
+      db.transaction(() => {
+        db.prepare('DELETE FROM push_subscriptions WHERE endpoint = ? AND user_id != ?').run(endpoint, socket.user.id);
+        db.prepare(`
+          INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth)
+          VALUES (?, ?, ?, ?)
+          ON CONFLICT(user_id, endpoint) DO UPDATE SET p256dh = excluded.p256dh, auth = excluded.auth
+        `).run(socket.user.id, endpoint, keys.p256dh, keys.auth);
+      })();
       socket.emit('push-subscribed');
     } catch (err) {
       console.error('Push subscribe error:', err);
@@ -317,11 +398,22 @@ module.exports = function register(socket, ctx) {
   socket.on('register-fcm-token', (data) => {
     if (!data || typeof data.token !== 'string' || !data.token.trim()) return;
     try {
-      db.prepare(`
-        INSERT INTO fcm_tokens (user_id, token)
-        VALUES (?, ?)
-        ON CONFLICT(user_id, token) DO NOTHING
-      `).run(socket.user.id, data.token.trim());
+      // Same device-ownership rule as push_subscriptions above. An FCM token
+      // belongs to one app install, so a token still filed under a previously
+      // signed-in account would push that device the current user's own
+      // messages. This matters more here than for web push: a web-push
+      // endpoint dies on resubscribe and the 410 handler prunes it, but an FCM
+      // token stays valid across an account switch, so a stale row never
+      // cleans itself up.
+      const fcmToken = data.token.trim();
+      db.transaction(() => {
+        db.prepare('DELETE FROM fcm_tokens WHERE token = ? AND user_id != ?').run(fcmToken, socket.user.id);
+        db.prepare(`
+          INSERT INTO fcm_tokens (user_id, token)
+          VALUES (?, ?)
+          ON CONFLICT(user_id, token) DO NOTHING
+        `).run(socket.user.id, fcmToken);
+      })();
     } catch (err) {
       console.error('FCM token register error:', err);
     }
@@ -534,6 +626,53 @@ module.exports = function register(socket, ctx) {
    * envStore.setEnvValue, which allow-lists the writable keys — a text field
    * that could write arbitrary .env entries would be a server takeover.
    */
+  /**
+   * Admin-only: forget an integration's credentials (#5529).
+   *
+   * The setup form could only ever replace a key, never remove one, because
+   * envStore.validate rejects an empty value. That left an admin who had set
+   * Steam or Spotify up with no way to turn it back off short of editing .env
+   * by hand, which is exactly the audience the setup form exists to spare.
+   *
+   * Takes a provider's keys together so Spotify's id and secret go at once and
+   * it cannot be left half-configured.
+   */
+  socket.on('clear-integration-key', (data) => {
+    if (!activity) return;
+    if (!socket.user.isAdmin) return socket.emit('error-msg', 'Admin only');
+    if (!data || typeof data !== 'object') return;
+
+    const keys = Array.isArray(data.keys) ? data.keys.filter(k => typeof k === 'string') : [];
+    if (!keys.length) return;
+    if (!keys.every(isWritableKey)) return socket.emit('error-msg', 'Unknown setting');
+
+    const cleared = [];
+    for (const key of keys) {
+      const result = clearEnvValue(key);
+      if (!result.ok) return socket.emit('error-msg', result.reason || 'Could not remove');
+      cleared.push(key);
+    }
+
+    _audit({
+      actor: socket.user,
+      action: 'integration_key_cleared',
+      target_type: 'server',
+      target_name: cleared.join(', '),
+      // Same rule as saving: record which keys changed, never their values.
+      details: { keys: cleared },
+    });
+
+    socket.emit('toast', { message: `${cleared.join(' and ')} removed`, type: 'success' });
+    socket.emit('connections', {
+      connections: activity.listConnections(socket.user.id),
+      available: {
+        steam: activity.isSteamConfigured(),
+        spotify: activity.isSpotifyConfigured(),
+        lastfm: activity.isLastfmConfigured(),
+      },
+    });
+  });
+
   socket.on('set-integration-key', (data) => {
     if (!activity) return;
     if (!socket.user.isAdmin) return socket.emit('error-msg', 'Admin only');
@@ -658,7 +797,7 @@ module.exports = function register(socket, ctx) {
         )
       ORDER BY hs.score DESC LIMIT 50
     `).all(game);
-    io.emit('high-scores', { game, leaderboard });
+    io.except('bot-sockets').emit('high-scores', { game, leaderboard });
   });
 
   socket.on('get-high-scores', (data) => {
@@ -731,6 +870,142 @@ module.exports = function register(socket, ctx) {
       }
     } catch (err) {
       console.error('set-nickname error:', err);
+    }
+  });
+
+  // ── Global display name (Manage Display Names permission) ──
+  // Lets a moderator change another member's real display name — the one
+  // everyone sees — reusing the same validation and broadcast path as a
+  // self-rename. A blank displayName resets the target back to their username.
+  socket.on('rename-user-global', (data) => {
+    if (!data || typeof data !== 'object') return;
+    if (!socket.user.isAdmin && !userHasPermission(socket.user.id, 'manage_display_names')) {
+      return socket.emit('error-msg', 'You do not have permission to manage display names');
+    }
+    const targetId = parseInt(data.targetId, 10);
+    if (!Number.isFinite(targetId) || targetId <= 0) return;
+
+    const target = db.prepare('SELECT id, username, display_name, is_admin FROM users WHERE id = ?').get(targetId);
+    if (!target) return socket.emit('error-msg', 'User not found');
+
+    // (#5482) Renaming someone is a moderation action, so it respects rank the
+    // same way kick, ban and mute do. Without this, anyone holding the
+    // permission could rename the server owner.
+    if (!socket.user.isAdmin) {
+      if (target.is_admin) {
+        return socket.emit('error-msg', 'You cannot change an admin\'s display name');
+      }
+      const myLevel = getUserEffectiveLevel(socket.user.id);
+      const targetLevel = getUserEffectiveLevel(targetId);
+      if (targetLevel >= myLevel) {
+        return socket.emit('error-msg', 'You cannot change the display name of someone at or above your level');
+      }
+    }
+
+    // Blank still means "reset to the login username", so only a non-empty
+    // value goes through validation.
+    const submitted = typeof data.displayName === 'string' ? data.displayName.trim() : '';
+    let raw = '';
+    if (submitted) {
+      const checked = normalizeDisplayName(submitted);
+      if (checked.error) return socket.emit('error-msg', checked.error);
+      raw = checked.value;
+    }
+    const oldName = target.display_name || target.username;
+
+    let newName, newDisplayCol;
+    if (raw) {
+      // (#5482) Same automod pass a self-rename gets. The deny-list is what
+      // reserves impersonation-prone names like "Admin" / "Moderator", and
+      // holding this permission is no reason to be able to hand one out.
+      if (enforceAutomod(raw, { surface: 'profile' })) return;
+      try {
+        const conflict = db.prepare(`
+          SELECT id FROM users
+          WHERE id != ?
+            AND (LOWER(display_name) = LOWER(?)
+                 OR (display_name IS NULL AND LOWER(username) = LOWER(?)))
+          LIMIT 1
+        `).get(targetId, raw, raw);
+        if (conflict) {
+          return socket.emit('error-msg', 'That display name is already taken on this server');
+        }
+      } catch (err) {
+        console.error('Display name conflict check failed:', err);
+      }
+      newName = raw;
+      newDisplayCol = raw;
+    } else {
+      // Reset back to the login username
+      newName = target.username;
+      newDisplayCol = null;
+    }
+
+    // (#5482) Lock while a moderator-set name is in force; a reset to the
+    // username hands control back. Admins are never locked (see rename-user),
+    // so this can't strand anyone.
+    const locked = raw ? 1 : 0;
+
+    try {
+      db.prepare('UPDATE users SET display_name = ?, display_name_locked = ? WHERE id = ?')
+        .run(newDisplayCol, locked, targetId);
+    } catch (err) {
+      console.error('Global rename error:', err);
+      return socket.emit('error-msg', 'Failed to update display name');
+    }
+
+    // Refresh presence maps silently — no user-renamed system message, since a
+    // moderator changing someone's name shouldn't announce itself in-channel.
+    for (const [code, users] of channelUsers) {
+      if (users.has(targetId)) {
+        users.get(targetId).username = newName;
+        emitOnlineUsers(code);
+      }
+    }
+    for (const [code, users] of voiceUsers) {
+      if (users.has(targetId)) {
+        users.get(targetId).username = newName;
+        broadcastVoiceUsers(code);
+      }
+    }
+
+    // Update the target's own connected sessions (token + UI) as if they renamed
+    for (const [, s] of io.sockets.sockets) {
+      if (s.user && s.user.id === targetId) {
+        s.user.displayName = newName;
+        const newToken = generateToken({ id: s.user.id, username: s.user.username, isAdmin: s.user.isAdmin, displayName: newName });
+        s.emit('renamed', {
+          token: newToken,
+          user: { id: s.user.id, username: s.user.username, isAdmin: s.user.isAdmin, displayName: newName },
+          oldName
+        });
+      }
+    }
+
+    // Notify DM partners so their sidebars update
+    try {
+      const dmPartners = db.prepare(`
+        SELECT DISTINCT cm2.user_id FROM channel_members cm1
+        JOIN channels c ON c.id = cm1.channel_id AND c.is_dm = 1
+        JOIN channel_members cm2 ON cm2.channel_id = c.id AND cm2.user_id != ?
+        WHERE cm1.user_id = ?
+      `).all(targetId, targetId);
+      for (const partner of dmPartners) {
+        for (const [, s] of io.sockets.sockets) {
+          if (s.user && s.user.id === partner.user_id) {
+            s.emit('dm-name-updated', { userId: targetId, newName });
+          }
+        }
+      }
+    } catch (err) {
+      console.error('DM name update broadcast error:', err);
+    }
+
+    console.log(`✏️  ${socket.user.username} set display name of ${target.username} to ${newName}`);
+    if (oldName !== newName) {
+      _audit({ actor: socket.user, action: 'user_rename',
+        target_type: 'user', target_id: targetId, target_name: newName,
+        details: { oldName, newName } });
     }
   });
 

@@ -1,6 +1,7 @@
 'use strict';
 
 const bcrypt = require('bcryptjs');
+const OTPAuth = require('otpauth');
 const { isString, isInt, VALID_ROLE_PERMS } = require('./helpers');
 
 module.exports = function register(socket, ctx) {
@@ -8,7 +9,7 @@ module.exports = function register(socket, ctx) {
     io, db, state, userHasPermission, getUserEffectiveLevel,
     getUserPermissions, getUserGlobalPermissions, getUserRoles, getUserHighestRole,
     emitOnlineUsers, broadcastChannelLists, getEnrichedChannels,
-    transferAdminRef, HAVEN_VERSION, logAudit
+    transferAdminRef, HAVEN_VERSION, logAudit, getAdminRoleDisplay
   } = ctx;
   const { channelUsers } = state;
   const _audit = (typeof logAudit === 'function') ? logAudit : () => {};
@@ -41,8 +42,60 @@ module.exports = function register(socket, ctx) {
   // Expose on ctx so other modules can use it if needed
   ctx.applyRoleChannelAccess = applyRoleChannelAccess;
 
-  // ── Notify helper: refresh a user's role state on all sockets ──
-  function refreshUserRoles(userId) {
+  // ── Helper: live-refresh for 'view_all_channels' ────────
+  // A role that grants view_all_channels changes what its holder can SEE, so
+  // push them a rebuilt channel list (joining the new rooms) the same way
+  // applyRoleChannelAccess does, instead of it only appearing on next login.
+  function roleGrantsSeeAll(roleId) {
+    return !!db.prepare(
+      "SELECT 1 FROM role_permissions WHERE role_id = ? AND permission = 'view_all_channels' AND allowed = 1"
+    ).get(roleId);
+  }
+  function pushChannelList(userId) {
+    for (const [, s] of io.sockets.sockets) {
+      if (s.user && s.user.id === userId) {
+        s.emit('channels-list', getEnrichedChannels(userId, s.user.isAdmin, (room) => s.join(room)));
+      }
+    }
+  }
+
+  // ── Helper: undo view_all_channels auto-joins ───────────
+  // Granting the permission writes a real membership row for every channel, so
+  // losing it has to take those rows back. Without this, demoting a mod leaves
+  // them sitting in every private channel on the server, which is the opposite
+  // of what demoting someone means. No-ops when they still hold the permission
+  // through some other role, and never touches memberships they got another
+  // way. (#5512)
+  function syncSeeAllMemberships(userId) {
+    const row = db.prepare('SELECT is_admin FROM users WHERE id = ?').get(userId);
+    if (row && row.is_admin) return;
+    if (userHasPermission(userId, 'view_all_channels')) return;
+
+    const losing = db.prepare(`
+      SELECT c.code FROM channel_members cm
+      JOIN channels c ON c.id = cm.channel_id
+      WHERE cm.user_id = ? AND cm.auto_all_channels = 1
+    `).all(userId);
+    if (!losing.length) return;
+
+    db.prepare('DELETE FROM channel_members WHERE user_id = ? AND auto_all_channels = 1').run(userId);
+
+    // Leaving the rooms matters as much as the rows do: a socket still in
+    // channel:<code> keeps receiving live messages from a channel the user can
+    // no longer open.
+    for (const [, s] of io.sockets.sockets) {
+      if (s.user && s.user.id === userId) {
+        losing.forEach(ch => s.leave(`channel:${ch.code}`));
+        s.emit('channels-list', getEnrichedChannels(userId, s.user.isAdmin, (room) => s.join(room)));
+      }
+    }
+  }
+
+  // ── Notify helper: push one user's recomputed role state to their sockets ──
+  // Recomputes from the DB, so it's correct whether the change was to the
+  // user's role ASSIGNMENTS (assign/revoke/promote) or to the PERMISSIONS of a
+  // role they already hold (update-role / reset-roles-to-default).
+  function pushUserRoleState(userId) {
     for (const [, s] of io.sockets.sockets) {
       if (s.user && s.user.id === userId) {
         s.user.roles = getUserRoles(userId);
@@ -55,6 +108,11 @@ module.exports = function register(socket, ctx) {
         });
       }
     }
+  }
+
+  // Same, plus a member-list refresh everywhere (role badges/ordering change).
+  function refreshUserRoles(userId) {
+    pushUserRoleState(userId);
     for (const [code] of channelUsers) { emitOnlineUsers(code); }
   }
 
@@ -135,6 +193,42 @@ module.exports = function register(socket, ctx) {
     cb({ channelId: channel.id, channelName: channel.name, members: result });
   });
 
+  // ── Admin role cosmetic display (admin only) ────────────
+  // The admin role is synthetic (there is no row for it in `roles`). These
+  // handlers persist a purely cosmetic override in server_settings under
+  // 'admin_role_display'. Nothing here affects is_admin, level or permissions.
+  socket.on('get-admin-role-display', (data, callback) => {
+    const cb = typeof callback === 'function' ? callback : () => {};
+    if (!socket.user.isAdmin) return cb({ error: 'Only the admin can view this' });
+    cb({ display: getAdminRoleDisplay() });
+  });
+
+  socket.on('update-admin-role-display', (data, callback) => {
+    const cb = typeof callback === 'function' ? callback : () => {};
+    if (!socket.user.isAdmin) return cb({ error: 'Only the admin can edit this' });
+    if (!data || typeof data !== 'object') return cb({ error: 'Invalid request' });
+
+    // Validated like create/update-role; invalid fields fall back to the safe
+    // default rather than being rejected, since this is cosmetic only.
+    const name = isString(data.name, 1, 30) ? data.name.trim() : 'Admin';
+    const color = (isString(data.color, 4, 7) && /^#[0-9a-fA-F]{3,6}$/.test(data.color)) ? data.color : '#e74c3c';
+    const icon = (isString(data.icon, 1, 512) && /^\/uploads\//i.test(data.icon)) ? data.icon : null;
+    const visible = data.visible !== false;
+
+    db.prepare("INSERT OR REPLACE INTO server_settings (key, value) VALUES ('admin_role_display', ?)")
+      .run(JSON.stringify({ name, color, icon, visible }));
+
+    // Refresh every live display: member lists re-read getUserHighestRole and
+    // clients re-fetch role-driven UI on roles-updated.
+    for (const [code] of channelUsers) { emitOnlineUsers(code); }
+    io.except('bot-sockets').emit('roles-updated');
+
+    cb({ success: true, display: { name, color, icon, visible } });
+    _audit({ actor: socket.user, action: 'admin_role_display_update',
+      target_type: 'server', target_id: null, target_name: 'admin_role_display',
+      details: { name, color, icon, visible } });
+  });
+
   // ── Create role ─────────────────────────────────────────
   socket.on('create-role', (data, callback) => {
     if (!data || typeof data !== 'object') return;
@@ -152,6 +246,15 @@ module.exports = function register(socket, ctx) {
     const autoAssign = data.autoAssign ? 1 : 0;
     const icon = isString(data.icon, 1, 512) && /^\/uploads\//i.test(data.icon) ? data.icon : null;
 
+    // A non-admin cannot create a role at or above their own level (they'd be
+    // unable to assign it anyway, and it must not sit at/over their rank).
+    if (!socket.user.isAdmin) {
+      const myLevel = getUserEffectiveLevel(socket.user.id);
+      if (level >= myLevel) {
+        return cb({ error: `You can only create roles below your level (${myLevel})` });
+      }
+    }
+
     try {
       if (autoAssign) {
         db.prepare('UPDATE roles SET auto_assign = 0').run();
@@ -161,7 +264,7 @@ module.exports = function register(socket, ctx) {
       ).run(name, level, scope, color, autoAssign, icon);
 
       const perms = Array.isArray(data.permissions) ? data.permissions : [];
-      const adminOnlyPerms = ['transfer_admin', 'manage_roles', 'manage_server', 'delete_channel'];
+      const adminOnlyPerms = ['transfer_admin', 'manage_roles', 'manage_server', 'delete_channel', 'view_all_channels'];
       const insertPerm = db.prepare('INSERT OR IGNORE INTO role_permissions (role_id, permission, allowed) VALUES (?, ?, 1)');
       perms.forEach(p => {
         if (!VALID_ROLE_PERMS.includes(p)) return;
@@ -193,6 +296,22 @@ module.exports = function register(socket, ctx) {
     const role = db.prepare('SELECT * FROM roles WHERE id = ?').get(roleId);
     if (!role) return cb({ error: 'Role not found' });
 
+    // Role hierarchy: a non-admin may only edit roles strictly below their own
+    // level, and may never raise a role to or above their level. This is the
+    // real guard behind the behaviour that used to happen by accident — editing
+    // a peer or higher role would nuke its permissions and lock the caller out,
+    // while the level change itself still went through. Viewing is unaffected
+    // (get-roles has no such gate). Mirrors assign-role / promote-user.
+    if (!socket.user.isAdmin) {
+      const myLevel = getUserEffectiveLevel(socket.user.id);
+      if (role.level >= myLevel) {
+        return cb({ error: `You can only edit roles below your level (${myLevel})` });
+      }
+      if (isInt(data.level) && data.level >= myLevel) {
+        return cb({ error: `A role's level must stay below your own (${myLevel})` });
+      }
+    }
+
     const updateRoleTx = db.transaction(() => {
       const updates = [];
       const values = [];
@@ -223,14 +342,38 @@ module.exports = function register(socket, ctx) {
       }
 
       if (Array.isArray(data.permissions)) {
-        const adminOnlyPerms = ['transfer_admin', 'manage_roles', 'manage_server', 'delete_channel'];
+        const requested = data.permissions.filter(p => VALID_ROLE_PERMS.includes(p));
+
+        // Resolve the final permission set BEFORE deleting anything. The old
+        // code deleted the role's permissions first and then re-checked each
+        // requested perm with userHasPermission(caller) — inside the same
+        // transaction, so the delete was already visible. When a non-admin
+        // edited the very role that granted their own permissions, that source
+        // was gone at check time, so every perm they "no longer had" was
+        // silently dropped, wiping it for every other member of the role too.
+        // We now snapshot the caller's rights up front and preserve any
+        // permission they don't personally control (admin-only perms, or perms
+        // they lack) exactly as the role already had them — a non-admin can
+        // only add or remove perms they actually hold, and never deletes the
+        // rest as a side effect.
+        let finalPerms;
+        if (socket.user.isAdmin) {
+          finalPerms = requested;
+        } else {
+          const adminOnlyPerms = ['transfer_admin', 'manage_roles', 'manage_server', 'delete_channel', 'view_all_channels'];
+          const current = db.prepare(
+            'SELECT permission FROM role_permissions WHERE role_id = ? AND allowed = 1'
+          ).all(roleId).map(r => r.permission);
+          const callerPerms = new Set(getUserPermissions(socket.user.id));
+          const controllable = (p) => !adminOnlyPerms.includes(p) && (callerPerms.has('*') || callerPerms.has(p));
+          const lockedKept = current.filter(p => !controllable(p));
+          const controlledChosen = requested.filter(p => controllable(p));
+          finalPerms = [...new Set([...lockedKept, ...controlledChosen])];
+        }
+
         db.prepare('DELETE FROM role_permissions WHERE role_id = ?').run(roleId);
         const insertPerm = db.prepare('INSERT INTO role_permissions (role_id, permission, allowed) VALUES (?, ?, 1)');
-        data.permissions.forEach(p => {
-          if (!VALID_ROLE_PERMS.includes(p)) return;
-          if (!socket.user.isAdmin && (adminOnlyPerms.includes(p) || !userHasPermission(socket.user.id, p))) return;
-          insertPerm.run(roleId, p);
-        });
+        finalPerms.forEach(p => insertPerm.run(roleId, p));
       }
     });
     updateRoleTx();
@@ -242,7 +385,21 @@ module.exports = function register(socket, ctx) {
     freshRoles.forEach(r => { r.permissions = pm[r.id] || []; });
 
     for (const [code] of channelUsers) { emitOnlineUsers(code); }
-    socket.broadcast.emit('roles-updated');
+
+    // Editing a role's PERMISSIONS changes what every member of that role can
+    // do, so each of them needs their own recomputed permission set pushed.
+    // The broadcast below carries no payload — it's only a "the server's role
+    // list changed" nudge for open Role Management modals — so without this
+    // loop a moderator granted e.g. ban_ip kept their stale permission set
+    // (and the hidden IP-ban option) until they reconnected.
+    const affected = db.prepare('SELECT DISTINCT user_id FROM user_roles WHERE role_id = ?').all(roleId);
+    for (const row of affected) pushUserRoleState(row.user_id);
+    // If the edit granted view_all_channels, every holder's visible channel
+    // set just grew — refresh their lists live, like assign-role does.
+    if (roleGrantsSeeAll(roleId)) for (const row of affected) pushChannelList(row.user_id);
+    else for (const row of affected) syncSeeAllMemberships(row.user_id);
+
+    socket.broadcast.except('bot-sockets').emit('roles-updated');
     cb({ success: true, roles: freshRoles });
     _audit({ actor: socket.user, action: 'role_update',
       target_type: 'role', target_id: roleId, target_name: role.name,
@@ -265,10 +422,14 @@ module.exports = function register(socket, ctx) {
     const roleId = isInt(data.roleId) ? data.roleId : null;
     if (!roleId) return;
 
+    // Read the holders first: after the delete there is nothing left to ask.
+    const heldBy = db.prepare('SELECT DISTINCT user_id FROM user_roles WHERE role_id = ?').all(roleId);
+    const deletedSeeAll = roleGrantsSeeAll(roleId);
     db.prepare('DELETE FROM user_roles WHERE role_id = ?').run(roleId);
     db.prepare('DELETE FROM role_permissions WHERE role_id = ?').run(roleId);
     db.prepare('DELETE FROM role_channel_access WHERE role_id = ?').run(roleId);
     db.prepare('DELETE FROM roles WHERE id = ?').run(roleId);
+    if (deletedSeeAll) for (const r of heldBy) syncSeeAllMemberships(r.user_id);
     for (const [code] of channelUsers) { emitOnlineUsers(code); }
     cb({ success: true });
     _audit({ actor: socket.user, action: 'role_delete',
@@ -291,7 +452,7 @@ module.exports = function register(socket, ctx) {
       const insertPerm = db.prepare('INSERT INTO role_permissions (role_id, permission, allowed) VALUES (?, ?, 1)');
 
       const serverMod = insertRole.run('Server Mod', 50, 'server', '#3498db');
-      ['kick_user','mute_user','delete_message','pin_message','set_channel_topic','manage_sub_channels','rename_channel','rename_sub_channel','delete_lower_messages','manage_webhooks','upload_files','use_voice','view_history','view_all_members','manage_music_queue','delete_own_messages','edit_own_messages']
+      ['kick_user','mute_user','delete_message','pin_message','set_channel_topic','manage_sub_channels','rename_channel','rename_sub_channel','delete_lower_messages','manage_webhooks','use_ferry','upload_files','use_voice','view_history','view_all_members','manage_music_queue','delete_own_messages','edit_own_messages']
         .forEach(p => insertPerm.run(serverMod.lastInsertRowid, p));
 
       const channelMod = insertRole.run('Channel Mod', 25, 'channel', '#2ecc71');
@@ -312,7 +473,14 @@ module.exports = function register(socket, ctx) {
       }
 
       for (const [code] of channelUsers) { emitOnlineUsers(code); }
-      io.emit('roles-updated');
+      // Every role was just torn down and rebuilt, so every connected user's
+      // permission set changed. Push each one their own recomputed state —
+      // the payload-less broadcast below only nudges open role managers.
+      const seen = new Set();
+      for (const [, s] of io.sockets.sockets) {
+        if (s.user && !s.user.isBot && !seen.has(s.user.id)) { seen.add(s.user.id); pushUserRoleState(s.user.id); }
+      }
+      io.except('bot-sockets').emit('roles-updated');
       cb({ success: true });
     } catch (err) {
       cb({ error: 'Failed to reset roles: ' + err.message });
@@ -514,7 +682,7 @@ module.exports = function register(socket, ctx) {
         // is admin, and drop any perm the caller doesn't currently hold.
         // This prevents a non-admin promoter from escalating perms via a
         // crafted customPerms payload.
-        const adminOnlyPerms = ['transfer_admin', 'manage_roles', 'manage_server', 'delete_channel'];
+        const adminOnlyPerms = ['transfer_admin', 'manage_roles', 'manage_server', 'delete_channel', 'view_all_channels'];
         const callerPermsSet = socket.user.isAdmin ? null : new Set(getUserPermissions(socket.user.id));
         const customPerms = data.customPerms.filter(p => {
           if (typeof p !== 'string') return false;
@@ -542,6 +710,7 @@ module.exports = function register(socket, ctx) {
       }
 
       applyRoleChannelAccess(roleId, userId, 'grant');
+      if (roleGrantsSeeAll(roleId)) pushChannelList(userId);
       refreshUserRoles(userId);
       cb({ success: true });
       try {
@@ -603,6 +772,7 @@ module.exports = function register(socket, ctx) {
     } catch {}
 
     refreshUserRoles(userId);
+    syncSeeAllMemberships(userId);
   });
 
   // ── Role channel access ─────────────────────────────────
@@ -734,20 +904,61 @@ module.exports = function register(socket, ctx) {
     transferAdminRef.value = true;
 
     try {
-      const password = typeof data.password === 'string' ? data.password : '';
-      if (!password) { transferAdminRef.value = false; return cb({ error: 'Password is required for this action' }); }
-
-      const adminUser = db.prepare('SELECT password_hash FROM users WHERE id = ?').get(socket.user.id);
+      const adminUser = db.prepare(
+        'SELECT username, password_hash, oidc_subject, totp_secret, totp_enabled FROM users WHERE id = ?'
+      ).get(socket.user.id);
       if (!adminUser) { transferAdminRef.value = false; return cb({ error: 'Admin user not found' }); }
 
-      let validPw;
-      try {
-        validPw = await bcrypt.compare(password, adminUser.password_hash);
-        if (!validPw) { transferAdminRef.value = false; return cb({ error: 'Incorrect password' }); }
-      } catch (err) {
-        console.error('Password verification error:', err);
-        transferAdminRef.value = false;
-        return cb({ error: 'Password verification failed' });
+      // An admin who signed in through OIDC has no Haven password, so asking
+      // for one did not merely inconvenience them, it closed the door: on a
+      // server where everybody arrives through SSO, admin could not be handed
+      // to anyone at all. Those accounts confirm with their authenticator code
+      // instead. Two-factor has to be switched on for that, and deliberately
+      // so, because the whole point of the prompt is a second factor and
+      // "you are already signed in" is not one. Anything holding a real bcrypt
+      // hash, which is every local account, still takes the password path.
+      // (#5539)
+      const ssoOnly = !!adminUser.oidc_subject &&
+        !(typeof adminUser.password_hash === 'string' && adminUser.password_hash.startsWith('$2'));
+
+      if (ssoOnly) {
+        if (!adminUser.totp_secret || !adminUser.totp_enabled) {
+          transferAdminRef.value = false;
+          return cb({
+            error: 'Your account signs in through SSO, so there is no Haven password to confirm with. Turn on two-factor authentication in Settings, then transfer admin.',
+            code: 'mfa_required'
+          });
+        }
+        const code = typeof data.totpCode === 'string' ? data.totpCode.replace(/[\s-]/g, '') : '';
+        if (!code) { transferAdminRef.value = false; return cb({ error: 'Authenticator code is required for this action' }); }
+        let validCode;
+        try {
+          const totp = new OTPAuth.TOTP({
+            issuer: 'Haven',
+            label: adminUser.username,
+            algorithm: 'SHA1',
+            digits: 6,
+            period: 30,
+            secret: OTPAuth.Secret.fromBase32(adminUser.totp_secret)
+          });
+          validCode = totp.validate({ token: code, window: 1 }) !== null;
+        } catch (err) {
+          console.error('Transfer admin code verification error:', err);
+          transferAdminRef.value = false;
+          return cb({ error: 'Code verification failed' });
+        }
+        if (!validCode) { transferAdminRef.value = false; return cb({ error: 'Incorrect code' }); }
+      } else {
+        const password = typeof data.password === 'string' ? data.password : '';
+        if (!password) { transferAdminRef.value = false; return cb({ error: 'Password is required for this action' }); }
+        try {
+          const validPw = await bcrypt.compare(password, adminUser.password_hash);
+          if (!validPw) { transferAdminRef.value = false; return cb({ error: 'Incorrect password' }); }
+        } catch (err) {
+          console.error('Password verification error:', err);
+          transferAdminRef.value = false;
+          return cb({ error: 'Password verification failed' });
+        }
       }
 
       const stillAdmin = db.prepare('SELECT is_admin FROM users WHERE id = ?').get(socket.user.id);
@@ -765,6 +976,19 @@ module.exports = function register(socket, ctx) {
         const transferTxn = db.transaction(() => {
           db.prepare('UPDATE users SET is_admin = 1 WHERE id = ?').run(userId);
           db.prepare('UPDATE users SET is_admin = 0 WHERE id = ?').run(socket.user.id);
+
+          // Admins are deliberately not allowed to leave channels, so that
+          // whoever runs the server can see what happens in all of them. That
+          // guarantee quietly broke on transfer: the incoming admin only had
+          // whatever channels they had joined as an ordinary member, and there
+          // was no way for them to add themselves back to the rest. Join them
+          // to every non-DM channel so the new admin starts with the same
+          // visibility the old one had. Hiding a channel from your own sidebar
+          // is a per-user view setting and stays available.
+          db.prepare(`
+            INSERT OR IGNORE INTO channel_members (channel_id, user_id)
+            SELECT id, ? FROM channels WHERE is_dm = 0
+          `).run(userId);
 
           let formerAdminRole = db.prepare("SELECT id FROM roles WHERE name = 'Former Admin' AND level = 99").get();
           if (!formerAdminRole) {

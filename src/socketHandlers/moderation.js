@@ -6,7 +6,7 @@ const { utcStamp, isInt } = require('./helpers');
 module.exports = function register(socket, ctx) {
   const { io, db, state, userHasPermission, getUserEffectiveLevel,
           emitOnlineUsers, broadcastVoiceUsers, getEnrichedChannels, logAudit,
-          invalidateIpBanCache } = ctx;
+          invalidateIpBanCache, getMentionableChannelMembers } = ctx;
   const { channelUsers, voiceUsers, clearDrawingChannelState } = state;
   const _audit = (typeof logAudit === 'function') ? logAudit : () => {};
   const _invalidateIpCache = (typeof invalidateIpBanCache === 'function') ? invalidateIpBanCache : () => {};
@@ -200,6 +200,26 @@ module.exports = function register(socket, ctx) {
       emitOnlineUsers(code);
     }
 
+    // Clients cache the member list per channel and only refetch on a channel
+    // switch, so without this push the banned name stayed in @mention
+    // autocomplete for everyone already sitting in the channel. The list is
+    // identical for every viewer, so one query per channel covers the room.
+    try {
+      const affected = db.prepare(`
+        SELECT c.id, c.code FROM channel_members cm
+        JOIN channels c ON c.id = cm.channel_id
+        WHERE cm.user_id = ? AND c.is_dm = 0
+      `).all(data.userId);
+      for (const ch of affected) {
+        io.to(`channel:${ch.code}`).emit('channel-members', {
+          channelCode: ch.code,
+          members: getMentionableChannelMembers(ch.id)
+        });
+      }
+    } catch (err) {
+      console.warn('[ban] member list refresh failed:', err.message);
+    }
+
     if (data.scrubMessages) {
       db.prepare('DELETE FROM reactions WHERE user_id = ? AND message_id IN (SELECT id FROM messages WHERE user_id = ? AND is_archived = 0)').run(data.userId, data.userId);
       db.prepare('DELETE FROM messages WHERE user_id = ? AND is_archived = 0').run(data.userId);
@@ -254,10 +274,17 @@ module.exports = function register(socket, ctx) {
           const ipRows = db.prepare('SELECT ip FROM user_ips WHERE user_id = ? ORDER BY last_seen DESC LIMIT 5').all(data.userId);
           const ipReason = reason ? `[Linked to ${targetUser.username}] ${reason}` : `Linked to ${targetUser.username}`;
           const stmt = db.prepare('INSERT OR REPLACE INTO ip_bans (ip, banned_by, reason) VALUES (?, ?, ?)');
+          // Normalise on the way out: rows written before v3.42.0 may still
+          // hold "::ffff:1.2.3.4", which would be stored as a ban the HTTP
+          // gate never matched.
+          const { normalizeIp } = require('../clientIp');
           let count = 0;
+          const seenIps = new Set();
           for (const r of ipRows) {
-            if (!r.ip) continue;
-            stmt.run(r.ip, socket.user.id, ipReason.slice(0, 200));
+            const norm = normalizeIp(r.ip);
+            if (!norm || seenIps.has(norm)) continue;
+            seenIps.add(norm);
+            stmt.run(norm, socket.user.id, ipReason.slice(0, 200));
             count++;
           }
           if (count > 0) {
@@ -280,10 +307,32 @@ module.exports = function register(socket, ctx) {
   // ── Unban user ──────────────────────────────────────────
   socket.on('unban-user', (data) => {
     if (!data || typeof data !== 'object') return;
-    if (!socket.user.isAdmin) {
-      return socket.emit('error-msg', 'Only admins can unban users');
+    // This was admin-only while ban-user, get-bans and dismiss-ban-appeal all
+    // accepted ban_user, so a moderator could ban someone, watch them sit in
+    // the list, reject their appeal, and then be refused the one action that
+    // undoes their own mistake. IP bans have always shared a single permission
+    // for both directions (_canBanIp); user bans now work the same way.
+    if (!socket.user.isAdmin && !userHasPermission(socket.user.id, 'ban_user')) {
+      return socket.emit('error-msg', 'You don\'t have permission to unban users');
     }
     if (!isInt(data.userId)) return;
+
+    // Mirror the rank guard on ban-user. A moderator can lift a ban they
+    // placed themselves, or one placed by someone below them, but not an
+    // admin's ban or a peer's. Without this, widening the permission would
+    // hand every moderator a quiet way to reverse an admin's decision.
+    if (!socket.user.isAdmin) {
+      const existing = db.prepare('SELECT banned_by FROM bans WHERE user_id = ?').get(data.userId);
+      if (existing && existing.banned_by !== socket.user.id) {
+        const banner = db.prepare('SELECT is_admin FROM users WHERE id = ?').get(existing.banned_by);
+        if (banner && banner.is_admin) {
+          return socket.emit('error-msg', 'You can\'t undo a ban placed by an admin');
+        }
+        if (getUserEffectiveLevel(existing.banned_by) >= getUserEffectiveLevel(socket.user.id)) {
+          return socket.emit('error-msg', 'You can\'t undo a ban placed by someone of equal or higher rank');
+        }
+      }
+    }
 
     db.prepare('DELETE FROM bans WHERE user_id = ?').run(data.userId);
     // Any appeal is resolved once the ban is lifted (#5457).
@@ -449,13 +498,15 @@ module.exports = function register(socket, ctx) {
       if (data.banIp && (socket.user.isAdmin || userHasPermission(socket.user.id, 'ban_ip'))) {
         try {
           const ipStmt = db.prepare('INSERT OR REPLACE INTO ip_bans (ip, banned_by, reason) VALUES (?, ?, ?)');
+          const { normalizeIp } = require('../clientIp');
           const banIps = db.transaction((idList) => {
             const seen = new Set();
             for (const uid of idList) {
               for (const r of db.prepare('SELECT ip FROM user_ips WHERE user_id = ? ORDER BY last_seen DESC LIMIT 3').all(uid)) {
-                if (!r.ip || seen.has(r.ip)) continue;
-                seen.add(r.ip);
-                ipStmt.run(r.ip, socket.user.id, `[Bulk cleanup] ${reason}`.slice(0, 200));
+                const norm = normalizeIp(r.ip);
+                if (!norm || seen.has(norm)) continue;
+                seen.add(norm);
+                ipStmt.run(norm, socket.user.id, `[Bulk cleanup] ${reason}`.slice(0, 200));
                 ipBanned++;
               }
             }
@@ -779,34 +830,41 @@ module.exports = function register(socket, ctx) {
     return socket.user.isAdmin || userHasPermission(socket.user.id, 'ban_ip');
   }
 
-  // Very small IP sanity check. Accepts IPv4 and IPv6 (loose). We don't try
-  // to normalize — exact-string match is enough for v1; CIDR/v6-/64 ranges
-  // are a future enhancement.
-  function _looksLikeIp(s) {
-    if (typeof s !== 'string') return false;
-    s = s.trim();
-    if (!s || s.length > 64) return false;
-    // IPv4
-    if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(s)) {
-      return s.split('.').every(o => { const n = Number(o); return n >= 0 && n <= 255; });
-    }
-    // IPv6 (loose — accept anything with a colon and only hex/colon/dot chars)
-    if (s.includes(':') && /^[0-9a-fA-F:.]+$/.test(s)) return true;
-    return false;
+  // Validation and canonicalisation now live in src/clientIp.js so that the
+  // ban gates, the user_ips recorder and this handler all agree on what an
+  // address is. v3.42.0 also accepts CIDR ranges: a single IPv6 subscriber is
+  // routinely handed an entire /64, so banning one address of theirs used to
+  // accomplish nothing at all.
+  const { normalizeIp, isValidIpOrCidr } = require('../clientIp');
+
+  // Preserve the prefix on CIDR input; normalise the address half only.
+  function _canonicalBanEntry(s) {
+    const raw = String(s || '').trim();
+    const slash = raw.indexOf('/');
+    if (slash === -1) return normalizeIp(raw);
+    return normalizeIp(raw.slice(0, slash)) + '/' + parseInt(raw.slice(slash + 1), 10);
   }
 
   socket.on('ban-ip', (data) => {
     if (!data || typeof data !== 'object') return;
     if (!_canBanIp()) return socket.emit('error-msg', 'You don\'t have permission to ban IPs');
-    const ip = (data.ip || '').trim();
-    if (!_looksLikeIp(ip)) return socket.emit('error-msg', 'Invalid IP address');
+    const input = (data.ip || '').trim();
+    if (!isValidIpOrCidr(input)) return socket.emit('error-msg', 'Invalid IP address or CIDR range');
+    const ip = _canonicalBanEntry(input);
     const reason = typeof data.reason === 'string' ? data.reason.trim().slice(0, 200) : '';
     try {
       db.prepare('INSERT OR REPLACE INTO ip_bans (ip, banned_by, reason) VALUES (?, ?, ?)').run(ip, socket.user.id, reason);
       _invalidateIpCache();
-      // Disconnect any live sockets coming from that IP.
+      // Disconnect any live sockets coming from that address. Compared through
+      // ipMatches so a /64 ban actually sweeps everyone inside it, and so a
+      // ban on "1.2.3.4" still matches the "::ffff:1.2.3.4" a dual-stack
+      // listener reports. The old identity check on handshake.address missed
+      // both cases, leaving banned clients connected until they reloaded.
+      const { ipMatches, socketClientIp } = require('../clientIp');
       for (const [, s] of io.sockets.sockets) {
-        try { if (s.handshake && s.handshake.address === ip) { s.emit('banned', { reason }); s.disconnect(true); } } catch {}
+        try {
+          if (ipMatches(socketClientIp(s), ip)) { s.emit('banned', { reason }); s.disconnect(true); }
+        } catch {}
       }
       socket.emit('error-msg', `Banned IP ${ip}`);
       _audit({ actor: socket.user, action: 'ip_ban',
@@ -821,10 +879,14 @@ module.exports = function register(socket, ctx) {
   socket.on('unban-ip', (data) => {
     if (!data || typeof data !== 'object') return;
     if (!_canBanIp()) return socket.emit('error-msg', 'You don\'t have permission to unban IPs');
-    const ip = (data.ip || '').trim();
-    if (!ip) return;
+    const raw = (data.ip || '').trim();
+    if (!raw) return;
+    // Try the canonical form first, then the literal string, so entries stored
+    // by older versions (pre-normalisation) can still be lifted from the UI.
+    const ip = _canonicalBanEntry(raw);
     try {
-      const info = db.prepare('DELETE FROM ip_bans WHERE ip = ?').run(ip);
+      let info = db.prepare('DELETE FROM ip_bans WHERE ip = ?').run(ip);
+      if (info.changes === 0 && raw !== ip) info = db.prepare('DELETE FROM ip_bans WHERE ip = ?').run(raw);
       _invalidateIpCache();
       if (info.changes > 0) {
         socket.emit('error-msg', `Unbanned IP ${ip}`);

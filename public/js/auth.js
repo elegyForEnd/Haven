@@ -3,7 +3,7 @@
 (async function () {
   // Preserve invite param across login/register so vanity invite links work for new users
   const _urlParams = new URLSearchParams(window.location.search);
-  const _pendingInvite = _urlParams.get('invite') || sessionStorage.getItem('haven_pending_invite') || '';
+  let _pendingInvite = _urlParams.get('invite') || sessionStorage.getItem('haven_pending_invite') || '';
   if (_pendingInvite) sessionStorage.setItem('haven_pending_invite', _pendingInvite);
   // Preserve channel/message deep-link params (?channel=CODE&message=ID) too
   const _pendingChannel = _urlParams.get('channel') || sessionStorage.getItem('haven_pending_channel') || '';
@@ -11,17 +11,36 @@
   if (_pendingChannel) sessionStorage.setItem('haven_pending_channel', _pendingChannel);
   if (_pendingMessage) sessionStorage.setItem('haven_pending_message', _pendingMessage);
 
-  const _appQuery = (() => {
-    const parts = [];
-    if (_pendingInvite) parts.push('invite=' + encodeURIComponent(_pendingInvite));
-    if (_pendingChannel) parts.push('channel=' + encodeURIComponent(_pendingChannel));
-    if (_pendingMessage) parts.push('message=' + encodeURIComponent(_pendingMessage));
-    return parts.length ? '?' + parts.join('&') : '';
-  })();
-  const _appUrl = '/app' + _appQuery;
+  function _buildAppUrl() {
+    const _appQuery = (() => {
+      const parts = [];
+      if (_pendingInvite) parts.push('invite=' + encodeURIComponent(_pendingInvite));
+      if (_pendingChannel) parts.push('channel=' + encodeURIComponent(_pendingChannel));
+      if (_pendingMessage) parts.push('message=' + encodeURIComponent(_pendingMessage));
+      return parts.length ? '?' + parts.join('&') : '';
+    })();
+    return '/app' + _appQuery;
+  }
+  let _appUrl = _buildAppUrl();
+
+  // (#12) A returning SSO callback stashes its session here and bounces to
+  // this page. Claim it before the already-logged-in check below, so an old
+  // token in localStorage can't send us to the app and strand a fresh login
+  // that still has to set up its encryption passphrase.
+  let _oidcHandoff = null;
+  if (_urlParams.get('oidc') === '1') {
+    try {
+      const raw = sessionStorage.getItem('haven_oidc_handoff');
+      sessionStorage.removeItem('haven_oidc_handoff');
+      if (raw) _oidcHandoff = JSON.parse(raw);
+    } catch { /* malformed handoff — fall through to the normal login page */ }
+    history.replaceState({}, '', window.location.pathname);
+  }
+  const _oidcError = _urlParams.get('oidc_error') || '';
+  if (_oidcError) history.replaceState({}, '', window.location.pathname);
 
   // If already logged in, redirect to app
-  if (localStorage.getItem('haven_token')) {
+  if (!_oidcHandoff && localStorage.getItem('haven_token')) {
     window.location.href = _appUrl;
     return;
   }
@@ -45,10 +64,20 @@
   // ── Theme switching ───────────────────────────────────
   initThemeSwitcher('auth-theme-bar');
 
+  // Themes an admin has published are .theme.css files rather than built-in
+  // data-theme values, and plugin-loader.js (which knows about them) only runs
+  // on the app page. So the login page fetched nothing and showed none of them.
+  // /api/themes is unauthenticated, which is what makes this possible here. (#5537)
+  fetch('/api/themes')
+    .then(r => r.ok ? r.json() : [])
+    .then(themes => { injectPublishedThemeBar('auth-theme-bar', themes); })
+    .catch(() => { /* no custom themes is a fine outcome for a login page */ });
+
   // ── Language switcher ─────────────────────────────────
   const langSelect = document.getElementById('auth-lang-select');
   if (langSelect) {
-    langSelect.value = window.i18n.locale;
+    langSelect.value = window.i18n.preference;
+    window.i18n.buildLocalePicker(langSelect);
     langSelect.addEventListener('change', e => window.i18n.setLocale(e.target.value));
   }
 
@@ -63,7 +92,19 @@
   // Also fetch server title for login page branding.
   fetch('/api/public-config').then(r => r.json()).then(d => {
     if (d.default_theme && !localStorage.getItem('haven_theme')) {
-      document.documentElement.setAttribute('data-theme', d.default_theme);
+      // A published theme is stored as "file:whatever.theme.css". Writing that
+      // straight into data-theme matched no stylesheet at all, so an admin who
+      // picked a custom theme as the server default got an unstyled login page
+      // on a first visit, and only saw the theme once a later page load found
+      // it in localStorage. Neither branch persists: this is the server's
+      // suggestion for someone who has not chosen, not a choice they made, and
+      // storing it would stop a later change to the default from ever reaching
+      // a returning visitor who has not signed in. (#5537, #5536)
+      if (d.default_theme.startsWith('file:')) {
+        applyPublishedThemeBase(d.default_theme.slice(5), false);
+      } else {
+        applyThemeFromServer(d.default_theme, false);
+      }
     }
     if (d.server_title) {
       const titleEl = document.getElementById('server-title');
@@ -222,20 +263,31 @@
     hideError();
   }
 
+  // function to swap the active tab and form
+  function showTab(target) {
+    tabs.forEach(t => {
+      t.classList.toggle('active', t.dataset.tab === target);
+    });
+
+    loginForm.style.display = target === 'login' ? 'flex' : 'none';
+    registerForm.style.display = target === 'register' ? 'flex' : 'none';
+    if (ssoForm) ssoForm.style.display = target === 'sso' ? 'flex' : 'none';
+    totpForm.style.display = 'none';
+    document.getElementById('recover-form').style.display = 'none';
+    hideError();
+  }
+
+  // listen for clicks on the login tabs to swap the tab and form
   tabs.forEach(tab => {
     tab.addEventListener('click', () => {
-      tabs.forEach(t => t.classList.remove('active'));
-      tab.classList.add('active');
-
-      const target = tab.dataset.tab;
-      loginForm.style.display = target === 'login' ? 'flex' : 'none';
-      registerForm.style.display = target === 'register' ? 'flex' : 'none';
-      if (ssoForm) ssoForm.style.display = target === 'sso' ? 'flex' : 'none';
-      totpForm.style.display = 'none';
-      document.getElementById('recover-form').style.display = 'none';
-      hideError();
+      showTab(tab.dataset.tab);
     });
   });
+
+  // Switch to registration page if an invite link is detected.
+  if (_pendingInvite) {
+    showTab('register');
+  }
 
   function showError(msg) {
     errorEl.textContent = msg;
@@ -881,12 +933,13 @@
   // (#5344) If the server requires a registration token, reveal the
   // token field. Best-effort fetch — if it fails we just leave the
   // field hidden and the server will reject without the token.
-  (async () => {
+  // field is also hidden if an invite link is used and is allowed to override the token requirement.
+  async function _initRegistrationForm() {
     try {
       const r = await fetch('/api/auth/registration-info');
       if (!r.ok) return;
       const info = await r.json();
-      if (info && info.requiresToken) {
+      if (info && info.requiresToken && (!_pendingInvite || !info.invitesBypassToken)) {
         const grp = document.getElementById('reg-token-group');
         const inp = document.getElementById('reg-token');
         if (grp) grp.style.display = '';
@@ -896,7 +949,8 @@
         _initRegistrationCaptcha(info.turnstileSiteKey);
       }
     } catch { /* ignore */ }
-  })();
+  }
+  _initRegistrationForm();
 
   registerForm.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -920,11 +974,32 @@
       const res = await fetch('/api/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password, eulaVersion: '2.0', ageVerified: true, registrationToken, captchaToken: captchaToken || '' })
+        body: JSON.stringify({ username, password, eulaVersion: '2.0', ageVerified: true, registrationToken, inviteCode: _pendingInvite, captchaToken: captchaToken || ''})
       });
 
       const data = await res.json();
-      if (!res.ok) { _resetCaptcha('main'); return showError(data.error || t('auth.errors.registration_failed')); }
+      if (!res.ok) {
+        _resetCaptcha('main');
+
+        const error = data.error || t('auth.errors.registration_failed');
+
+        // if registration error is due to an invalid invite link, display the invite error and show the registration key field if required.
+        // This allows the user to attempt registration again, with the registration code, or a new invitation link.
+        if (error.toLowerCase().includes('invite link')) {
+          sessionStorage.removeItem('haven_pending_invite');
+          _pendingInvite = '';
+
+          const url = new URL(window.location.href);
+          url.searchParams.delete('invite');
+          window.history.replaceState({}, '', url.pathname + url.search + url.hash);
+          _appUrl = _buildAppUrl();
+
+          await _initRegistrationForm();
+        }
+
+        showError(error);
+        return;
+      }
 
       // Derive E2E wrapping key from password (client-side only, never sent to server)
       const e2eWrap = await deriveE2EWrappingKey(password);
@@ -950,6 +1025,20 @@
         const sec = document.getElementById('guest-login-section');
         if (sec) sec.style.display = '';
       }
+    } catch { /* ignore */ }
+  })();
+
+  // ── (#12) SSO button — only when the server reports OIDC usable ──
+  (async () => {
+    try {
+      const r = await fetch('/api/public-config');
+      if (!r.ok) return;
+      const cfg = await r.json();
+      if (!cfg || !cfg.oidc_enabled) return;
+      const sec = document.getElementById('oidc-login-section');
+      const btn = document.getElementById('oidc-login-btn');
+      if (btn && cfg.oidc_button_label) btn.textContent = cfg.oidc_button_label;
+      if (sec) sec.style.display = '';
     } catch { /* ignore */ }
   })();
 
@@ -1004,6 +1093,88 @@
       } catch {
         showError(t('auth.errors.connection_error'));
       }
+    });
+  }
+
+  /* ── SSO / OIDC (#12) ─────────────────────────────────
+     Two halves. The button just leaves for the provider. Coming back, the
+     server has already handed us a session, and the only thing left is the
+     encryption passphrase: an SSO user types no password into Haven, so
+     there is nothing to derive the private-key wrapping key from. We ask for
+     a passphrase, stretch it exactly like a password (same PBKDF2 salt and
+     iteration count), and drop the result into the same sessionStorage slot
+     the password path uses — so everything downstream is unchanged. */
+
+  const OIDC_ERRORS = {
+    cancelled: 'Sign-in was cancelled.',
+    disabled: 'SSO is not enabled on this server.',
+    no_account: 'No Haven account is linked to that sign-in, and this server does not create them automatically.',
+    banned: 'That account is banned from this server.',
+    expired: 'That sign-in took too long. Please try again.',
+    provider_unreachable: 'Could not reach the SSO provider. Ask your admin to check the server settings.',
+  };
+  if (_oidcError) showError(OIDC_ERRORS[_oidcError] || 'SSO sign-in failed. Please try again.');
+
+  const oidcBtn = document.getElementById('oidc-login-btn');
+  if (oidcBtn) {
+    oidcBtn.addEventListener('click', () => {
+      oidcBtn.disabled = true;
+      window.location.href = '/api/auth/oidc/start';
+    });
+  }
+
+  if (_oidcHandoff && _oidcHandoff.token) {
+    const passForm = document.getElementById('e2e-pass-form');
+    const passInput = document.getElementById('e2e-pass-input');
+    const confirmGroup = document.getElementById('e2e-pass-confirm-group');
+    const confirmInput = document.getElementById('e2e-pass-confirm');
+    const titleEl = document.getElementById('e2e-pass-title');
+    const blurbEl = document.getElementById('e2e-pass-blurb');
+    const hintEl = document.getElementById('e2e-pass-hint');
+
+    const finish = (wrapKey) => {
+      if (wrapKey) sessionStorage.setItem('haven_e2e_wrap', wrapKey);
+      else sessionStorage.removeItem('haven_e2e_wrap');
+      localStorage.setItem('haven_token', _oidcHandoff.token);
+      localStorage.setItem('haven_user', JSON.stringify(_oidcHandoff.user));
+      window.location.href = _appUrl;
+    };
+
+    // Hide every other form and show the passphrase step.
+    document.querySelectorAll('.auth-form').forEach(f => { f.style.display = 'none'; });
+    document.querySelector('.auth-tabs')?.style.setProperty('display', 'none');
+    passForm.style.display = 'block';
+
+    // Returning on a second device: the key already exists on the server, so
+    // this is an unlock, not a setup. No confirm field, different wording.
+    if (_oidcHandoff.e2eReady) {
+      titleEl.textContent = 'Enter your encryption passphrase';
+      blurbEl.textContent = 'This device needs the passphrase you set when you first signed in, to unlock your private messages.';
+      hintEl.textContent = 'Wrong passphrase? Your other devices keep working — nothing is overwritten.';
+      confirmGroup.style.display = 'none';
+      confirmInput.removeAttribute('required');
+      passInput.setAttribute('autocomplete', 'current-password');
+    }
+
+    passForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      hideError();
+      const pass = passInput.value;
+      if (!pass || pass.length < 8) return showError('Passphrase must be at least 8 characters.');
+      if (!_oidcHandoff.e2eReady && pass !== confirmInput.value) {
+        return showError('The two passphrases do not match.');
+      }
+      // Only the derived key is kept. The passphrase itself never leaves this
+      // function, and never goes to the server in any form.
+      finish(await deriveE2EWrappingKey(pass));
+    });
+
+    document.getElementById('e2e-pass-skip').addEventListener('click', (ev) => {
+      ev.preventDefault();
+      // Same state as any auto-login without a password: the app runs, and DMs
+      // stay locked on this device until the passphrase is supplied. Nothing
+      // is generated or overwritten, so no history is lost by skipping.
+      finish(null);
     });
   }
 })();

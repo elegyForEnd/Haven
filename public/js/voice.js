@@ -73,6 +73,7 @@ class VoiceManager {
     this._soundboardLocalGain = null;
     this._soundboardFetchController = null;
     this._soundboardPlayGeneration = 0;
+    this._botAudio = null;           // Current server-hosted bot audio playback
 
     // Voice audio bitrate cap (0 = auto, otherwise kbps from server)
     this.audioBitrate = 0;
@@ -123,19 +124,14 @@ class VoiceManager {
     // Result was every Haven server using default ICE config lost external
     // WebRTC simultaneously — LAN-to-LAN still worked because host
     // candidates don't need STUN, but anyone outside the server's subnet
-    // got stuck on "ICE: Connecting...". Defaults below are split into a
-    // preferred non-Google pool plus a Google fallback that only engages
-    // if every preferred server fails the runtime probe.
+    // got stuck on "ICE: Connecting...". The defaults below are a pool of
+    // three independent, non-Google providers. If they all fail the runtime
+    // probe the client keeps them and warns the user to configure STUN/TURN,
+    // rather than falling back to Google.
     this._stunPreferred = [
       'stun:stun.cloudflare.com:3478',
       'stun:stun.relay.metered.ca:80',
       'stun:global.stun.twilio.com:3478',
-    ];
-    this._stunFallback = [
-      // Last-ditch only. Google is widely reliable but we'd rather not send
-      // our users' NAT-discovery traffic there if we can avoid it.
-      'stun:stun.l.google.com:19302',
-      'stun:stun1.l.google.com:19302',
     ];
     this.rtcConfig = {
       iceServers: this._stunPreferred.map(urls => ({ urls })),
@@ -185,6 +181,26 @@ class VoiceManager {
           this._adminIceServersLoaded = true;
           console.log(`🧊 ICE servers loaded (${data.iceServers.length} servers${data.iceServers.some(s => String(s.urls).includes('turn:')) ? ', TURN enabled' : ''})`);
         }
+        // Relay-only mode (v3.42.0). The server sends this when the admin has
+        // enabled voice_force_relay and a TURN server is actually configured.
+        // It makes the browser drop host and srflx candidates, so peers in a
+        // call never learn each other's real IP addresses. Also suppress the
+        // STUN health probe below, which exists to pick good srflx servers and
+        // is meaningless (and would log spurious failures) when srflx
+        // candidates are being discarded on purpose.
+        if (data.iceTransportPolicy === 'relay') {
+          this.rtcConfig.iceTransportPolicy = 'relay';
+          this._relayOnly = true;
+          console.log('🧊 Relay-only voice: peer IP addresses stay hidden behind TURN');
+        } else {
+          delete this.rtcConfig.iceTransportPolicy;
+          this._relayOnly = false;
+        }
+        // After the relay-only flag is settled, not before: the probe measures
+        // srflx candidates, which relay-only discards on purpose, so running it
+        // any earlier reports every server dead on a perfectly healthy setup.
+        // Fire and forget; a dead entry here used to fail completely silently.
+        if (this._adminIceServersLoaded) this._probeConfiguredStun(data.iceServers);
       }
     } catch (err) {
       console.warn('Could not fetch ICE servers, using defaults:', err && err.message);
@@ -196,9 +212,93 @@ class VoiceManager {
   // Validates each default STUN URL by spinning up a throwaway
   // RTCPeerConnection and waiting for a srflx (server-reflexive)
   // candidate, which only appears if the STUN server actually responds.
-  // Survivors replace the iceServers list. If every preferred server is
-  // dead, the Google fallback pool is brought in so users aren't left
-  // with zero working STUN.
+  // Survivors replace the iceServers list. If every server is dead, the
+  // client keeps the list and warns the user to configure STUN/TURN.
+
+  // Does this STUN server actually answer a binding request? A server that
+  // resolves and accepts packets but never produces a srflx candidate is
+  // indistinguishable from a working one until a call fails, which is the whole
+  // problem this measures.
+  _probeStunUrl(url, timeoutMs = 2500) {
+    return new Promise(resolve => {
+      let settled = false;
+      let pc;
+      const done = ok => {
+        if (settled) return;
+        settled = true;
+        try { pc && pc.close(); } catch { /* ignore */ }
+        resolve({ url, ok });
+      };
+      try {
+        pc = new RTCPeerConnection({ iceServers: [{ urls: url }] });
+        // DataChannel forces ICE gathering even without media tracks.
+        pc.createDataChannel('probe');
+        pc.onicecandidate = e => {
+          if (!e.candidate) return;
+          const cand = e.candidate.candidate || '';
+          if (cand.includes('typ srflx')) done(true);
+        };
+        pc.createOffer()
+          .then(o => pc.setLocalDescription(o))
+          .catch(() => done(false));
+        setTimeout(() => done(false), timeoutMs);
+      } catch {
+        done(false);
+      }
+    });
+  }
+
+  // Check the STUN servers an admin configured, and say so when they are dead.
+  //
+  // The default pool has been probed since #5399, but a configured list was
+  // exempt on the grounds that the probe must not overwrite an admin's choice.
+  // That left the worst case unreported: setting STUN_URLS replaces the working
+  // defaults wholesale and skips the probe, so a list containing a decommissioned
+  // server produces no srflx candidates and nothing anywhere says why. Browsers
+  // publish only mDNS host candidates now, so with no srflx two browsers on
+  // different networks have nothing left to try, while native clients keep
+  // working because they still publish a real address. That combination reads as
+  // "Haven broke web calls" rather than "this STUN server is gone", and it cost
+  // one admin days (#5542).
+  //
+  // This only reports. The configuration is left exactly as the admin set it.
+  async _probeConfiguredStun(iceServers) {
+    try {
+      // Relay-only deliberately discards srflx candidates, so every server
+      // would probe as dead. Same reason the default probe skips it.
+      if (this._relayOnly) return;
+      const urls = [];
+      for (const entry of iceServers || []) {
+        for (const u of [].concat(entry && entry.urls || [])) {
+          if (typeof u === 'string' && /^stuns?:/i.test(u)) urls.push(u);
+        }
+      }
+      if (!urls.length) return;
+
+      const results = await Promise.all(urls.map(u => this._probeStunUrl(u)));
+      const dead = results.filter(r => !r.ok).map(r => r.url);
+      if (!dead.length) return;
+
+      const hasTurn = (iceServers || []).some(entry =>
+        [].concat(entry && entry.urls || []).some(u => /^turns?:/i.test(String(u))));
+
+      console.error(`[Voice] Configured STUN server(s) not responding: ${dead.join(', ')}`);
+      if (dead.length < urls.length || hasTurn) return;
+
+      // Nothing configured works and there is no relay to fall back on, so
+      // calls between different networks cannot connect at all.
+      if (!this._connectivityWarned && typeof this.onConnectivityWarning === 'function') {
+        this._connectivityWarned = true;
+        this.onConnectivityWarning(
+          `None of this server's configured STUN servers are responding (${dead.join(', ')}). ` +
+          'Calls will only work on your local network until an admin fixes them in ' +
+          'Settings, Voice & Connectivity, or clears the setting to fall back on the defaults.'
+        );
+      }
+    } catch (err) {
+      console.warn('[Voice] Configured STUN probe failed:', err && err.message);
+    }
+  }
 
   async _probeDefaultStun() {
     try {
@@ -207,35 +307,11 @@ class VoiceManager {
       // those with probe results.
       await new Promise(r => setTimeout(r, 250));
       if (this._adminIceServersLoaded) return;
+      // Relay-only deliberately discards srflx candidates, which is exactly
+      // what this probe measures. Probing would report every STUN server dead.
+      if (this._relayOnly) return;
 
-      const probeOne = (url, timeoutMs = 2500) => new Promise(resolve => {
-        let settled = false;
-        let pc;
-        const done = ok => {
-          if (settled) return;
-          settled = true;
-          try { pc && pc.close(); } catch { /* ignore */ }
-          resolve({ url, ok });
-        };
-        try {
-          pc = new RTCPeerConnection({ iceServers: [{ urls: url }] });
-          // DataChannel forces ICE gathering even without media tracks.
-          pc.createDataChannel('probe');
-          pc.onicecandidate = e => {
-            if (!e.candidate) return;
-            const cand = e.candidate.candidate || '';
-            if (cand.includes('typ srflx')) done(true);
-          };
-          pc.createOffer()
-            .then(o => pc.setLocalDescription(o))
-            .catch(() => done(false));
-          setTimeout(() => done(false), timeoutMs);
-        } catch {
-          done(false);
-        }
-      });
-
-      const preferred = await Promise.all(this._stunPreferred.map(u => probeOne(u)));
+      const preferred = await Promise.all(this._stunPreferred.map(u => this._probeStunUrl(u)));
       const livePreferred = preferred.filter(p => p.ok).map(p => p.url);
 
       if (this._adminIceServersLoaded) return; // admin won the race after all
@@ -246,30 +322,17 @@ class VoiceManager {
         return;
       }
 
-      // All preferred dead — bring in the fallback pool. Probe those too
-      // so we don't list servers that themselves happen to be unreachable.
-      console.warn('[Voice] All preferred STUN servers failed probe; trying fallback pool.');
-      const fallback = await Promise.all(this._stunFallback.map(u => probeOne(u)));
-      const liveFallback = fallback.filter(p => p.ok).map(p => p.url);
-
-      if (this._adminIceServersLoaded) return;
-
-      if (liveFallback.length) {
-        this.rtcConfig.iceServers = liveFallback.map(urls => ({ urls }));
-        console.warn(`🧊 Using fallback STUN pool (${liveFallback.length} alive): ${liveFallback.join(', ')}`);
-      } else {
-        // Every server we know about is unresponsive. Keep the original
-        // preferred list anyway — peers on the same LAN can still connect
-        // via host candidates and at least one server might come back up
-        // mid-call.
-        console.error('[Voice] All known STUN servers failed probe — external WebRTC will be impaired until an admin configures TURN.');
-        // Surface this to the user instead of leaving them stuck on
-        // "ICE: Connecting..." with no explanation (#5399). LAN calls still
-        // work, so keep it a warning, not a hard error.
-        if (!this._connectivityWarned && typeof this.onConnectivityWarning === 'function') {
-          this._connectivityWarned = true;
-          this.onConnectivityWarning('Voice connection servers (STUN) are unreachable. Calls may only work on your local network until an admin sets STUN/TURN in Settings → Voice & Connectivity.');
-        }
+      // Every preferred server is unresponsive. Keep the original list
+      // anyway: peers on the same LAN still connect via host candidates, and
+      // one of the providers may come back up mid-call. We no longer fall
+      // back to Google STUN; three independent providers is enough redundancy.
+      console.error('[Voice] All preferred STUN servers failed probe; external WebRTC will be impaired until an admin configures STUN/TURN.');
+      // Surface this to the user instead of leaving them stuck on
+      // "ICE: Connecting..." with no explanation (#5399). LAN calls still
+      // work, so keep it a warning, not a hard error.
+      if (!this._connectivityWarned && typeof this.onConnectivityWarning === 'function') {
+        this._connectivityWarned = true;
+        this.onConnectivityWarning('Voice connection servers (STUN) are unreachable. Calls may only work on your local network until an admin sets STUN/TURN in Settings → Voice & Connectivity.');
       }
     } catch (err) {
       console.warn('[Voice] STUN probe failed:', err && err.message);
@@ -320,6 +383,7 @@ class VoiceManager {
       `(peers=${live}, micLive=${micLive}) — restoring session state for`, code);
     this.currentChannel = code;
     this.inVoice = true;
+    this._voiceSessionGeneration = (this._voiceSessionGeneration || 0) + 1;
     this._softLeftChannel = null;
     try { localStorage.setItem('haven_voice_channel', code); } catch { /* ignore */ }
     // Our socket may have been rebound while we thought we were out; rejoin so
@@ -331,6 +395,30 @@ class VoiceManager {
       this.socket.emit('voice-rejoin', { code });
     }
     return true;
+  }
+
+  deferChannelGone(timeoutMs = 6000) {
+    // Once the server has answered, reconnect flaps must not discard that
+    // answer or extend its absolute deadline beyond the original window.
+    if (this._deferredChannelGone) return;
+    this._deferChannelGoneUntil = Date.now() + timeoutMs;
+  }
+
+  resolveDeferredChannelGone(recoveredCode = null) {
+    this._deferChannelGoneUntil = 0;
+    if (this._deferredChannelGoneTimer) {
+      clearTimeout(this._deferredChannelGoneTimer);
+      this._deferredChannelGoneTimer = null;
+    }
+    const pending = this._deferredChannelGone;
+    this._deferredChannelGone = null;
+    const sameSession = pending &&
+      pending.generation === (this._voiceSessionGeneration || 0) &&
+      pending.code === this.currentChannel;
+    if (!recoveredCode && sameSession && this.inVoice) {
+      console.warn('[Voice] Server confirmed voice channel is gone — leaving locally:', pending.code);
+      try { this.leave(); } catch (e) { console.warn('[Voice] leave() during deferred voice-channel-gone failed:', e); }
+    }
   }
 
   /**
@@ -391,6 +479,19 @@ class VoiceManager {
     this.socket.on('voice-channel-gone', (data) => {
       if (!this.inVoice) return;
       if (this.currentChannel && data && data.code && data.code !== this.currentChannel) return;
+      const remaining = (this._deferChannelGoneUntil || 0) - Date.now();
+      if (remaining > 0) {
+        this._deferredChannelGone = {
+          code: data?.code || this.currentChannel,
+          generation: this._voiceSessionGeneration || 0
+        };
+        if (this._deferredChannelGoneTimer) clearTimeout(this._deferredChannelGoneTimer);
+        this._deferredChannelGoneTimer = setTimeout(() => {
+          this._deferredChannelGoneTimer = null;
+          this.resolveDeferredChannelGone(false);
+        }, remaining);
+        return;
+      }
       console.warn('[Voice] Server says voice channel is gone — leaving locally:', data && data.code);
       try { this.leave(); } catch (e) { console.warn('[Voice] leave() during voice-channel-gone failed:', e); }
     });
@@ -478,6 +579,7 @@ class VoiceManager {
 
       try {
         const conn = peer.connection;
+        peer._handlingRemoteOffer = true;
 
         // ── Glare handling (perfect negotiation) ──────────────
         //
@@ -512,12 +614,26 @@ class VoiceManager {
         // if we still have local changes to publish.
         const hadPendingLocalChanges = peer._makingOffer || peer._awaitingAnswer;
         const rolledBackIceRestart = !!peer._offerIsIceRestart;
+        const activeOfferId = peer._activeOfferId;
+        if (conn.signalingState !== 'stable') {
+          this._clearOfferAnswerTimer(peer);
+          try {
+            await conn.setLocalDescription({ type: 'rollback' });
+          } catch (err) {
+            if (conn.signalingState !== 'stable') {
+              if (peer._awaitingAnswer && activeOfferId && conn.signalingState !== 'closed') {
+                this._scheduleOfferAnswerTimeout(from.id, conn, activeOfferId);
+              }
+              throw err;
+            }
+          }
+        }
+        this._clearOfferAnswerTimer(peer);
         peer._makingOffer = false;
         peer._awaitingAnswer = false;
+        peer._activeOfferId = null;
         peer._offerIsIceRestart = false;
-        if (conn.signalingState !== 'stable') {
-          await conn.setLocalDescription({ type: 'rollback' });
-        }
+        peer._offerChannelCode = null;
         // Anything we were trying to publish (added screen tracks, an ICE
         // restart) was just discarded with the rollback. Queue it so the drain
         // after this answer re-offers it, rather than silently losing it.
@@ -539,13 +655,15 @@ class VoiceManager {
           }
         }
         await conn.setRemoteDescription(new RTCSessionDescription(offer));
+        if (typeof data.offerId === 'string') peer._supportsOfferIds = true;
         const answer = this._withOpusStereo(await conn.createAnswer());
         await conn.setLocalDescription(answer);
 
         this.socket.emit('voice-answer', {
           code: this.currentChannel,
           targetUserId: from.id,
-          answer: answer
+          answer: answer,
+          offerId: typeof data.offerId === 'string' ? data.offerId : undefined
         });
 
         // Flush any ICE candidates that arrived before the remote
@@ -563,6 +681,9 @@ class VoiceManager {
         console.error('Error handling voice offer:', err);
       } finally {
         const latestPeer = this.peers.get(from.id);
+        if (latestPeer && latestPeer.connection === peer?.connection) {
+          latestPeer._handlingRemoteOffer = false;
+        }
         if (latestPeer && latestPeer.connection === peer?.connection && latestPeer.connection.signalingState === 'stable') {
           latestPeer._awaitingAnswer = false;
           this._drainQueuedRenegotiation(from.id);
@@ -574,13 +695,29 @@ class VoiceManager {
     this.socket.on('voice-answer', async (data) => {
       const peer = this.peers.get(data.from.id);
       if (peer) {
+        const answerOfferId = typeof data.offerId === 'string' ? data.offerId : null;
+        if (answerOfferId) peer._supportsOfferIds = true;
+        const staleCorrelatedAnswer = peer._activeOfferId && answerOfferId &&
+          answerOfferId !== peer._activeOfferId;
+        const unsafeLegacyAnswer = peer._activeOfferId && !answerOfferId &&
+          (peer._supportsOfferIds || (peer._offerTimeoutCount || 0) > 0);
+        if (staleCorrelatedAnswer || unsafeLegacyAnswer) {
+          console.warn('[Voice] Ignoring stale answer for peer', data.from.id,
+            `(expected ${peer._activeOfferId}, received ${answerOfferId || 'no offer id'})`);
+          return;
+        }
         try {
           // Only accept answer if we're actually waiting for one
           // (we may have rolled back our offer due to glare)
           if (peer.connection.signalingState === 'have-local-offer') {
             await peer.connection.setRemoteDescription(new RTCSessionDescription(data.answer));
+            this._clearOfferAnswerTimer(peer);
             peer._awaitingAnswer = false;
+            peer._activeOfferId = null;
+            peer._offerTimeoutCount = 0;
+            peer._offerRecoveryExhausted = false;
             peer._offerIsIceRestart = false;
+            peer._offerChannelCode = null;
             // Flush buffered ICE candidates that arrived before the answer
             if (peer._pendingCandidates && peer._pendingCandidates.length) {
               for (const c of peer._pendingCandidates) {
@@ -590,12 +727,16 @@ class VoiceManager {
             }
           } else if (peer._awaitingAnswer && peer.connection.signalingState === 'stable') {
             // Stale answer for a local offer we already rolled back after glare.
+            this._clearOfferAnswerTimer(peer);
             peer._awaitingAnswer = false;
+            peer._activeOfferId = null;
           }
         } catch (err) {
           console.error('Error handling voice answer:', err);
           if (peer._awaitingAnswer && peer.connection.signalingState === 'stable') {
+            this._clearOfferAnswerTimer(peer);
             peer._awaitingAnswer = false;
+            peer._activeOfferId = null;
           }
         } finally {
           if (peer.connection.signalingState === 'stable') {
@@ -704,6 +845,10 @@ class VoiceManager {
       this.screenSharers.add(data.userId);
       // New share — the previous one's delivery says nothing about this one.
       this._screenDelivered.delete(data.userId);
+      // A deliberate new share deserves a clean renegotiation budget; the
+      // cap exists to stop a loop on one stuck share, not to punish someone
+      // who stopped and started again. (#5426)
+      if (this.onScreenShareRestart) this.onScreenShareRestart(data.userId);
       // Play stream start notification sound
       if (this.onScreenShareStarted) {
         this.onScreenShareStarted(data.userId, data.username);
@@ -1014,6 +1159,9 @@ class VoiceManager {
   }
 
   async join(channelCode) {
+    if (this._joinInFlight) return false;
+    this._joinInFlight = true;
+    this._joiningChannelCode = channelCode;
     try {
       const preservedMuteState = this.isMuted;
       const preservedDeafenState = this.isDeafened;
@@ -1127,8 +1275,31 @@ class VoiceManager {
           }
         }      }
 
+      // Do not let Socket.IO buffer a stale voice-join if the connection
+      // dropped while microphone and noise processing were being prepared.
+      if (this.socket && this.socket.connected === false) {
+        this._disableRNNoise();
+        this._stopNoiseGate();
+        this._stopLocalTalkDetection();
+        if (this.rawStream) {
+          this.rawStream.getTracks().forEach(track => track.stop());
+          this.rawStream = null;
+        }
+        if (this.localStream) {
+          this.localStream.getTracks().forEach(track => track.stop());
+          this.localStream = null;
+        }
+        if (this.audioCtx) {
+          this.audioCtx.close().catch(() => {});
+          this.audioCtx = null;
+        }
+        return false;
+      }
+
+      channelCode = this._joiningChannelCode || channelCode;
       this.currentChannel = channelCode;
       this.inVoice = true;
+      this._voiceSessionGeneration = (this._voiceSessionGeneration || 0) + 1;
       // Listener-only is always muted (no audio to send). mute-on-join also forces mute.
       this.isMuted = this.isListenerOnly || muteOnJoin || preservedMuteState;
       this.isDeafened = preservedDeafenState;
@@ -1153,6 +1324,9 @@ class VoiceManager {
     } catch (err) {
       console.error('Voice join failed:', err);
       return false;
+    } finally {
+      this._joinInFlight = false;
+      this._joiningChannelCode = null;
     }
   }
 
@@ -1179,6 +1353,7 @@ class VoiceManager {
     }
 
     // Stop noise gate and talk detection
+    this.stopBotAudio();
     this._disableRNNoise();
     this._stopNoiseGate();
     this._stopLocalTalkDetection();
@@ -1273,6 +1448,7 @@ class VoiceManager {
   _softLeave() {
     if (!this.inVoice) return;
     this.stopSoundboardPlayback();
+    this.stopBotAudio();
 
     // Stop screen share / webcam (local cleanup only)
     if (this.isScreenSharing && this.screenStream) {
@@ -1420,6 +1596,68 @@ class VoiceManager {
     return true;
   }
 
+  playBotAudio(data) {
+    if (!data || !data.playbackId || !data.audioUrl) return false;
+    if (!this.inVoice || this.currentChannel !== data.channelCode) return false;
+    this.stopBotAudio();
+
+    const now = () => typeof performance !== 'undefined' ? performance.now() : Date.now();
+    const receivedAt = now();
+    const reportedOffsetMs = Math.max(0, Number(data.offsetMs) || 0);
+    const durationMs = Number(data.durationMs);
+    if (Number.isFinite(durationMs) && reportedOffsetMs >= durationMs) return false;
+
+    const audio = new Audio(data.audioUrl);
+    const playback = { id: data.playbackId, channelCode: data.channelCode, audio, timer: null };
+    this._botAudio = playback;
+    audio.preload = 'auto';
+    audio.volume = this.isDeafened ? 0 : 1;
+    const savedOutput = localStorage.getItem('haven_output_device');
+    const sinkReady = savedOutput && typeof audio.setSinkId === 'function'
+      ? audio.setSinkId(savedOutput).catch(() => {})
+      : Promise.resolve();
+    audio.addEventListener('ended', () => {
+      if (this._botAudio === playback) this.stopBotAudio(playback.id);
+    }, { once: true });
+    audio.addEventListener('error', () => {
+      if (this._botAudio === playback) this.stopBotAudio(playback.id);
+    }, { once: true });
+
+    if (Number.isFinite(durationMs)) {
+      playback.timer = setTimeout(
+        () => this.stopBotAudio(playback.id),
+        Math.max(1, durationMs - reportedOffsetMs)
+      );
+      playback.timer.unref?.();
+    }
+
+    const start = async () => {
+      await sinkReady;
+      if (this._botAudio !== playback) return;
+      const offsetSeconds = (reportedOffsetMs + Math.max(0, now() - receivedAt)) / 1000;
+      if (offsetSeconds > 0 && Number.isFinite(audio.duration)) {
+        audio.currentTime = Math.min(offsetSeconds, Math.max(0, audio.duration - 0.05));
+      }
+      audio.play().catch(() => {
+        if (this._botAudio === playback) this.stopBotAudio(playback.id);
+      });
+    };
+    if (audio.readyState >= 1) start();
+    else audio.addEventListener('loadedmetadata', start, { once: true });
+    return true;
+  }
+
+  stopBotAudio(playbackId = null) {
+    if (!this._botAudio || (playbackId && this._botAudio.id !== playbackId)) return false;
+    const { audio, timer } = this._botAudio;
+    this._botAudio = null;
+    if (timer) clearTimeout(timer);
+    audio.pause();
+    audio.removeAttribute('src');
+    audio.load();
+    return true;
+  }
+
   toggleMute() {
     // #5380 — listener-only mode has no mic; force-stay muted.
     if (this.isListenerOnly) { this.isMuted = true; return true; }
@@ -1460,6 +1698,7 @@ class VoiceManager {
         el.volume = parseFloat(el.dataset.prevVolume || 1);
       }
     });
+    if (this._botAudio) this._botAudio.audio.volume = this.isDeafened ? 0 : 1;
     return this.isDeafened;
   }
 
@@ -1842,8 +2081,44 @@ class VoiceManager {
    * tight. Default browser behaviour is `balanced`, which on screen share
    * tends to chop framerate first (bad for motion content like games/video).
    */
+  // Opt-in relay profile for screen share (#5426). Read live so flipping the
+  // toggle mid-share takes effect on the next apply.
+  //
+  // 3.18.1 (#5379) did three things together: raised the ceilings 2-3x, pinned
+  // maxFramerate, and set degradationPreference to 'maintain-framerate'. On a
+  // direct connection that is what makes 1080p30 actually deliver 1080p30. Over
+  // a TURN relay that has fallen back to TCP it is the opposite of what you
+  // want: TCP hides packet loss, so the encoder never gets the signal to back
+  // off, and pinning the framerate removes the one lever it had left. The queue
+  // grows instead, which is the "fine for a minute, then stutter every few
+  // seconds, getting worse" shape reported in #5426.
+  //
+  // This profile restores the pre-3.18.1 ceilings and hands the encoder back
+  // both levers. Nobody gets it unless they turn it on.
+  _screenRelayProfileEnabled() {
+    try { return localStorage.getItem('haven_screen_relay_profile') === '1'; } catch { return false; }
+  }
+
+  _screenBitrateFor(res) {
+    const table = this._screenRelayProfileEnabled()
+      ? { 0: 3_000_000, 720: 1_500_000, 1080: 3_000_000, 1440: 5_000_000 }
+      : this._screenBitrates;
+    return table[res] || table[0];
+  }
+
+  // Re-apply the current cap to every peer, for when the toggle changes while
+  // a share is already running.
+  reapplyScreenBitrate() {
+    if (!this.isScreenSharing) return;
+    const maxBitrate = this._screenBitrateFor(this.screenResolution);
+    for (const [, peer] of this.peers) {
+      this._applyScreenBitrate(peer.connection, maxBitrate);
+    }
+  }
+
   _applyScreenBitrate(connection, maxBitrate) {
     try {
+      const relayProfile = this._screenRelayProfileEnabled();
       const senders = connection.getSenders();
       for (const sender of senders) {
         if (sender.track && sender.track.kind === 'video' &&
@@ -1852,17 +2127,51 @@ class VoiceManager {
           if (!params.encodings || params.encodings.length === 0) {
             params.encodings = [{}];
           }
-          params.encodings[0].maxBitrate = maxBitrate;
+          params.encodings[0].maxBitrate = relayProfile
+            ? this._screenBitrateFor(this.screenResolution)
+            : maxBitrate;
           // Per-encoding cap is the primary control; framerate hint also helps
-          // browsers that respect it (Chromium-based ones do).
-          if (this.screenFrameRate) {
+          // browsers that respect it (Chromium-based ones do). Under the relay
+          // profile the framerate stays unpinned on purpose, so the encoder can
+          // shed frames instead of filling a queue it cannot drain.
+          if (relayProfile) {
+            delete params.encodings[0].maxFramerate;
+          } else if (this.screenFrameRate) {
             params.encodings[0].maxFramerate = this.screenFrameRate;
           }
-          params.degradationPreference = 'maintain-framerate';
+          params.degradationPreference = relayProfile ? 'balanced' : 'maintain-framerate';
           sender.setParameters(params).catch(() => {});
         }
       }
+      // Protect audio from the video ramp-up. (#5426)
+      this._prioritiseAudioSenders(connection);
     } catch (e) { /* setParameters not supported — adaptive bitrate remains */ }
+  }
+
+  // Mark every audio sender on this connection as high network priority.
+  //
+  // When a screen share negotiates up to 1080p the encoder ramps hard, and on
+  // a constrained uplink that burst takes the whole pipe for a moment. Audio
+  // packets queue behind it, arrive late, and NetEq fills the gap with
+  // concealment — which is the robotic warble people describe. @RCCore caught
+  // this in a WebRTC-internals dump: packetsLost jumping 4 -> 249 and
+  // concealedSamples going from 0 to over 100k as the share started.
+  //
+  // Audio is a few tens of kbps against several thousand for video, so giving
+  // it priority costs the video almost nothing and keeps speech intelligible
+  // through the ramp. Both the DSCP marking and the send-queue ordering follow
+  // from networkPriority.
+  _prioritiseAudioSenders(connection) {
+    try {
+      for (const sender of connection.getSenders()) {
+        if (!sender.track || sender.track.kind !== 'audio') continue;
+        const params = sender.getParameters();
+        if (!params.encodings || params.encodings.length === 0) params.encodings = [{}];
+        params.encodings[0].networkPriority = 'high';
+        params.encodings[0].priority = 'high';   // older Chromium spelling
+        sender.setParameters(params).catch(() => {});
+      }
+    } catch { /* unsupported — audio still flows, just without the hint */ }
   }
 
   /**
@@ -1950,6 +2259,70 @@ class VoiceManager {
     });
   }
 
+  _clearOfferAnswerTimer(peer) {
+    if (!peer || !peer._offerAnswerTimer) return;
+    clearTimeout(peer._offerAnswerTimer);
+    peer._offerAnswerTimer = null;
+  }
+
+  _scheduleOfferAnswerTimeout(userId, connection, offerId) {
+    const peer = this.peers.get(userId);
+    if (!peer || peer.connection !== connection) return;
+    this._clearOfferAnswerTimer(peer);
+    const timeoutCount = peer._offerTimeoutCount || 0;
+    const timeoutMs = Math.min(8000 + (timeoutCount * 4000), 20000);
+    peer._offerAnswerTimer = setTimeout(() => {
+      this._recoverTimedOutOffer(userId, connection, offerId).catch(err => {
+        console.warn('[Voice] Failed to recover unanswered offer for peer', userId, err);
+      });
+    }, timeoutMs);
+  }
+
+  async _recoverTimedOutOffer(userId, connection, offerId) {
+    const peer = this.peers.get(userId);
+    if (!peer || peer.connection !== connection ||
+        !peer._awaitingAnswer || peer._activeOfferId !== offerId) return false;
+
+    this._clearOfferAnswerTimer(peer);
+    const alreadyQueued = !!peer._renegotiateQueued;
+    peer._offerTimeoutCount = (peer._offerTimeoutCount || 0) + 1;
+    peer._renegotiateQueued = alreadyQueued || peer._offerTimeoutCount <= 3;
+    peer._recoveringTimedOutOffer = true;
+
+    console.warn('[Voice] Offer answer timed out for peer', userId,
+      '— rolling back and retrying negotiation');
+    if (connection.signalingState === 'have-local-offer') {
+      try {
+        await connection.setLocalDescription({ type: 'rollback' });
+      } catch (err) {
+        if (connection.signalingState !== 'stable') {
+          peer._recoveringTimedOutOffer = false;
+          console.warn('[Voice] Could not roll back timed-out offer for peer', userId, err);
+          if (connection.signalingState !== 'closed') {
+            this._scheduleOfferAnswerTimeout(userId, connection, offerId);
+          }
+          return false;
+        }
+      }
+    }
+    peer._recoveringTimedOutOffer = false;
+    peer._awaitingAnswer = false;
+    peer._activeOfferId = null;
+    peer._offerIsIceRestart = false;
+    peer._offerChannelCode = null;
+    if (connection.signalingState === 'stable') {
+      if (peer._renegotiateQueued) {
+        this._drainQueuedRenegotiation(userId);
+      } else {
+        peer._offerRecoveryExhausted = true;
+        console.warn('[Voice] Automatic offer recovery exhausted for peer', userId,
+          '— waiting for a new media or connection event');
+      }
+      return true;
+    }
+    return false;
+  }
+
   _drainQueuedRenegotiation(userId) {
     const peer = this.peers.get(userId);
     if (!peer || peer._makingOffer || peer._awaitingAnswer || !peer._renegotiateQueued) return;
@@ -1966,6 +2339,10 @@ class VoiceManager {
       peer._renegotiateQueued = true;
       peer._queuedIceRestart = peer._queuedIceRestart || iceRestart;
       return false;
+    }
+    if (peer._offerRecoveryExhausted) {
+      peer._offerRecoveryExhausted = false;
+      peer._offerTimeoutCount = 0;
     }
     // Wait for the signaling state to be stable before issuing a fresh
     // offer. RTCPeerConnection.createOffer() throws if called while a
@@ -1996,15 +2373,21 @@ class VoiceManager {
         return false;
       }
       await connection.setLocalDescription(offer);
+      this._offerSequence = (this._offerSequence || 0) + 1;
+      const offerId = `${this.localUserId ?? 'unknown'}-${Date.now().toString(36)}-${this._offerSequence.toString(36)}`;
       peer._awaitingAnswer = true;
+      peer._activeOfferId = offerId;
+      peer._offerChannelCode = this.currentChannel;
       // Remember whether the offer now in flight is an ICE restart, so that if
       // it later yields to glare the restart intent can be re-queued rather
       // than silently downgraded to a plain renegotiation (#5444).
       peer._offerIsIceRestart = iceRestart;
+      this._scheduleOfferAnswerTimeout(userId, connection, offerId);
       this.socket.emit('voice-offer', {
-        code: this.currentChannel,
+        code: peer._offerChannelCode,
         targetUserId: userId,
-        offer: offer
+        offer: offer,
+        offerId
       });
       return true;
     } catch (err) {
@@ -2161,6 +2544,28 @@ class VoiceManager {
         const knownAsScreen = sourceStream && knownScreenStreamIds.has(sourceStream.id);
         const isScreenAudio = knownAsScreen || (peerIsSharing && streamHasVideo);
 
+        // Track order across an m-section is not guaranteed: the audio of a
+        // screen share can arrive before its video, in which case none of the
+        // signals above have fired yet and this would be filed as voice
+        // permanently. deferredAudio existed for exactly this and was drained
+        // in the video branch, but nothing ever pushed into it, so the case
+        // was unreachable. Park it briefly instead, and fall back to voice if
+        // no video shows up — never silently drop someone's speech. (#5426)
+        const mayBeScreenAudio = !isScreenAudio && peerIsSharing && !streamHasVideo &&
+                                 sourceStream && sourceStream.id !== voiceStreamId;
+        if (mayBeScreenAudio) {
+          deferredAudio.push({ track, sourceStream });
+          setTimeout(() => {
+            const idx = deferredAudio.findIndex(d => d.track === track);
+            if (idx === -1) return;              // the video branch claimed it
+            deferredAudio.splice(idx, 1);
+            if (track.readyState !== 'live') return;
+            remoteAudioStream.addTrack(track);
+            this._playAudio(userId, remoteAudioStream);
+          }, 1500);
+          return;
+        }
+
         if (isScreenAudio) {
           this._playScreenAudio(userId, sourceStream);
         } else {
@@ -2188,10 +2593,17 @@ class VoiceManager {
       const latestPeer = this.peers.get(userId);
       if (!latestPeer || latestPeer.connection !== connection) return;
       if (connection.signalingState === 'stable') {
-        if (latestPeer._awaitingAnswer) {
+        if (latestPeer._awaitingAnswer && !latestPeer._recoveringTimedOutOffer) {
+          this._clearOfferAnswerTimer(latestPeer);
           latestPeer._awaitingAnswer = false;
+          latestPeer._activeOfferId = null;
+          latestPeer._offerTimeoutCount = 0;
+          latestPeer._offerRecoveryExhausted = false;
         }
-        this._drainQueuedRenegotiation(userId);
+        latestPeer._offerChannelCode = null;
+        if (!latestPeer._recoveringTimedOutOffer && !latestPeer._handlingRemoteOffer) {
+          this._drainQueuedRenegotiation(userId);
+        }
       }
     });
 
@@ -2239,9 +2651,17 @@ class VoiceManager {
       username,
       _makingOffer: false,
       _awaitingAnswer: false,
+      _activeOfferId: null,
+      _offerAnswerTimer: null,
+      _offerTimeoutCount: 0,
+      _offerRecoveryExhausted: false,
+      _recoveringTimedOutOffer: false,
+      _handlingRemoteOffer: false,
+      _supportsOfferIds: false,
       _renegotiateQueued: false,
       _queuedIceRestart: false,
       _offerIsIceRestart: false,
+      _offerChannelCode: null,
     });
 
     // If we're the initiator, create and send an offer
@@ -2260,6 +2680,7 @@ class VoiceManager {
     }
     const peer = this.peers.get(userId);
     if (peer) {
+      this._clearOfferAnswerTimer(peer);
       peer.connection.close();
       const audioEl = document.getElementById(`voice-audio-${userId}`);
       if (audioEl) audioEl.remove();
@@ -2364,6 +2785,28 @@ class VoiceManager {
         this._restartIce(userId, conn);
       }, delay);
     }
+  }
+
+  async _healPeerConnectionsAfterChannelRotation(oldCode) {
+    const rollbacks = [];
+    for (const [, peer] of this.peers) {
+      const connection = peer?.connection;
+      if (!connection || peer._offerChannelCode !== oldCode) continue;
+      peer._makingOffer = false;
+      this._clearOfferAnswerTimer(peer);
+      peer._awaitingAnswer = false;
+      peer._activeOfferId = null;
+      peer._offerTimeoutCount = 0;
+      peer._offerRecoveryExhausted = false;
+      peer._recoveringTimedOutOffer = false;
+      peer._offerIsIceRestart = false;
+      peer._offerChannelCode = null;
+      if (connection.signalingState === 'have-local-offer') {
+        rollbacks.push(connection.setLocalDescription({ type: 'rollback' }).catch(() => {}));
+      }
+    }
+    if (rollbacks.length) await Promise.all(rollbacks);
+    this._healPeerConnections();
   }
 
   // ── Volume Control ──────────────────────────────────────
@@ -2568,7 +3011,8 @@ class VoiceManager {
     }
 
     // 2. Also switch any HTMLMediaElements (fallback audio, screen share, etc.)
-    const elements = document.querySelectorAll('audio, video');
+    const elements = Array.from(document.querySelectorAll('audio, video'));
+    if (this._botAudio && !elements.includes(this._botAudio.audio)) elements.push(this._botAudio.audio);
     for (const el of elements) {
       if (typeof el.setSinkId === 'function') {
         try { await el.setSinkId(deviceId || ''); } catch (e) {
@@ -3256,3 +3700,5 @@ class VoiceManager {
     }
   }
 }
+
+if (typeof module !== 'undefined' && module.exports) module.exports = { VoiceManager };

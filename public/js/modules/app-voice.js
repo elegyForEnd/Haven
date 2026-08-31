@@ -458,6 +458,22 @@ _updateVoiceBar() {
 async _toggleScreenShare() {
   if (!this.voice.inVoice) return;
 
+  // Spam-click guard, mirroring the one _joinVoice has had for a while.
+  // Without it a double-click (or a laggy UI registering two triggers) ran
+  // shareScreen twice, which fired _createPeer twice within ~120ms and put two
+  // voice-offer SDP negotiations in flight against each other. The resulting
+  // glare shows up as a stalled stream and garbled audio. Reported with
+  // WebRTC-internals evidence by @RCCore. (#5426)
+  if (this._togglingScreenShare) return;
+  this._togglingScreenShare = true;
+  try {
+    await this._doToggleScreenShare();
+  } finally {
+    this._togglingScreenShare = false;
+  }
+},
+
+async _doToggleScreenShare() {
   // Block screen share if streams are disabled in this channel
   const _ssCh = this.channels.find(c => c.code === this.voice.currentChannel);
   if (_ssCh && _ssCh.streams_enabled === 0) {
@@ -1295,11 +1311,39 @@ _startStreamStallWatchdog(tileId, userId) {
     } else if (stalls === 4 && userId && userId !== this.user.id &&
                this.voice && this.voice.inVoice) {
       // ~6s. Re-attaching didn't help, so the problem is upstream of us.
-      console.warn('[Stream] Still no frames for', tileId, '— requesting renegotiate');
-      this.socket.emit('request-screen-renegotiate', {
-        code: this.voice.currentChannel,
-        sharerId: userId
-      });
+      //
+      // The budget below is the fix for the loop @RCCore identified (#5426).
+      // A renegotiation delivers a new stream, which re-arms this watchdog
+      // with stalls back at 0, so the `stalls >= 12` give-up further down was
+      // unreachable: every request reset the counter that was supposed to
+      // stop the requests. On a link that is dropping frames for bandwidth
+      // reasons rather than signalling reasons, each renegotiation interrupts
+      // the buffer and causes the very stall that triggers the next one.
+      //
+      // The budget lives on `this` keyed by sharer, so it survives re-arms,
+      // and it backs off rather than hammering at a fixed interval.
+      if (!this._renegBudget) this._renegBudget = {};
+      const now = Date.now();
+      const b = this._renegBudget[userId] || { count: 0, nextAllowed: 0, windowStart: now };
+      if (now - b.windowStart > 120000) { b.count = 0; b.windowStart = now; }
+
+      if (b.count >= 3) {
+        console.warn('[Stream] Renegotiate budget spent for', userId,
+          '— not asking again this window. The stream is likely bandwidth-starved, not stuck.');
+      } else if (now < b.nextAllowed) {
+        // Backing off; say nothing and let the next tick reconsider.
+      } else {
+        b.count++;
+        b.nextAllowed = now + (5000 * b.count);   // 5s, 10s, 15s
+        this._renegBudget[userId] = b;
+        console.warn('[Stream] Still no frames for', tileId, '— requesting renegotiate',
+          `(${b.count}/3 this window)`);
+        this.socket.emit('request-screen-renegotiate', {
+          code: this.voice.currentChannel,
+          sharerId: userId
+        });
+      }
+      this._renegBudget[userId] = b;
     } else if (stalls >= 12) {
       // ~18s of nothing after both recovery attempts. Stop burning a timer;
       // a fresh share or rejoin will re-arm this.
@@ -1408,14 +1452,45 @@ async _populateAudioDevices() {
 
 // ── Mic Level Meter ──────────────────────────────────────
 
+// (#5456) This used to start a requestAnimationFrame loop at app startup and
+// never stop it, so every client ran a frame loop for its entire session even
+// though the meter lives inside the settings modal and is off screen almost
+// all of the time. A permanently scheduled rAF keeps the renderer asking the
+// compositor for a new frame on every vsync, which is why an audio-only call
+// could sit there burning CPU on Rendering/Painting and keeping the GPU busy
+// with nothing on screen that moves. Now the loop only runs while the meter is
+// actually visible, and it only touches the DOM when the value really changed.
 _startMicMeter() {
+  const fill = this._micMeterFill;
+  if (!fill) return;
+
+  if (typeof IntersectionObserver === 'function') {
+    if (this._micMeterObserver) return;
+    this._micMeterObserver = new IntersectionObserver((entries) => {
+      if (entries.some(e => e.isIntersecting)) this._runMicMeter();
+      else this._stopMicMeter();
+    });
+    this._micMeterObserver.observe(fill);
+    return;
+  }
+  this._runMicMeter();
+},
+
+_runMicMeter() {
   if (this._micMeterRAF) return;
   const fill = this._micMeterFill;
   if (!fill) return;
 
+  let lastWidth = null;
   const tick = () => {
     const level = (this.voice && this.voice.inVoice) ? this.voice.currentMicLevel : 0;
-    fill.style.width = level + '%';
+    // Whole percents only — the bar is a few hundred pixels wide, so finer
+    // steps cost a layout + paint per frame and change nothing visually.
+    const width = Math.round(level) + '%';
+    if (width !== lastWidth) {
+      fill.style.width = width;
+      lastWidth = width;
+    }
     this._micMeterRAF = requestAnimationFrame(tick);
   };
   this._micMeterRAF = requestAnimationFrame(tick);
@@ -2339,7 +2414,7 @@ _handleMusicShared(data) {
   // communicate with the parent window; the origin= param already handles
   // the "Video unavailable" issue that self-hosted instances used to trigger.
   if (isOfficialBilibili) {
-    container.innerHTML = `<div class="music-embed-wrapper"><iframe id="music-iframe" src="${embedUrl}" width="100%" height="${iframeH}" frameborder="0" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture" loading="lazy"></iframe></div>`;
+    container.innerHTML = `<div class="music-embed-wrapper"><iframe id="music-iframe" src="${embedUrl}" width="100%" height="${iframeH}" frameborder="0" referrerpolicy="strict-origin-when-cross-origin" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture" loading="lazy"></iframe></div>`;
   } else if (isBilibili) {
     const initialVolume = parseInt(localStorage.getItem('haven_music_volume') ?? '80');
     if (!this._initBilibiliPlayer?.(container, data.media, initialVolume)) {
@@ -2348,7 +2423,7 @@ _handleMusicShared(data) {
       return;
     }
   } else {
-    container.innerHTML = `<div class="music-embed-wrapper"><iframe id="music-iframe" src="${embedUrl}" width="100%" height="${iframeH}" frameborder="0" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture" loading="lazy"></iframe>${needsOverlay ? '<div class="music-embed-overlay"></div>' : ''}</div>`;
+    container.innerHTML = `<div class="music-embed-wrapper"><iframe id="music-iframe" src="${embedUrl}" width="100%" height="${iframeH}" frameborder="0" referrerpolicy="strict-origin-when-cross-origin" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture" loading="lazy"></iframe>${needsOverlay ? '<div class="music-embed-overlay"></div>' : ''}</div>`;
   }
   if (data.resolvedFrom === 'spotify') {
     label.textContent = `🎵 🟢 Spotify (via YouTube) — shared by ${data.username || 'someone'}`;

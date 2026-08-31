@@ -45,8 +45,14 @@ _showUserContextMenu(e, targetUserId) {
   // Private channels are excluded for non-admins: regular members can't bypass
   // the code requirement by using the right-click invite menu.
   // Both is_private=1 and code_visibility='private' count as private here.
+  // Private channels are offered to whoever the server would actually accept an
+  // invite from: an admin, the channel's creator, or a moderator in that
+  // channel. canInvitePrivate is decided per channel server-side. Previously
+  // only admins saw them, so creators and channel mods had the permission and
+  // no button. (#5466)
   const inviteChannels = (this.channels || []).filter(ch =>
-    !ch.is_dm && ch.name && ((!ch.is_private && ch.code_visibility !== 'private') || this.user?.isAdmin)
+    !ch.is_dm && ch.name &&
+    ((!ch.is_private && ch.code_visibility !== 'private') || this.user?.isAdmin || ch.canInvitePrivate)
   );
   if (inviteChannels.length > 0) {
     const inviteItem = document.createElement('div');
@@ -92,7 +98,7 @@ _showUserContextMenu(e, targetUserId) {
   nickBtn.innerHTML = `🏷️ ${t('users.set_nickname')}`;
   nickBtn.addEventListener('click', () => {
     this._hideUserContextMenu();
-    this._showNicknameDialog(targetUserId, targetName);
+    this._showNicknameDialog(targetUserId, targetName, targetName);
   });
   menu.appendChild(nickBtn);
 
@@ -389,15 +395,17 @@ _setupNotifications() {
     });
   }
 
-  // Show status bar (opt-in — hidden by default, but Desktop always shows its own footer)
+  // Show status bar (opt-in — hidden by default, but the Desktop app always
+  // shows it: there it is the app's footer, not a debug extra.)
   const showStatusBarToggle = document.getElementById('show-status-bar');
   const statusBarToggleTab = document.getElementById('status-bar-toggle');
-  const _hasDesktopFooter = !!document.getElementById('haven-desktop-footer');
+  const _isDesktopApp = !!(window.havenDesktop?.isDesktopApp ||
+                           navigator.userAgent.includes('Electron'));
   if (showStatusBarToggle) {
     showStatusBarToggle.checked = localStorage.getItem('haven_show_statusbar') === 'true';
     const applyStatusBar = () => {
-      // On Desktop the preload's own footer is always visible; don't touch it
-      if (_hasDesktopFooter) return;
+      // Desktop keeps the bar on regardless — _startStatusBar pins it there.
+      if (_isDesktopApp) return;
       const show = showStatusBarToggle.checked;
       const sb = document.getElementById('status-bar');
       if (show) {
@@ -483,6 +491,8 @@ _setupNotifications() {
     if (shareGameToggle)  shareGameToggle.checked  = prefs.share_game_activity  !== 'false';
     if (shareMusicToggle) shareMusicToggle.checked = prefs.share_music_activity !== 'false';
     if (activitySubOptions) activitySubOptions.style.display = master ? '' : 'none';
+    // Keep the quick toggles in the status picker in step with this section.
+    this._syncStatusPickerActivity?.();
   };
   this._syncActivityUI = syncActivityUI;
   syncActivityUI();
@@ -512,7 +522,15 @@ _setupNotifications() {
   const statusUrlEl = document.getElementById('status-url-text');
   const statusUrlToggle = document.getElementById('status-url-toggle');
   if (statusUrlEl && statusUrlToggle) {
-    const origin = window.location.origin;
+    // Start from where this browser connected, then ask the server for the
+    // address other people could actually use. For whoever runs the server
+    // that is the difference between "localhost:3000" and something worth
+    // copying. (#status-bar)
+    let origin = window.location.origin;
+    const urlItem = document.getElementById('status-url-item');
+
+    const isLoopback = (u) => /^https?:\/\/(localhost|127\.0\.0\.1|\[?::1\]?)(:|$)/i.test(u || '');
+
     // Always start hidden each session — the address is only revealed after
     // an explicit click, and that choice is intentionally NOT persisted so it
     // resets to hidden every time the app (re)loads. (privacy default)
@@ -532,6 +550,26 @@ _setupNotifications() {
       }
     };
     applyUrlVis();
+
+    // Swap in the shareable address once the server reports it. `origin` is
+    // read at call time by both the toggle and the copy handler, so they pick
+    // this up without rewiring anything.
+    fetch('/api/connection-address', {
+      headers: { Authorization: `Bearer ${localStorage.getItem('haven_token') || ''}` }
+    })
+      .then(r => (r.ok ? r.json() : null))
+      .then(data => {
+        if (data && data.url) {
+          origin = data.url;
+          applyUrlVis();
+        } else if (isLoopback(origin) && urlItem) {
+          // Nothing shareable exists and the local address is no use to
+          // anyone else, so hide the widget rather than offer to copy
+          // localhost.
+          urlItem.style.display = 'none';
+        }
+      })
+      .catch(() => { /* keep the local origin; the bar still works */ });
 
     statusUrlToggle.addEventListener('click', () => {
       urlVisible = !urlVisible;
@@ -866,17 +904,17 @@ _showPushError(reason) {
   // Detect Brave-specific advice and add a copy button for the settings URL
   if (reason.includes('brave://settings')) {
     const settingsUrl = 'brave://settings/privacy';
-    html += `<div style="margin-top:12px;padding:10px;background:var(--bg-secondary);border-radius:6px;font-family:monospace;font-size:13px;display:flex;align-items:center;gap:8px;justify-content:center;">
+    html += `<div style="margin-top:12px;padding:10px;background:var(--bg-secondary);border-radius:6px;font-family:monospace;font-size:0.8125rem;display:flex;align-items:center;gap:8px;justify-content:center;">
       <span style="user-select:all;">${settingsUrl}</span>
       <button class="btn-accent" onclick="navigator.clipboard.writeText('${settingsUrl}');this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',1500)"
-        style="padding:4px 10px;font-size:12px;min-width:52px;">Copy</button>
+        style="padding:4px 10px;font-size:0.75rem;min-width:52px;">Copy</button>
     </div>
-    <p style="color:var(--text-muted);font-size:11px;margin:8px 0 0;">Paste this into your Brave address bar, then enable "Use Google Services for Push Messaging" and restart Brave.</p>`;
+    <p style="color:var(--text-muted);font-size:0.6875rem;margin:8px 0 0;">Paste this into your Brave address bar, then enable "Use Google Services for Push Messaging" and restart Brave.</p>`;
   }
 
   // Detect permission denied and provide Chrome/Edge settings hints
   if (reason.includes('Permission denied') || reason.includes('permission was denied')) {
-    html += `<div style="margin-top:12px;font-size:12px;color:var(--text-secondary);line-height:1.6;">
+    html += `<div style="margin-top:12px;font-size:0.75rem;color:var(--text-secondary);line-height:1.6;">
       <strong>How to fix:</strong><br>
       \u2022 Click the lock/info icon in your address bar → Site settings → Notifications → Allow<br>
       \u2022 Or go to browser settings → Privacy → Site Settings → Notifications
@@ -885,7 +923,7 @@ _showPushError(reason) {
 
   // iOS standalone hint
   if (reason.includes('Add to Home Screen')) {
-    html += `<div style="margin-top:12px;font-size:12px;color:var(--text-secondary);line-height:1.6;">
+    html += `<div style="margin-top:12px;font-size:0.75rem;color:var(--text-secondary);line-height:1.6;">
       <strong>Steps:</strong><br>
       1. Tap the <strong>Share</strong> button (box with arrow) in Safari<br>
       2. Scroll down and tap <strong>"Add to Home Screen"</strong><br>
@@ -1150,22 +1188,11 @@ _startStatusBar() {
     // Belt-and-suspenders: ensure the CSS attribute is present (preload
     // sets this on DOMContentLoaded, but reinforce here in case of timing)
     document.documentElement.setAttribute('data-desktop-app', '1');
-    // If the Desktop preload already injected its own fixed footer bar,
-    // don't force the original status bar visible (that causes duplicates)
-    const hasDesktopFooter = !!document.getElementById('haven-desktop-footer');
-    if (!hasDesktopFooter) {
-      _forceWebStatusBar();
-    }
-    // Delayed fallback: if after 600 ms neither footer is visible (e.g. old
-    // Desktop build whose preload hides the web bar but doesn't create its
-    // own), force-show the web status bar regardless.
-    setTimeout(() => {
-      const hdf = document.getElementById('haven-desktop-footer');
-      const sb  = document.getElementById('status-bar');
-      if (!hdf && sb && getComputedStyle(sb).display === 'none') {
-        _forceWebStatusBar();
-      }
-    }, 600);
+    // The status bar is the desktop app's only footer. Pre-v1.4.26 builds
+    // inject one of their own from the preload, which used to make us stand
+    // down here to avoid two stacked bars — but that legacy bar is now hidden
+    // in CSS, so standing down would leave no footer at all. Always show ours.
+    _forceWebStatusBar();
   } else {
     // Browser / mobile: respect the user's opt-in preference (default hidden).
     // The settings toggle in _initSettings applies the attribute + display;
@@ -1270,12 +1297,22 @@ _startPerfDiagnostics() {
   // Count frames via rAF — skip sampling when the window is hidden/backgrounded
   // because Chromium throttles rAF to ~1 FPS in background tabs, which would
   // cause false CRITICAL alerts even when the app is perfectly healthy.
+  //
+  // (#5456) Sample in short bursts instead of running rAF forever. A frame
+  // loop that never stops keeps the renderer requesting a frame on every
+  // vsync for the whole session, so the compositor and GPU never get to go
+  // idle and any running CSS animation is re-evaluated on every one of those
+  // frames. Measuring the frame rate does need rAF, but it does not need it
+  // 100% of the time — three seconds out of every fifteen is plenty for an
+  // average and a trend, and leaves the renderer alone the rest of the time.
+  const BURST_MS = 3000;
+  let burstStart = 0;
   const countFrame = (now) => {
-    rafId = requestAnimationFrame(countFrame);
     if (document.hidden) {
       // Reset so the first sample after becoming visible starts clean
       frameCount = 0;
       lastSampleTime = now;
+      rafId = requestAnimationFrame(countFrame);
       return;
     }
     frameCount++;
@@ -1287,8 +1324,20 @@ _startPerfDiagnostics() {
       frameCount = 0;
       lastSampleTime = now;
     }
+    if (now - burstStart >= BURST_MS) {
+      rafId = null;   // burst over — stop asking for frames until the next one
+      return;
+    }
+    rafId = requestAnimationFrame(countFrame);
   };
-  rafId = requestAnimationFrame(countFrame);
+  const startBurst = () => {
+    if (rafId) return;
+    frameCount = 0;
+    burstStart = performance.now();
+    lastSampleTime = burstStart;
+    rafId = requestAnimationFrame(countFrame);
+  };
+  startBurst();
 
   // Periodic evaluation
   reportTimer = setInterval(() => {
@@ -1338,7 +1387,15 @@ _startPerfDiagnostics() {
     }
   }, REPORT_INTERVAL);
 
-  this._perfDiag = { rafId, reportTimer, samples };
+  // Take the next reading (#5456) — the frame loop is idle between bursts.
+  const burstTimer = setInterval(startBurst, REPORT_INTERVAL);
+
+  this._perfDiag = { reportTimer, burstTimer, samples, stop: () => {
+    clearInterval(reportTimer);
+    clearInterval(burstTimer);
+    if (rafId) cancelAnimationFrame(rafId);
+    rafId = null;
+  } };
 },
 
 // Toggle visual HUD overlay: app._perfHUD(true)

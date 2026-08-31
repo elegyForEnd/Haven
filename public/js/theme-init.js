@@ -22,6 +22,29 @@
     window.visualViewport.addEventListener('resize', resetDocScroll);
     window.visualViewport.addEventListener('scroll', resetDocScroll);
   }
+  // Toggle style (sliders vs classic checkboxes). Applied before first paint
+  // so on/off settings don't render as one shape and then swap to the other.
+  // Sliders are the default, so only an explicit 'box' choice changes it.
+  try {
+    var _ts = localStorage.getItem('haven-toggle-style');
+    document.documentElement.setAttribute('data-toggle-style', _ts === 'box' ? 'box' : 'switch');
+  } catch (e) {
+    document.documentElement.setAttribute('data-toggle-style', 'switch');
+  }
+
+  // Apply the saved interface scale before first paint so the UI doesn't render
+  // at 100% and then jump. Mirrors the slider logic in app-media.js and
+  // migrates the retired 4-tier font-size setting.
+  try {
+    var _z = parseInt(localStorage.getItem('haven-zoom'), 10);
+    if (!_z) {
+      var _legacyZoom = { small: 85, normal: 100, large: 118, 'x-large': 138 };
+      _z = _legacyZoom[localStorage.getItem('haven-fontsize')] || 100;
+    }
+    _z = Math.min(150, Math.max(70, _z));
+    document.documentElement.style.setProperty('--ui-scale', _z + '%');
+  } catch (e) {}
+
   var t = localStorage.getItem('haven_theme');
   if (t) {
     if (t.indexOf('file:') === 0) {

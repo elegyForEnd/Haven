@@ -149,6 +149,7 @@
   },
   "toasts": {
     "roles_updated": "Tus roles han sido actualizados",
+    "role_server_no_response": "El servidor no responde. Puede que ejecute una versión antigua de Haven. Actualiza los archivos del servidor, reinícialo por completo y vuelve a intentarlo.",
     "status_pending_reconnect": "El estado se actualizará al reconectarse",
     "channel_created": "Canal \"#{{name}}\" creado!\nCódigo: {{code}}",
     "channel_deleted": "El canal fue eliminado",
@@ -369,6 +370,7 @@
     "rename_sub_channel": "Renombrar subcanales",
     "set_channel_topic": "Establecer tema del canal",
     "manage_sub_channels": "Administrar subcanales",
+    "manage_channel_settings": "Administrar ajustes del canal",
     "create_channel": "Crear canales",
     "upload_files": "Subir archivos",
     "use_voice": "Usar chat de voz",
@@ -378,6 +380,7 @@
     "mention_everyone": "Mencionar @everyone",
     "view_history": "Ver historial de mensajes",
     "view_all_members": "Ver todos los miembros del servidor",
+    "view_all_channels": "Ver todos los canales (unión automática)",
     "manage_emojis": "Administrar emojis personalizados",
     "manage_soundboard": "Administrar soundboard",
     "promote_user": "Promover usuarios",
@@ -654,6 +657,7 @@
     "language_section": {
       "title": "Idioma",
       "label": "Idioma",
+      "auto": "Automático",
       "hint": "Los cambios se aplican inmediatamente"
     },
     "layout_density": {
@@ -883,6 +887,8 @@
       "max_sound_hint": "Tamaño máximo de carga de soundboard (256–10240 KB, predeterminado 1024 / 1 MB)",
       "max_emoji_hint": "Tamaño máximo de carga de emoji personalizado (64–1024 KB, predeterminado 256)",
       "max_poll_hint": "Opciones de respuesta máximas por encuesta (2–25, predeterminado 10)",
+      "max_invite_uses": "Máximo de usos del enlace de invitación",
+      "max_invite_uses_hint": "El número máximo de usos que se puede establecer para un enlace de invitación. Los administradores y usuarios con permiso para gestionar el servidor ignoran este límite. (0 = ilimitado)",
       "sounds_hint": "Subir archivos de audio para sonidos de notificación personalizados",
       "emojis_hint": "Subir imágenes para emojis personalizados del servidor",
       "emojis_upload_hint": "Subir imágenes para emojis personalizados del servidor (máx. 256 KB, png/gif/webp). El nombre debe estar en minúsculas, sin espacios.",

@@ -111,6 +111,10 @@ async _sendMessage() {
   }
 
   const payload = { code: this.currentChannel, content };
+  // Discord display names are not unique, so a "=>@Name" DM has to carry the
+  // resolved Discord user id rather than leaving the server to guess.
+  const ferryDm = this._ferryPendingDm?.(content);
+  if (ferryDm) payload.ferryDiscordUserId = ferryDm;
   if (this.replyingTo) {
     payload.replyTo = this.replyingTo.id;
   }
@@ -196,6 +200,19 @@ async _sendMessage() {
       }
       if (!partner) {
         this._showToast(t('toasts.encryption_key_unavailable'), 'warning');
+      }
+    }
+
+    // Warn before encrypting: once this is ciphertext the server cannot judge
+    // it, and the recipient's client will render the link inert. Telling the
+    // sender here saves them wondering why it arrived greyed out. This is a
+    // courtesy, not a control. Anyone running a patched client skips it, which
+    // is exactly why the enforcement that matters lives on the receiving side.
+    // (#5483)
+    if (partner) {
+      const verdict = this._dmLinkBlocked?.(content);
+      if (verdict) {
+        this._showToast(`${verdict.message} It will show as blocked for them.`, 'warning');
       }
     }
 
@@ -355,6 +372,12 @@ _renderMessages(messages, lastReadMessageId) {
   this._decryptE2EImages(container);
   // Wire up decryption-on-click for E2E file attachments (#5310, #5308)
   this._decryptE2EFiles(container);
+  // DMs are ciphertext server-side, so their links can only be judged
+  // here, after decryption and before anyone can click. (#5483)
+  if (this._isDmContainer((container))) {
+    this._enforceDmLinkPolicy((container));
+    this._maybeShowDmSafetyNotice?.(container);
+  }
   // Wire burn-after-read placeholders + countdowns (#5280)
   this._wireBurnMessages?.(container);
   // Mark as read (last message ID)
@@ -494,6 +517,9 @@ _prependMessages(messages) {
     this._setupVideos(el);
     this._decryptE2EImages(el);
     this._decryptE2EFiles(el);
+    // DMs are ciphertext server-side, so their links can only be judged
+    // here, after decryption and before anyone can click. (#5483)
+    if (this._isDmContainer((el))) this._enforceDmLinkPolicy((el));
     this._wireBurnMessages?.(el);
   }
 },
@@ -556,6 +582,9 @@ _appendMessages(messages) {
   this._setupVideos(container);
   this._decryptE2EImages(container);
   this._decryptE2EFiles(container);
+  // DMs are ciphertext server-side, so their links can only be judged
+  // here, after decryption and before anyone can click. (#5483)
+  if (this._isDmContainer((container))) this._enforceDmLinkPolicy((container));
   this._wireBurnMessages?.(container);
 
   // Mark as read so the server-side read position advances
@@ -620,6 +649,9 @@ _appendMessage(message, forceScroll = false) {
   this._setupVideos(msgEl);
   this._decryptE2EImages(msgEl);
   this._decryptE2EFiles(msgEl);
+  // DMs are ciphertext server-side, so their links can only be judged
+  // here, after decryption and before anyone can click. (#5483)
+  if (this._isDmContainer((msgEl))) this._enforceDmLinkPolicy((msgEl));
   this._wireBurnMessages?.(msgEl);
   if (wasAtBottom) {
     this._scrollToBottom(true);
@@ -725,7 +757,12 @@ _createMessageEl(msg, prevMsg) {
   // toggle look broken because users with only `pin_message` saw nothing.
   const canPin = this.user.isAdmin || this._hasPerm('pin_message');
   const canArchive = this.user.isAdmin || this._hasPerm('archive_messages');
-  const canDelete = msg.user_id === this.user.id || this.user.isAdmin || this._canModerate();
+  // _canModerate() is a level check (effectiveLevel >= 25), so on its own it
+  // ignored the delete_message permission entirely: someone granted "delete any
+  // message" through a channel role but sitting below level 25 got no delete
+  // button, even though the server would have allowed it. (#5461)
+  const canDelete = msg.user_id === this.user.id || this.user.isAdmin ||
+                    this._canModerate() || this._hasPerm('delete_message');
   if (canPin) {
     toolbarActions.push({
       key: 'pin',
@@ -812,6 +849,9 @@ _createMessageEl(msg, prevMsg) {
     // even when the author is not in the online users list (e.g. offline).
     if (msg.avatar) el.dataset.avatar = msg.avatar;
     if (msg.avatar_shape) el.dataset.avatarShape = msg.avatar_shape;
+    if (msg.border) el.dataset.border = msg.border;
+    if (msg.borderTransform) el.dataset.borderTransform = JSON.stringify(msg.borderTransform);
+    if (msg.animateProfile) el.dataset.animateProfile = msg.animateProfile;
     el.innerHTML = `
       <span class="compact-time">${new Date(msg.created_at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}</span>
       <div class="message-body">
@@ -840,13 +880,13 @@ _createMessageEl(msg, prevMsg) {
   if (msg.imported_from === 'discord') {
     const discordAvatar = msg.webhook_avatar;
     if (discordAvatar) {
-      avatarHtml = `<img class="message-avatar message-avatar-img ${shapeClass}" src="${this._escapeHtml(discordAvatar)}" loading="lazy" alt="${initial}"><div class="message-avatar ${shapeClass}" style="background-color:${color};display:none">${initial}</div>`;
+      avatarHtml = `<img class="message-avatar message-avatar-img ${shapeClass}"${this._animAttr(msg.animateProfile)} src="${this._escapeHtml(discordAvatar)}" loading="lazy" alt="${initial}"><div class="message-avatar ${shapeClass}" style="background-color:${color};display:none">${initial}</div>`;
     } else {
       // Generic Discord-style avatar (colored circle with initial)
       avatarHtml = `<div class="message-avatar ${shapeClass} discord-import-avatar" style="background-color:#5865f2">${initial}</div>`;
     }
   } else if (msg.avatar) {
-    avatarHtml = `<img class="message-avatar message-avatar-img ${shapeClass}" src="${this._escapeHtml(msg.avatar)}" loading="lazy" alt="${initial}"><div class="message-avatar ${shapeClass}" style="background-color:${color};display:none">${initial}</div>`;
+    avatarHtml = `<img class="message-avatar message-avatar-img ${shapeClass}"${this._animAttr(msg.animateProfile)} src="${this._escapeHtml(msg.avatar)}" loading="lazy" alt="${initial}"><div class="message-avatar ${shapeClass}" style="background-color:${color};display:none">${initial}</div>`;
   } else {
     avatarHtml = `<div class="message-avatar ${shapeClass}" style="background-color:${color}">${initial}</div>`;
   }
@@ -883,6 +923,13 @@ _createMessageEl(msg, prevMsg) {
   // Persona badge (#86, #5349) — shown when message was sent via a user persona
   const personaBadge = msg.persona_id
     ? `<span class="persona-msg-badge" title="${this._escapeHtml((window.t && t('app.messages.via_persona', { name: msg.real_username || '' })) || `Sent via ${msg.real_username || 'real account'}`)}">persona</span>`
+    : '';
+
+  // Ferry badge: where this message was sent on Discord. The routing prefix
+  // is stripped before storage, so without this the channel would show people
+  // apparently talking to nobody.
+  const ferryBadge = msg.ferry_target
+    ? `<span class="ferry-badge" title="Relayed to Discord">🛶 ${this._escapeHtml(msg.ferry_target === 'dm' ? 'Discord DM' : msg.ferry_target)}</span>`
     : '';
 
   // (#5381) Guest badge — shown next to the username when the author is
@@ -926,7 +973,7 @@ _createMessageEl(msg, prevMsg) {
   if (msg.poll && msg.poll.anonymous) el.dataset.pollAnonymous = '1';
   el.innerHTML = `
     <div class="message-row">
-      ${avatarHtml}
+      ${this._avatarWithBorder(avatarHtml, msg)}
       <div class="message-body">
         ${replyHtml}
         <div class="message-header">
@@ -935,6 +982,7 @@ _createMessageEl(msg, prevMsg) {
           ${msgRoleIconAfter}
           ${botBadge}
           ${personaBadge}
+          ${ferryBadge}
           ${guestBadge}
           ${msgRoleBadge}
           <span class="message-time">${this._formatTime(msg.created_at)}</span>
@@ -988,8 +1036,13 @@ _promoteCompactToFull(compactEl) {
   const msgShape = compactEl.dataset.avatarShape || (onlineUser && onlineUser.avatarShape) || 'circle';
   const shapeClass = 'avatar-' + msgShape;
   const avatar = compactEl.dataset.avatar || (onlineUser && onlineUser.avatar) || null;
+  // Border fit stored on the compact element (offline-safe), same as avatar above.
+  const border = compactEl.dataset.border || (onlineUser && onlineUser.border) || null;
+  let borderTransform = (onlineUser && onlineUser.borderTransform) || null;
+  try { if (compactEl.dataset.borderTransform) borderTransform = JSON.parse(compactEl.dataset.borderTransform); } catch {}
+  const animateProfile = compactEl.dataset.animateProfile || (onlineUser && onlineUser.animateProfile) || 'trigger';
   const avatarHtml = avatar
-    ? `<img class="message-avatar message-avatar-img ${shapeClass}" src="${this._escapeHtml(avatar)}" loading="lazy" alt="${initial}"><div class="message-avatar ${shapeClass}" style="background-color:${color};display:none">${initial}</div>`
+    ? `<img class="message-avatar message-avatar-img ${shapeClass}"${this._animAttr(animateProfile)} src="${this._escapeHtml(avatar)}" loading="lazy" alt="${initial}"><div class="message-avatar ${shapeClass}" style="background-color:${color};display:none">${initial}</div>`
     : `<div class="message-avatar ${shapeClass}" style="background-color:${color}">${initial}</div>`;
 
   // Multi-role aware (compact-to-full path) — mirror of _createMessageEl above.
@@ -1022,7 +1075,7 @@ _promoteCompactToFull(compactEl) {
   if (isPinned) compactEl.dataset.pinned = '1';
   compactEl.innerHTML = `
     <div class="message-row">
-      ${avatarHtml}
+      ${this._avatarWithBorder(avatarHtml, { border, borderTransform, animateProfile })}
       <div class="message-body">
         <div class="message-header">
           ${msgRoleIconBefore2}
@@ -1041,6 +1094,11 @@ _promoteCompactToFull(compactEl) {
       <button class="msg-dots-btn" aria-label="${t('app.actions.message_actions')}">⋯</button>
     </div>
   `;
+  // A compact row is usually promoted while hovered; mark its pfp as playing so
+  // the freeze observer leaves it animating until the pointer actually leaves.
+  if (compactEl.matches(':hover')) {
+    compactEl.querySelectorAll('img[data-animate="trigger"]').forEach((i) => { i.dataset.animPlaying = '1'; });
+  }
 },
 
 _appendSystemMessage(text) {
@@ -1463,9 +1521,15 @@ _fetchLinkPreviews(containerEl) {
     const url = link.href;
     if (seen.has(url)) return;
     seen.add(url);
+    // Search results defer embeds behind a per-link Load button so a page of
+    // 25 results never fires 25 preview fetches. The button clears this flag on
+    // the one link it owns, then re-runs this pass. Channel/DM views never set
+    // the attribute, so their behaviour is unchanged. (search-overhaul phase 3)
+    if (link.dataset.embedDeferred) return;
     // Skip image URLs (already rendered inline) and internal URLs
     if (/\.(jpg|jpeg|png|gif|webp)(\?.*)?$/i.test(url)) return;
     if (/^https:\/\/media\d*\.giphy\.com\//i.test(url)) return;
+    if (/^https:\/\/(media|c)\.tenor\.com\//i.test(url)) return;
     if (url.startsWith(window.location.origin)) return;
 
     // ── Inline YouTube embed (wrapped in the shared embed chrome) ──
@@ -1481,8 +1545,17 @@ _fetchLinkPreviews(containerEl) {
       wrapper.style.setProperty('--lp-accent', '#ff0000');
       wrapper.innerHTML =
         this._embedHeaderHtml('YouTube', ytCollapsed) +
-        `<div class="lp-content"><div class="link-preview-yt"><iframe src="https://www.youtube.com/embed/${this._escapeHtml(ytVideoId)}?rel=0" width="100%" height="270" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen loading="lazy"></iframe></div></div>`;
+        // referrerpolicy is set per-iframe on purpose. Haven's document-level
+        // Referrer-Policy has defaulted to same-origin since 3.41.0, which
+        // sends NOTHING cross-origin. YouTube's embed player treats a missing
+        // referrer as a configuration failure and shows "Error 153" instead of
+        // the video. strict-origin-when-cross-origin gives it just the origin
+        // (scheme + host, no path and no query), which is enough for YouTube
+        // and still keeps invite codes out of the referrer, since those live
+        // in the query string. That was the whole reason for same-origin.
+        `<div class="lp-content"><div class="link-preview-yt"><iframe src="https://www.youtube.com/embed/${this._escapeHtml(ytVideoId)}?rel=0" width="100%" height="270" frameborder="0" referrerpolicy="strict-origin-when-cross-origin" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen loading="lazy"></iframe></div></div>`;
       this._wireEmbedControls(wrapper, url);
+      this._applyEmbedSpoiler(wrapper, link);
       msgContent.appendChild(wrapper);
       if (this._coupledToBottom) this._scrollToBottom(true);
       return; // skip generic link preview for YouTube
@@ -1565,13 +1638,20 @@ _fetchLinkPreviews(containerEl) {
           const count = Math.min(data.images.length, 4);
           media += `<div class="link-preview-gallery" data-count="${count}">`;
           data.images.slice(0, 4).forEach(imgUrl => {
-            media += `<img class="link-preview-gallery-img" src="${this._escapeHtml(imgUrl)}" alt="" loading="lazy">`;
+            media += `<img class="link-preview-gallery-img" ${this._imgSrcAttr(imgUrl)} alt="" loading="lazy">`;
           });
           media += '</div>';
         } else if (isInlineVideo) {
-          media += `<video class="lp-video" controls preload="metadata" playsinline${data.image ? ` poster="${this._escapeHtml(data.image)}"` : ''}><source src="${this._escapeHtml(data.video)}" type="${this._escapeHtml(data.videoType || 'video/mp4')}"></video>`;
+          // Video is NOT proxied — streaming it through Haven would need Range
+          // support and a lot of bandwidth. Instead the poster comes from the
+          // proxy and preload drops to "none" when proxying is on, so the
+          // remote host is contacted only if the viewer actually presses play.
+          // That turns a silent leak into a deliberate act.
+          const vidPreload = (this._mediaProxyEnabled === false) ? 'metadata' : 'none';
+          const posterAttr = data.image ? ` poster="${this._escapeHtml(this._proxyMediaUrl(data.image) || '')}"` : '';
+          media += `<video class="lp-video" controls preload="${vidPreload}" playsinline${posterAttr}><source src="${this._escapeHtml(data.video)}" type="${this._escapeHtml(data.videoType || 'video/mp4')}"></video>`;
         } else if (data.image) {
-          media += `<a class="lp-media" href="${this._escapeHtml(url)}" target="_blank" rel="noopener noreferrer nofollow"><img class="lp-image" src="${this._escapeHtml(data.image)}" alt="" loading="lazy">${data.video ? '<span class="lp-play"></span>' : ''}</a>`;
+          media += `<a class="lp-media" href="${this._escapeHtml(url)}" target="_blank" rel="noopener noreferrer nofollow"><img class="lp-image" ${this._imgSrcAttr(data.image)} alt="" loading="lazy">${data.video ? '<span class="lp-play"></span>' : ''}</a>`;
         }
 
         // Engagement stats (Bluesky / X) — skip any the source didn't provide.
@@ -1591,6 +1671,7 @@ _fetchLinkPreviews(containerEl) {
             stats +
           '</div>';
         this._wireEmbedControls(card, url);
+        this._applyEmbedSpoiler(card, link);
 
         const wasAtBottom = this._coupledToBottom;
         msgContent.appendChild(card);
@@ -1663,6 +1744,21 @@ _runLinkPreviewTask(task) {
 // _applyEmbedSize live in app-media.js); the per-card ⤢ button is a quick cycle
 // through Full→Medium→Small (Off stays Settings-only so the button can't hide
 // itself), and the ▾/▸ caret collapses a single embed for this session.
+
+// A link wrapped in a || spoiler || carries that spoiler onto its embed
+// card: the card is blurred behind the same tag used for spoiler images
+// until it is clicked to reveal (handled by _maybeRevealConcealed). We read
+// the rendered DOM — the <a> sits inside the .spoiler span — so detection
+// stays in sync with however the message was marked up (auto-link, masked
+// [text](url), YouTube, etc.).
+_applyEmbedSpoiler(embedEl, link) {
+  if (!link || !link.closest('.spoiler')) return;
+  embedEl.classList.add('lp-spoiler');
+  const tag = document.createElement('span');
+  tag.className = 'spoiler-media-tag';
+  tag.textContent = '\u{1F441}\u{FE0F} ' + ((typeof t === 'function' && t('app.messages.spoiler')) || 'Spoiler');
+  embedEl.appendChild(tag);
+},
 
 /** Header row markup: site name (accent), size cycle button, collapse caret. */
 _embedHeaderHtml(siteName, collapsed) {
@@ -1930,7 +2026,9 @@ _showMessageContextMenu(e, msgEl) {
   const canPin       = !!(this.user?.isAdmin || this._hasPerm('pin_message'));
   const canArchive   = !!(this.user?.isAdmin || this._hasPerm('archive_messages'));
   const canShareLink = !isDm && !!this._canShareChannelLink?.(this.currentChannel);
-  const canDelete    = isOwn || this.user?.isAdmin || this._canModerate();
+  // Same level-vs-permission gap as the toolbar above (#5461).
+  const canDelete    = isOwn || this.user?.isAdmin || this._canModerate() ||
+                       this._hasPerm('delete_message');
 
   // Layout: the actions defined first (Edit, Reply, Quote, Pin) — separator —
   // the remaining hover-toolbar actions (React, Thread, Copy Link, Protect) —
