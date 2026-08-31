@@ -50,6 +50,7 @@ const ferry = require('../ferry');
 const registerChannels   = require('./channels');
 const registerMessages   = require('./messages');
 const registerVoice      = require('./voice');
+const registerRemoteControl = require('./remoteControl');
 const registerMusic      = require('./music');
 const registerUsers      = require('./users');
 const registerModeration = require('./moderation');
@@ -105,6 +106,9 @@ function setupSocketHandlers(io, db, opts = {}) {
   const musicQueues         = new Map(); // code → [{ id, url, title, userId, username, resolvedFrom }]
   const activeScreenSharers = new Map(); // code → Set<userId>
   const activeWebcamUsers   = new Map(); // code → Set<userId>
+  const remoteControlRequests = new Map(); // requestId → pending consent handshake
+  const remoteControlSessions = new Map(); // sessionId → active host/controller pairing
+  const remoteControlRateLimits = new Map(); // userId → recent request timestamps
   const userFloodBuckets    = new Map(); // `${userId}:${bucket}` → number[] (send timestamps)
   // Presence timing for the "idle but online" flag. onlineSince is set when a
   // user goes from having zero live sockets to one; lastActiveAt advances only
@@ -159,6 +163,7 @@ function setupSocketHandlers(io, db, opts = {}) {
     channelUsers, voiceUsers, voiceLastActivity,
     activeMusic, musicQueues,
     activeScreenSharers, activeWebcamUsers, streamViewers,
+    remoteControlRequests, remoteControlSessions, remoteControlRateLimits,
     slowModeTracker, pendingTempDelete, pendingVoiceLeave,
     drawingBoards, drawingParticipants, drawingStateSyncLimits,
     botAudioManager, clearMusicMedia
@@ -2338,6 +2343,7 @@ function setupSocketHandlers(io, db, opts = {}) {
     registerChannels(socket, ctx);
     registerMessages(socket, ctx);
     registerVoice(socket, ctx);
+    registerRemoteControl(socket, ctx);
     registerMusic(socket, ctx);
     registerUsers(socket, ctx);
     registerModeration(socket, ctx);

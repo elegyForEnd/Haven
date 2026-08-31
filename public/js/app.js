@@ -7,10 +7,10 @@
 import SocketMethods   from './modules/app-socket.js?v=3.51.0';
 import UIBindMethods   from './modules/app-ui.js?v=3.51.0';
 import MediaMethods    from './modules/app-media.js?v=3.51.0';
-import ContextMethods  from './modules/app-context.js?v=3.44.3';
+import ContextMethods  from './modules/app-context.js?v=3.44.4';
 import ChannelMethods  from './modules/app-channels.js?v=3.44.3';
 import MessageMethods  from './modules/app-messages.js?v=3.51.0';
-import UserMethods     from './modules/app-users.js?v=3.25.3';
+import UserMethods     from './modules/app-users.js?v=3.25.4';
 import VoiceMethods    from './modules/app-voice.js?v=3.37.12';
 import MusicPlayerMethods from './modules/app-music-player.js?v=8';
 import UtilityMethods  from './modules/app-utilities.js?v=3.34.0';
@@ -278,6 +278,9 @@ class HavenApp {
     // when the user activates a published file theme (#5359)
     window.havenSocket = this.socket;
     this.voice = new VoiceManager(this.socket);
+    this.remoteControl = typeof window.HavenRemoteControlManager === 'function'
+      ? new window.HavenRemoteControlManager(this)
+      : null;
     if (this.user && this.user.id) this.voice.localUserId = this.user.id;
     
     // CRITICAL FIX: Run avatar setup first and use delegation to ensure listeners work

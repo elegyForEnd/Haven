@@ -41,6 +41,26 @@ _showUserContextMenu(e, targetUserId) {
   });
   menu.appendChild(dmBtn);
 
+  // Remote assistance is channel-scoped. The server performs the final
+  // capability and membership checks so stale online lists cannot grant access.
+  if (this.remoteControl && this.currentChannel && targetUserId !== this.user?.id) {
+    const requestControlBtn = document.createElement('button');
+    requestControlBtn.innerHTML = `🖱️ ${t('remote_control.request_control')}`;
+    requestControlBtn.addEventListener('click', () => {
+      this._hideUserContextMenu();
+      this.remoteControl.request(targetUserId, targetName, 'request');
+    });
+    menu.appendChild(requestControlBtn);
+
+    const inviteAssistBtn = document.createElement('button');
+    inviteAssistBtn.innerHTML = `🛟 ${t('remote_control.invite_assistance')}`;
+    inviteAssistBtn.addEventListener('click', () => {
+      this._hideUserContextMenu();
+      this.remoteControl.request(targetUserId, targetName, 'invite');
+    });
+    menu.appendChild(inviteAssistBtn);
+  }
+
   // 3) Invite to Channel (submenu)
   // Private channels are excluded for non-admins: regular members can't bypass
   // the code requirement by using the right-click invite menu.

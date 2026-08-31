@@ -2044,5 +2044,31 @@
     "no_matches": "No threads match that search",
     "reply_one": "1 reply",
     "reply_other": "{{count}} replies"
+  },
+  "remote_control": {
+    "request_control": "Request control",
+    "invite_assistance": "Invite remote assistance",
+    "open_channel": "Open a channel before starting remote assistance.",
+    "already_active": "A remote assistance session is already active.",
+    "request_sent": "Control request sent to {{name}}.",
+    "invitation_sent": "Invitation sent to {{name}}.",
+    "declined": "Remote assistance request declined.",
+    "request_expired": "Remote assistance request expired.",
+    "confirm_control": "{{name}} is requesting control of this computer. Accept the request?",
+    "confirm_assist": "{{name}} is inviting you to remotely assist them. Accept the invitation?",
+    "connected": "Remote control connected",
+    "click_to_control": "Click the shared screen to control it",
+    "host_banner": "{{name}} can control this computer",
+    "stop_control": "Stop control",
+    "window_title": "Remote assistance with {{name}}",
+    "waiting": "Waiting for shared screen…",
+    "waiting_for_screen": "Waiting for {{name}} to choose a screen…",
+    "end_session": "End session",
+    "ended": "Remote assistance ended.",
+    "ended_emergency": "Remote control stopped with the emergency shortcut.",
+    "ended_screen": "Remote assistance ended because screen sharing stopped.",
+    "ended_channel": "Remote assistance ended because a participant changed channels.",
+    "ended_disconnect": "Remote assistance ended because a participant disconnected.",
+    "ended_expired": "Remote assistance session expired."
   }
 }

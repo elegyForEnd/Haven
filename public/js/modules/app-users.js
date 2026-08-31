@@ -1302,6 +1302,8 @@ _showVoiceUserMenu(anchorEl, userId, username) {
     </div>
     <div class="voice-user-menu-actions">
       ${canWatchStream ? `<button class="voice-user-menu-action" data-action="watch-stream">🖥 ${t('users.voice_menu.watch_stream')}</button>` : ''}
+      ${this.remoteControl ? `<button class="voice-user-menu-action" data-action="request-control">🖱️ ${t('remote_control.request_control')}</button>` : ''}
+      ${this.remoteControl ? `<button class="voice-user-menu-action" data-action="invite-assistance">🛟 ${t('remote_control.invite_assistance')}</button>` : ''}
       <button class="voice-user-menu-action" data-action="mute-user">${isMuted ? `🔊 ${t('users.voice_menu.unmute')}` : `🔇 ${t('users.voice_menu.mute')}`}</button>
       <button class="voice-user-menu-action ${isDeafened ? 'active' : ''}" data-action="deafen-user">${isDeafened ? `🔊 ${t('users.voice_menu.undeafen')}` : `🔇 ${t('users.voice_menu.deafen')}`}</button>
       ${canKick ? `<button class="voice-user-menu-action danger" data-action="voice-kick" title="${t('users.voice_menu.voice_kick_title')}">🚪 ${t('users.voice_menu.voice_kick')}</button>` : ''}
@@ -1351,6 +1353,12 @@ _showVoiceUserMenu(anchorEl, userId, username) {
           this.voice._watchForScreenStream(userId);
           this._showToast?.(t('voice.requesting_stream'), 'info');
         }
+        this._closeVoiceUserMenu();
+      } else if (btn.dataset.action === 'request-control') {
+        this.remoteControl?.request(userId, username, 'request');
+        this._closeVoiceUserMenu();
+      } else if (btn.dataset.action === 'invite-assistance') {
+        this.remoteControl?.request(userId, username, 'invite');
         this._closeVoiceUserMenu();
       } else if (btn.dataset.action === 'mute-user') {
         // Mute: toggle their volume to 0 so YOU can't hear THEM

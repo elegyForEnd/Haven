@@ -1679,5 +1679,31 @@
       "unavailable_title": "GIF搜索不可用",
       "unavailable_desc": "管理员需要先设置 GIPHY API 密钥才能使用GIF搜索。"
     }
+  },
+  "remote_control": {
+    "request_control": "请求控制",
+    "invite_assistance": "邀请远程协助",
+    "open_channel": "请先打开一个频道，再发起远程协助。",
+    "already_active": "已有一个远程协助会话正在进行。",
+    "request_sent": "已向 {{name}} 发送控制请求。",
+    "invitation_sent": "已向 {{name}} 发送协助邀请。",
+    "declined": "对方拒绝了远程协助请求。",
+    "request_expired": "远程协助请求已过期。",
+    "confirm_control": "{{name}} 请求控制这台电脑，是否接受？",
+    "confirm_assist": "{{name}} 邀请你远程协助，是否接受？",
+    "connected": "远程控制已连接",
+    "click_to_control": "点击共享画面后即可控制",
+    "host_banner": "{{name}} 正在控制这台电脑",
+    "stop_control": "停止控制",
+    "window_title": "正在远程协助 {{name}}",
+    "waiting": "正在等待共享画面…",
+    "waiting_for_screen": "正在等待 {{name}} 选择屏幕…",
+    "end_session": "结束会话",
+    "ended": "远程协助已结束。",
+    "ended_emergency": "已通过紧急快捷键停止远程控制。",
+    "ended_screen": "屏幕共享已停止，远程协助随之结束。",
+    "ended_channel": "参与者切换了频道，远程协助已结束。",
+    "ended_disconnect": "参与者已断开连接，远程协助已结束。",
+    "ended_expired": "远程协助会话已过期。"
   }
 }
