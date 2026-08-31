@@ -18,7 +18,7 @@ import AdminMethods    from './modules/app-admin.js?v=3.51.0';
 import PlatformMethods from './modules/app-platform.js?v=3.16.12';
 import SearchMethods   from './modules/app-search.js?v=3.49.0';
 import FerryMethods    from './modules/app-ferry.js?v=3.51.4';
-import DrawingMethods  from './modules/app-drawing.js?v=1';
+import DrawingMethods  from './modules/app-drawing.js?v=3';
 
 class HavenApp {
   constructor() {

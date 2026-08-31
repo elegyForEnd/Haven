@@ -4,7 +4,7 @@
    â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 @import url('/css/voice.css?v=3.34.0');
 @import url('/css/music.css?v=5');
-@import url('/css/drawing.css?v=1');
+@import url('/css/drawing.css?v=2');
 
 /* Self hosted fonts. Formerly pulled from Google Fonts, now bundled so Haven
    never contacts a third party to render text. Files live in /public/fonts and

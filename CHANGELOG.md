@@ -1,5 +1,7 @@
 # Changelog
 
+- **Existing channel drawings now appear without opening the drawing panel.** Entering a channel synchronizes its drawing silently: an empty board stays completely hidden, while existing or newly added strokes appear as a click-through overlay. The full toolbar opens only when you press the drawing button.
+
 All notable changes to Haven are documented here.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Haven uses [Semantic Versioning](https://semver.org/).

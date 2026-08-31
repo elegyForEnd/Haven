@@ -10,6 +10,10 @@
   display: none;
 }
 
+.drawing-toolbar[hidden] {
+  display: none !important;
+}
+
 .drawing-canvas {
   position: absolute;
   inset: 0;

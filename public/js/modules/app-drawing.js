@@ -30,6 +30,7 @@ export default {
     const storedColor = localStorage.getItem('haven_drawing_color');
     this._drawing = {
       active: false,
+      controlsVisible: false,
       interactive: true,
       tool: 'pen',
       color: /^#[0-9a-f]{6}$/i.test(storedColor || '') ? storedColor : '#ff4d8d',
@@ -158,14 +159,27 @@ export default {
     this._setDrawingInteractionMode(true);
     this._updateDrawingWidthPreview();
     this._resizeDrawingCanvas();
+
+    // Cover the rare case where the initial channel snapshot arrived before
+    // drawing setup finished attaching its listeners.
+    if (this.currentChannel) this._openDrawingBoard({ interactive: false, controlsVisible: false });
   },
 
   _toggleDrawingBoard() {
-    if (this._drawing?.active) this._closeDrawingBoard();
-    else this._openDrawingBoard();
+    if (!this._drawing) return;
+    if (!this._drawing.active) {
+      this._openDrawingBoard();
+      return;
+    }
+    if (!this._drawing.controlsVisible) {
+      this._setDrawingControlsVisible(true);
+      this._setDrawingInteractionMode(true);
+      return;
+    }
+    this._closeDrawingBoard();
   },
 
-  _openDrawingBoard() {
+  _openDrawingBoard({ interactive = true, controlsVisible = true } = {}) {
     if (!this._drawing) return;
     if (!this.currentChannel) {
       this._showToast?.(getDrawingText('drawing.select_channel_first', 'Select a channel before opening the drawing board.'), 'info');
@@ -173,14 +187,10 @@ export default {
     }
 
     this._drawing.active = true;
-    const overlay = document.getElementById('drawing-overlay');
-    overlay.hidden = false;
-    overlay.setAttribute('aria-hidden', 'false');
-    document.getElementById('drawing-toggle-btn')?.classList.add('active');
-    document.getElementById('drawing-toggle-mobile-btn')?.classList.add('active');
     document.getElementById('drawing-clear-btn').style.display = this.user?.isAdmin ? '' : 'none';
 
-    this._setDrawingInteractionMode(true);
+    this._setDrawingControlsVisible(controlsVisible);
+    this._setDrawingInteractionMode(interactive);
     this._resizeDrawingCanvas();
     this._resetDrawingBoardState();
     this._updateDrawingChannelLabel();
@@ -195,6 +205,7 @@ export default {
     if (this.socket?.connected && this._drawing.channelId) this.socket.emit('drawing-leave');
 
     this._drawing.active = false;
+    this._drawing.controlsVisible = false;
     this._drawing.channelId = null;
     this._drawing.channelCode = null;
     this._drawing.syncing = false;
@@ -203,18 +214,25 @@ export default {
     this._drawing.syncRetryTimer = null;
     this._cancelLocalDrawingStroke();
     this._resetDrawingBoardState();
-
-    const overlay = document.getElementById('drawing-overlay');
-    overlay.hidden = true;
-    overlay.setAttribute('aria-hidden', 'true');
-    document.getElementById('drawing-toggle-btn')?.classList.remove('active');
-    document.getElementById('drawing-toggle-mobile-btn')?.classList.remove('active');
   },
 
   _handleDrawingChannelChanged(previousChannelCode, nextChannelCode) {
     const mobileDrawingButton = document.getElementById('drawing-toggle-mobile-btn');
     if (mobileDrawingButton) mobileDrawingButton.style.display = nextChannelCode ? 'inline-flex' : 'none';
-    if (!this._drawing?.active || previousChannelCode === nextChannelCode) return;
+    if (!this._drawing || previousChannelCode === nextChannelCode) return;
+
+    if (!nextChannelCode) {
+      if (this._drawing.active) this._closeDrawingBoard();
+      return;
+    }
+
+    // Subscribe silently on channel entry. Empty boards remain hidden; boards
+    // with content appear as a passthrough canvas without opening the toolbar
+    // or intercepting normal chat and navigation interactions.
+    if (!this._drawing.active) {
+      this._openDrawingBoard({ interactive: false, controlsVisible: false });
+      return;
+    }
 
     if (this._drawing.localStroke) this._finishDrawingStroke(null);
     if (this._drawing.syncRetryTimer) clearTimeout(this._drawing.syncRetryTimer);
@@ -224,9 +242,11 @@ export default {
     this._drawing.channelId = null;
     this._drawing.channelCode = null;
     this._resetDrawingBoardState();
+    this._setDrawingInteractionMode(false);
+    this._setDrawingControlsVisible(false);
     this._updateDrawingChannelLabel();
     this._setDrawingStatus(this.socket?.connected ? 'connecting' : 'offline');
-    if (nextChannelCode) this._joinDrawingChannel(nextChannelCode);
+    this._joinDrawingChannel(nextChannelCode);
   },
 
   _joinDrawingChannel(channelCode) {
@@ -246,6 +266,32 @@ export default {
     this._drawing.incomingStateStrokes = [];
     this._drawing.incomingActiveStrokes = new Map();
     this._clearDrawingCanvas();
+    this._refreshDrawingOverlayVisibility();
+  },
+
+  _setDrawingControlsVisible(visible) {
+    if (!this._drawing) return;
+    this._drawing.controlsVisible = visible === true;
+    this._refreshDrawingOverlayVisibility();
+  },
+
+  _refreshDrawingOverlayVisibility() {
+    if (!this._drawing) return;
+    const overlay = document.getElementById('drawing-overlay');
+    const toolbar = document.getElementById('drawing-toolbar');
+    if (!overlay) return;
+
+    const hasContent = this._drawing.strokes.length > 0 ||
+      this._drawing.activeStrokes.size > 0 ||
+      Boolean(this._drawing.localStroke);
+    const controlsVisible = this._drawing.active && this._drawing.controlsVisible;
+    const overlayVisible = this._drawing.active && (controlsVisible || hasContent);
+
+    overlay.hidden = !overlayVisible;
+    overlay.setAttribute('aria-hidden', overlayVisible ? 'false' : 'true');
+    if (toolbar) toolbar.hidden = !controlsVisible;
+    document.getElementById('drawing-toggle-btn')?.classList.toggle('active', controlsVisible);
+    document.getElementById('drawing-toggle-mobile-btn')?.classList.toggle('active', controlsVisible);
   },
 
   _setDrawingInteractionMode(interactive) {
@@ -515,6 +561,7 @@ export default {
       return firstSequence - secondSequence;
     });
     for (const stroke of renderableStrokes) this._drawDrawingStroke(stroke);
+    this._refreshDrawingOverlayVisibility();
   },
 
   _drawDrawingStroke(stroke) {
@@ -647,6 +694,7 @@ export default {
         return;
       }
       this._drawing.activeStrokes.set(stroke.id, stroke);
+      this._refreshDrawingOverlayVisibility();
       this._drawDrawingStroke(stroke);
       return;
     }
@@ -720,6 +768,7 @@ export default {
       this._drawing.strokes = [];
       this._drawing.activeStrokes.clear();
       this._clearDrawingCanvas();
+      this._refreshDrawingOverlayVisibility();
     }
   },
 
