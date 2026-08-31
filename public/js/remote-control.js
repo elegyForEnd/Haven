@@ -3,6 +3,9 @@
 (function () {
   const CONTROL_LABEL = 'haven-remote-input-v1';
   const POINTER_LABEL = 'haven-remote-pointer-v1';
+  const CONTROL_PACKET = Object.freeze({ MOUSE_BUTTON: 1, WHEEL: 2, KEY: 3 });
+  const BUTTON_IDS = Object.freeze({ left: 0, middle: 1, right: 2, back: 3, forward: 4 });
+  const BUTTON_NAMES = ['left', 'middle', 'right', 'back', 'forward'];
 
   window.HavenRemoteControlManager = class HavenRemoteControlManager {
     constructor(app) {
@@ -166,6 +169,14 @@
       pc.ondatachannel = event => this._adoptDataChannel(session, event.channel);
       pc.ontrack = event => {
         if (session.role !== 'controller' || event.track.kind !== 'video') return;
+        // Match Moonlight's remote-desktop profile: do not build an extra
+        // receiver-side playout cushion for the control video. A live screen
+        // is interactive input feedback, so a small amount of jitter is less
+        // harmful than displaying a cursor position from an older frame.
+        try {
+          const receiver = pc.getReceivers().find(item => item.track === event.track);
+          if (receiver && 'playoutDelayHint' in receiver) receiver.playoutDelayHint = 0;
+        } catch {}
         const stream = event.streams?.[0] || new MediaStream([event.track]);
         session.remoteStream = stream;
         this._attachRemoteVideo(session, stream);
@@ -188,13 +199,27 @@
       const prepared = await bridge.prepareCapture({ sessionId: session.id, token: session.nativeToken });
       if (!prepared?.ok) throw new Error('Could not prepare a controllable display');
       session.screenStream = await navigator.mediaDevices.getDisplayMedia({
-        video: { frameRate: { ideal: 30, max: 60 } },
+        video: { frameRate: { ideal: 60, max: 60 }, contentHint: 'motion' },
         audio: false,
       });
       const videoTrack = session.screenStream.getVideoTracks()[0];
       if (!videoTrack) throw new Error('No display was selected');
+      try { videoTrack.contentHint = 'motion'; } catch {}
       videoTrack.onended = () => this.end('screen-share-ended');
       session.pc.addTrack(videoTrack, session.screenStream);
+      try {
+        const sender = session.pc.getSenders().find(item => item.track === videoTrack);
+        const parameters = sender?.getParameters?.() || {};
+        parameters.degradationPreference = 'maintain-framerate';
+        parameters.encodings = (parameters.encodings?.length ? parameters.encodings : [{}]).map(encoding => ({
+          ...encoding,
+          maxBitrate: 12_000_000,
+          maxFramerate: 60,
+          priority: 'high',
+          networkPriority: 'high',
+        }));
+        await sender?.setParameters?.(parameters);
+      } catch {}
 
       this._adoptDataChannel(session, session.pc.createDataChannel(CONTROL_LABEL, { ordered: true }));
       this._adoptDataChannel(session, session.pc.createDataChannel(POINTER_LABEL, {
@@ -224,13 +249,67 @@
         }
       };
       channel.onmessage = event => {
-        if (session.role !== 'host' || !session.nativeToken || typeof event.data !== 'string' || event.data.length > 1024) return;
+        if (session.role !== 'host' || !session.nativeToken) return;
+        if (channel.label === POINTER_LABEL) {
+          const data = event.data;
+          if (!(data instanceof ArrayBuffer) || data.byteLength !== 4) return;
+          const view = new DataView(data);
+          const x = view.getUint16(0) / 65535;
+          const y = view.getUint16(2) / 65535;
+          if (x < 0 || x > 1 || y < 0 || y > 1) return;
+          session.latestPointer = { x, y };
+          if (!session.pointerFlushPending) {
+            session.pointerFlushPending = true;
+            setTimeout(() => {
+              session.pointerFlushPending = false;
+              const point = session.latestPointer;
+              session.latestPointer = null;
+              if (point) window.havenDesktopRemoteControl?.injectPointer(session.nativeToken, point.x, point.y);
+            }, 1);
+          }
+          return;
+        }
+        if (event.data instanceof ArrayBuffer) {
+          const input = this._decodeControlPacket(event.data);
+          if (input) window.havenDesktopRemoteControl?.inject(session.nativeToken, input);
+          return;
+        }
+        if (typeof event.data !== 'string' || event.data.length > 1024) return;
         try {
           const payload = JSON.parse(event.data);
           if (payload.sessionId !== session.id || !payload.input) return;
           window.havenDesktopRemoteControl?.inject(session.nativeToken, payload.input);
         } catch {}
       };
+    }
+
+    _decodeControlPacket(buffer) {
+      if (!(buffer instanceof ArrayBuffer) || buffer.byteLength < 2 || buffer.byteLength > 64) return null;
+      const view = new DataView(buffer);
+      const type = view.getUint8(0);
+      if (type === CONTROL_PACKET.MOUSE_BUTTON && buffer.byteLength === 3) {
+        const action = view.getUint8(1);
+        const button = BUTTON_NAMES[view.getUint8(2)];
+        if (!button || (action !== 0 && action !== 1)) return null;
+        return { type: action ? 'mouseDown' : 'mouseUp', button };
+      }
+      if (type === CONTROL_PACKET.WHEEL && buffer.byteLength === 5) {
+        return {
+          type: 'wheel',
+          deltaX: view.getInt16(1),
+          deltaY: view.getInt16(3),
+        };
+      }
+      if (type === CONTROL_PACKET.KEY && buffer.byteLength >= 3) {
+        const action = view.getUint8(1);
+        const length = view.getUint8(2);
+        if ((action !== 0 && action !== 1) || length < 1 || length > 24 || buffer.byteLength !== length + 3) return null;
+        let code = '';
+        for (let i = 0; i < length; i++) code += String.fromCharCode(view.getUint8(3 + i));
+        if (!/^[A-Za-z0-9]{1,24}$/.test(code)) return null;
+        return { type: action ? 'keyDown' : 'keyUp', code };
+      }
+      return null;
     }
 
     async _handleSignal(data) {
@@ -302,7 +381,7 @@
     _bindControllerInput(session, video) {
       if (session.inputCleanup) session.inputCleanup();
       let queuedMove = null;
-      let moveFrame = null;
+      let moveTimer = null;
       const listeners = [];
       const listen = (target, type, handler, options) => {
         target.addEventListener(type, handler, options);
@@ -310,8 +389,22 @@
       };
       const send = (input, pointer = false) => {
         const channel = pointer ? session.pointerChannel : session.controlChannel;
-        if (!channel || channel.readyState !== 'open' || channel.bufferedAmount > 128 * 1024) return;
-        channel.send(JSON.stringify({ sessionId: session.id, input }));
+        // Pointer packets are state, not a history. Keep the SCTP queue tiny so
+        // a temporary network stall cannot make the host replay old positions.
+        const maxBuffered = pointer ? 256 : 128 * 1024;
+        if (!channel || channel.readyState !== 'open' || channel.bufferedAmount > maxBuffered) return;
+        if (pointer && input.type === 'move') {
+          const packet = new ArrayBuffer(4);
+          const view = new DataView(packet);
+          view.setUint16(0, Math.max(0, Math.min(65535, Math.round(input.x * 65535))));
+          view.setUint16(2, Math.max(0, Math.min(65535, Math.round(input.y * 65535))));
+          channel.send(packet);
+        } else if (!pointer) {
+          const packet = this._encodeControlPacket(input);
+          if (packet) channel.send(packet);
+        } else {
+          channel.send(JSON.stringify({ sessionId: session.id, input }));
+        }
       };
       const normalizedPoint = event => {
         const rect = video.getBoundingClientRect();
@@ -329,14 +422,17 @@
       };
       const buttonName = button => ['left', 'middle', 'right', 'back', 'forward'][button] || null;
 
-      listen(video, 'pointermove', event => {
-        queuedMove = normalizedPoint(event);
-        if (!queuedMove || moveFrame) return;
-        moveFrame = requestAnimationFrame(() => {
-          moveFrame = null;
+      const pointerMoveEvent = 'onpointerrawupdate' in video ? 'pointerrawupdate' : 'pointermove';
+      listen(video, pointerMoveEvent, event => {
+        const coalesced = event.getCoalescedEvents?.();
+        const latest = coalesced?.length ? coalesced[coalesced.length - 1] : event;
+        queuedMove = normalizedPoint(latest);
+        if (!queuedMove || moveTimer) return;
+        moveTimer = setTimeout(() => {
+          moveTimer = null;
           if (queuedMove) send({ type: 'move', ...queuedMove }, true);
           queuedMove = null;
-        });
+        }, 1);
       });
       listen(video, 'pointerdown', event => {
         const point = normalizedPoint(event);
@@ -390,9 +486,38 @@
       listen(window, 'blur', releaseLocalInputs);
       session.inputCleanup = () => {
         releaseLocalInputs();
-        if (moveFrame) cancelAnimationFrame(moveFrame);
+        if (moveTimer) clearTimeout(moveTimer);
         listeners.splice(0).forEach(remove => remove());
       };
+    }
+
+    _encodeControlPacket(input) {
+      if (!input || typeof input !== 'object') return null;
+      if ((input.type === 'mouseDown' || input.type === 'mouseUp') && BUTTON_IDS[input.button] != null) {
+        const packet = new Uint8Array(3);
+        packet[0] = CONTROL_PACKET.MOUSE_BUTTON;
+        packet[1] = input.type === 'mouseDown' ? 1 : 0;
+        packet[2] = BUTTON_IDS[input.button];
+        return packet.buffer;
+      }
+      if (input.type === 'wheel') {
+        const packet = new ArrayBuffer(5);
+        const view = new DataView(packet);
+        view.setUint8(0, CONTROL_PACKET.WHEEL);
+        view.setInt16(1, Math.max(-1200, Math.min(1200, Math.trunc(Number(input.deltaX) || 0))));
+        view.setInt16(3, Math.max(-1200, Math.min(1200, Math.trunc(Number(input.deltaY) || 0))));
+        return packet;
+      }
+      if ((input.type === 'keyDown' || input.type === 'keyUp') && /^[A-Za-z0-9]{1,24}$/.test(input.code || '')) {
+        const code = input.code;
+        const packet = new Uint8Array(3 + code.length);
+        packet[0] = CONTROL_PACKET.KEY;
+        packet[1] = input.type === 'keyDown' ? 1 : 0;
+        packet[2] = code.length;
+        for (let i = 0; i < code.length; i++) packet[3 + i] = code.charCodeAt(i);
+        return packet.buffer;
+      }
+      return null;
     }
 
     _setStatus(text) {
