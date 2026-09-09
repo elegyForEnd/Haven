@@ -85,7 +85,8 @@ class VoiceManager {
     this._rnnoiseInitPromise = null; // deduplicates initialization for one AudioContext
     this._rnnoiseInitContext = null;
     this._rnnoiseOperational = false;
-    this._rnnoiseWasmBytes = null;   // cached bytes transferred to each worklet node    this._rnnoiseSource = null;      // MediaStreamSource feeding the chain
+    this._rnnoiseWasmBytes = null;   // cached bytes transferred to each worklet node
+    this._rnnoiseSource = null;      // MediaStreamSource feeding the chain
     // Noise mode: 'off' | 'gate' | 'suppress'
     const savedMode = localStorage.getItem('haven_noise_mode');
     this.noiseMode = savedMode || 'gate';
@@ -1138,13 +1139,21 @@ class VoiceManager {
     const gateAnalyser = this.audioCtx.createAnalyser();
     gateAnalyser.fftSize = 2048;
     gateAnalyser.smoothingTimeConstant = 0.3;
+    // Keep the analyser in the signal path before the gain node. RNNoise is
+    // inserted between the source and analyser when AI suppression is enabled,
+    // so the residual gate measures the cleaned signal rather than raw mic
+    // noise. This is important for breaths/clicks that survive RNNoise.
     source.connect(gateAnalyser);
 
     const gateGain = this.audioCtx.createGain();
+    // Start closed for Gate/AI profiles. GainNode defaults to 1, which meant
+    // a quiet microphone stayed open forever until the first above-threshold
+    // transition and leaked room noise from the moment a call started.
+    gateGain.gain.value = this.noiseSensitivity > 0 ? 0 : 1;
     gateGain.channelCount = channels;
     gateGain.channelCountMode = 'explicit';
     gateGain.channelInterpretation = 'speakers';
-    source.connect(gateGain);
+    gateAnalyser.connect(gateGain);
 
     const dest = this.audioCtx.createMediaStreamDestination();
     dest.channelCount = channels;
@@ -1262,7 +1271,11 @@ class VoiceManager {
         } else {
           const rnnoiseAvailable = await this._initRNNoise();
           if (this.noiseMode === 'suppress' && rnnoiseAvailable && this._rnnoiseWasmBytes) {
-            this.setNoiseSensitivity(0);
+            // Keep a gentle post-RNNoise expander active. RNNoise removes
+            // background noise but intentionally preserves transients; a
+            // short, conservative gate catches residual breaths/clicks in
+            // the pauses without chopping speech.
+            this.setNoiseSensitivity(18);
             this._enableRNNoise();
           } else if (this.noiseMode === 'off') {
             this.setNoiseSensitivity(0);
@@ -1270,7 +1283,9 @@ class VoiceManager {
             const saved = parseInt(localStorage.getItem('haven_ns_value') || '10', 10);
             this.setNoiseSensitivity(saved);
           } else if (this.noiseMode === 'suppress') {
-            this.setNoiseSensitivity(0);
+            // Keep the residual gate even if the WASM worklet is unavailable;
+            // this is safer than sending a permanently open raw mic.
+            this.setNoiseSensitivity(18);
             console.warn('[Voice] AI suppression unavailable');
           }
         }      }
@@ -3166,10 +3181,9 @@ class VoiceManager {
     }
 
     if (mode === 'suppress') {
-      // Disable noise gate, enable RNNoise
-      if (this.noiseSensitivity !== 0) {
-        this.setNoiseSensitivity(0);
-      }
+      // Enable RNNoise plus a conservative residual gate. The gate is
+      // deliberately much gentler than the user-facing Gate profile.
+      if (this.noiseSensitivity !== 18) this.setNoiseSensitivity(18);
       const context = this.audioCtx;
       if (!this._rnnoiseWasmBytes || this._rnnoiseContext !== context) {
         this._initRNNoise().then((available) => {
@@ -3301,10 +3315,11 @@ class VoiceManager {
         this._disableRNNoise();
       };
 
-      // Re-wire source -> RNNoise -> gate gain. Audio passes through until ready.
-      this._rnnoiseSource.disconnect(this._noiseGateGain);
+      // Re-wire source -> RNNoise -> analyser -> gate gain. Audio passes
+      // through the worklet unchanged until its WASM state is ready.
+      this._rnnoiseSource.disconnect(this._noiseGateAnalyser);
       this._rnnoiseSource.connect(node);
-      node.connect(this._noiseGateGain);
+      node.connect(this._noiseGateAnalyser);
       rewired = true;
       this._rnnoiseNode = node;
       this._rnnoiseReady = false;
@@ -3319,7 +3334,7 @@ class VoiceManager {
       this._rnnoiseOperational = false;
       try { node?.disconnect(); } catch {}
       if (rewired) {
-        try { this._rnnoiseSource?.connect(this._noiseGateGain); } catch {}
+        try { this._rnnoiseSource?.connect(this._noiseGateAnalyser); } catch {}
       }
       console.warn('[Voice] Failed to enable RNNoise:', err);
       return false;
@@ -3340,9 +3355,9 @@ class VoiceManager {
     try { this._rnnoiseSource?.disconnect(node); } catch {}
     try { node.disconnect(); } catch {}
 
-    // Re-wire source -> gate gain directly.
+    // Re-wire source -> analyser -> gate gain directly.
     if (this._rnnoiseSource && this._noiseGateGain) {
-      try { this._rnnoiseSource.connect(this._noiseGateGain); }
+      try { this._rnnoiseSource.connect(this._noiseGateAnalyser); }
       catch (err) { console.warn('[Voice] Failed to restore microphone pipeline:', err); }
     }
   }
@@ -3366,9 +3381,8 @@ class VoiceManager {
     const dataArray = new Uint8Array(analyser.frequencyBinCount);
     const ATTACK = 0.015;    // Gate opens fast (seconds, ~15ms)
     const RELEASE = 0.12;    // Gate closes gently (seconds, ~120ms)
-    const HOLD_MS = 250;     // Keep gate open 250ms after level drops below threshold
-    const OPEN_CONFIRM = 1;  // Require signal above threshold for this many extra polls
-                             // before opening (filters transient clicks/taps, ~20ms at 20ms poll)
+                             // Require signal above threshold for extra polls before
+                             // opening (filters transient clicks/taps).
     let gateOpen = false;
     let holdTimeout = null;
     let aboveCount = 0;      // consecutive polls above threshold
@@ -3399,7 +3413,8 @@ class VoiceManager {
         // Signal is above threshold — confirm it sustains before opening
         aboveCount++;
         if (holdTimeout) { clearTimeout(holdTimeout); holdTimeout = null; }
-        if (!gateOpen && aboveCount > OPEN_CONFIRM) {
+        const openConfirm = this.noiseMode === 'suppress' ? 2 : 1;
+        if (!gateOpen && aboveCount > openConfirm) {
           gain.gain.setTargetAtTime(1, this.audioCtx.currentTime, ATTACK);
           gateOpen = true;
         }
@@ -3407,12 +3422,13 @@ class VoiceManager {
         aboveCount = 0;
         if (gateOpen && !holdTimeout) {
           // Signal dropped below threshold — start hold timer before closing
+          const holdMs = this.noiseMode === 'suppress' ? 140 : 250;
           holdTimeout = setTimeout(() => {
             if (!this.audioCtx) return;
             gain.gain.setTargetAtTime(0, this.audioCtx.currentTime, RELEASE);
             gateOpen = false;
             holdTimeout = null;
-          }, HOLD_MS);
+          }, holdMs);
         }
       }
     }, 20);
