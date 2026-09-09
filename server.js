@@ -118,7 +118,7 @@ webpush.setVapidDetails(vapidEmail, process.env.VAPID_PUBLIC_KEY, process.env.VA
 
 const { initDatabase } = require('./src/database');
 const { router: authRoutes, authLimiter, verifyToken } = require('./src/auth');
-const { setupSocketHandlers, sanitizeText, sanitizeBorderTransform } = require('./src/socketHandlers');
+const { setupSocketHandlers, sanitizeText, sanitizeSoundName, sanitizeBorderTransform, toReplyContext } = require('./src/socketHandlers');
 const {
   cleanupAllBilibiliPlaybackSessions,
   createBilibiliHlsAssetHandler,
@@ -479,6 +479,47 @@ const DEFAULT_REFERRER_POLICY = 'same-origin';
 let currentReferrerPolicy = DEFAULT_REFERRER_POLICY;
 
 // ── Security Headers (helmet) ────────────────────────────
+// ── Do we serve TLS ourselves? ───────────────────────────
+// Resolved here because the security headers below depend on the answer. On
+// plain HTTP, telling a browser to upgrade every request to HTTPS breaks the
+// page rather than protecting it: the CSS and JS are re-requested over https on
+// a port with no TLS listener, so a remote visitor gets an unstyled page with
+// dead buttons. It looks perfect to whoever is testing on localhost, which
+// browsers treat as trustworthy and never upgrade. A Windows install whose SSL
+// step was skipped (no OpenSSL on PATH) lands in exactly that state without
+// anyone setting FORCE_HTTP.
+let sslCert = process.env.SSL_CERT_PATH;
+let sslKey  = process.env.SSL_KEY_PATH;
+
+const forceHttp = (process.env.FORCE_HTTP || '').toLowerCase() === 'true';
+
+// If not explicitly configured, use the certs in the data directory, and make
+// them ourselves when they are missing. The startup scripts used to need an
+// openssl.exe for this, which Windows does not ship (OpenSSH is not OpenSSL),
+// so those machines silently fell back to HTTP.
+if (!sslCert && !sslKey) {
+  const autoCert = path.join(CERTS_DIR, 'cert.pem');
+  const autoKey  = path.join(CERTS_DIR, 'key.pem');
+  if (!forceHttp && !(fs.existsSync(autoCert) && fs.existsSync(autoKey))) {
+    try {
+      const made = require('./src/selfsignedCert').ensureCerts(CERTS_DIR);
+      console.log(`🔒 Generated a self-signed certificate in ${CERTS_DIR} (${made.names.join(', ')})`);
+    } catch (err) {
+      console.warn('⚠️  Could not generate a self-signed certificate:', err.message);
+    }
+  }
+  if (fs.existsSync(autoCert) && fs.existsSync(autoKey)) {
+    sslCert = autoCert;
+    sslKey  = autoKey;
+  }
+} else {
+  // Resolve relative paths against the data directory
+  if (sslCert && !path.isAbsolute(sslCert)) sslCert = path.resolve(DATA_DIR, sslCert);
+  if (sslKey  && !path.isAbsolute(sslKey))  sslKey  = path.resolve(DATA_DIR, sslKey);
+}
+
+const useSSL = !!(sslCert && sslKey) && !forceHttp;
+
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {
@@ -495,12 +536,12 @@ app.use(helmet({
       baseUri: ["'self'"],
       formAction: ["'self'"],
       frameAncestors: ["'self'"],               // allow mobile app iframe, block third-party clickjacking
-      ...(process.env.FORCE_HTTP?.toLowerCase() === 'true' ? { upgradeInsecureRequests: null } : {}), // helmet 8.x auto-appends upgrade-insecure-requests; disable when FORCE_HTTP=true
+      ...(useSSL ? {} : { upgradeInsecureRequests: null }), // helmet 8.x auto-appends upgrade-insecure-requests; it breaks every page when Haven is not serving TLS
     }
   },
   crossOriginEmbedderPolicy: false,  // needed for WebRTC
   crossOriginOpenerPolicy: false,    // needed for WebRTC
-  hsts: (process.env.FORCE_HTTP || '').toLowerCase() === 'true' ? false : { maxAge: 31536000, includeSubDomains: false }, // force HTTPS for 1 year (disabled when FORCE_HTTP=true)
+  hsts: useSSL ? { maxAge: 31536000, includeSubDomains: false } : false, // force HTTPS for 1 year (only sent when we actually serve it)
   referrerPolicy: false, // set dynamically from the admin-configurable cache in the middleware below
 }));
 
@@ -665,10 +706,17 @@ app.use('/uploads', express.static(UPLOADS_DIR, {
 // ── Plugin & Theme file serving ─────────────────────────
 const PLUGINS_DIR = path.join(__dirname, 'plugins');
 const THEMES_DIR  = path.join(__dirname, 'themes');
+const {
+  compatibleThemeFiles,
+  createThemeFileMiddleware,
+  readThemeMetadataSnapshot,
+  validatedThemeDefault,
+} = require('./src/themeMetadata');
 if (!fs.existsSync(PLUGINS_DIR)) fs.mkdirSync(PLUGINS_DIR, { recursive: true });
 if (!fs.existsSync(THEMES_DIR))  fs.mkdirSync(THEMES_DIR, { recursive: true });
 
 app.use('/plugins', express.static(PLUGINS_DIR, { dotfiles: 'deny', maxAge: 0 }));
+app.use('/themes', createThemeFileMiddleware(THEMES_DIR));
 app.use('/themes',  express.static(THEMES_DIR,  { dotfiles: 'deny', maxAge: 0 }));
 
 // API: list available plugins (*.plugin.js files)
@@ -700,33 +748,21 @@ app.get('/api/plugins', (req, res) => {
 // API: list available themes (*.theme.css files)
 app.get('/api/themes', (req, res) => {
   try {
-    const files = fs.readdirSync(THEMES_DIR).filter(f => f.endsWith('.theme.css'));
     let published = [];
     try {
       const row = db.prepare("SELECT value FROM server_settings WHERE key = 'published_themes'").get();
-      if (row) published = JSON.parse(row.value);
-    } catch { /* DB not ready yet or parse error — default to empty */ }
-    const themes = files.map(f => {
-      const content = fs.readFileSync(path.join(THEMES_DIR, f), 'utf8');
-      const meta = {};
-      const metaMatch = content.match(/\/\*\*[\s\S]*?\*\//);
-      if (metaMatch) {
-        const block = metaMatch[0];
-        const nameM = block.match(/@name\s+(.+)/);
-        const descM = block.match(/@description\s+(.+)/);
-        const authM = block.match(/@author\s+(.+)/);
-        const verM  = block.match(/@version\s+(.+)/);
-        const iconM = block.match(/@icon\s+(.+)/);
-        if (nameM) meta.name = nameM[1].trim();
-        if (descM) meta.description = descM[1].trim();
-        if (authM) meta.author = authM[1].trim();
-        if (verM)  meta.version = verM[1].trim();
-        if (iconM) meta.icon = iconM[1].trim();
+      if (row) {
+        const stored = JSON.parse(row.value);
+        if (Array.isArray(stored)) published = stored;
       }
-      return { file: f, ...meta, published: published.includes(f) };
-    });
+    } catch { /* DB not ready yet or parse error — default to empty */ }
+    const themes = readThemeMetadataSnapshot(THEMES_DIR)
+      .map(theme => ({ ...theme, published: theme.compatible && published.includes(theme.file) }));
     res.json(themes);
-  } catch { res.json([]); }
+  } catch (err) {
+    console.error('Failed to list themes:', err.message);
+    res.status(500).json({ error: 'Failed to list themes' });
+  }
 });
 
 // ── File uploads (DB-configurable limit, avatar max 5 MB) ──
@@ -1692,6 +1728,7 @@ app.get('/api/public-config', (req, res) => {
     const { getDb } = require('./src/database');
     const db = getDb();
     const themeRow = db.prepare("SELECT value FROM server_settings WHERE key = 'default_theme'").get();
+    const publishedThemesRow = db.prepare("SELECT value FROM server_settings WHERE key = 'published_themes'").get();
     const localeRow = db.prepare("SELECT value FROM server_settings WHERE key = 'default_locale'").get();
     const titleRow = db.prepare("SELECT value FROM server_settings WHERE key = 'server_title'").get();
     const tosRow = db.prepare("SELECT value FROM server_settings WHERE key = 'custom_tos'").get();
@@ -1699,8 +1736,11 @@ app.get('/api/public-config', (req, res) => {
     const iconRow = db.prepare("SELECT value FROM server_settings WHERE key = 'server_icon'").get();
     const adminPwResetRow = db.prepare("SELECT value FROM server_settings WHERE key = 'admin_password_reset_enabled'").get();
     const oidcConfig = require('./src/oidc').getOidcConfig();
+    let storedPublishedThemes = [];
+    try { storedPublishedThemes = JSON.parse(publishedThemesRow?.value || '[]'); } catch {}
+    const publishedThemes = compatibleThemeFiles(THEMES_DIR, storedPublishedThemes);
     res.json({
-      default_theme: themeRow?.value || '',
+      default_theme: validatedThemeDefault(THEMES_DIR, themeRow?.value || '', publishedThemes),
       default_locale: localeRow?.value || '',
       server_title: titleRow?.value || '',
       custom_tos: tosRow?.value || '',
@@ -2038,9 +2078,8 @@ app.post('/api/upload-sound', uploadLimiter, uploadDiskGuard, (req, res) => {
     if (err) return res.status(400).json({ error: err.message });
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
-    let name = (req.body.name || '').trim().replace(/[^a-zA-Z0-9 _-]/g, '').replace(/\s+/g, ' ').trim();
+    let name = sanitizeSoundName(req.body.name || '');
     if (!name) name = path.basename(req.file.filename, path.extname(req.file.filename));
-    if (name.length > 30) name = name.slice(0, 30);
 
     const { getDb } = require('./src/database');
     try {
@@ -2099,8 +2138,8 @@ app.patch('/api/sounds/:name', (req, res) => {
   if (!verifyAdminFromDb(user) && !userHasPermission(user.id, 'manage_soundboard')) return res.status(403).json({ error: 'Requires admin or Manage Soundboard permission' });
   const oldName = req.params.name;
   if (BUILTIN_SOUNDS.some(s => s.name === oldName)) return res.status(403).json({ error: 'Cannot rename built-in sounds' });
-  let newName = (req.body.newName || '').trim().replace(/[^a-zA-Z0-9 _-]/g, '').replace(/\s+/g, ' ').trim();
-  if (!newName || newName.length > 30) return res.status(400).json({ error: 'Invalid new name' });
+  const newName = sanitizeSoundName(req.body.newName || '');
+  if (!newName) return res.status(400).json({ error: 'Invalid new name' });
   const { getDb } = require('./src/database');
   try {
     const row = getDb().prepare('SELECT id FROM custom_sounds WHERE name = ?').get(oldName);
@@ -2414,10 +2453,9 @@ app.delete('/api/stickers/:name', (req, res) => {
   } catch { res.status(500).json({ error: 'Failed to delete sticker' }); }
 });
 
-// ── GIF search proxy (Tenor v2 or GIPHY — keeps keys server-side) ──
-// Tenor is the preferred provider: GIPHY stopped issuing API keys to
-// new applications, so fresh installs can no longer configure it.
-// Existing GIPHY keys keep working unchanged.
+// ── GIF search proxy (GIPHY, with a legacy Tenor fallback) ──
+// GIPHY is the supported provider. Tenor is no longer offered for new
+// setup; an existing tenor_api_key still works if no GIPHY key is set.
 function getGifProvider() {
   // Check database first (set via admin panel), fall back to .env
   const readSetting = (key) => {
@@ -2428,10 +2466,10 @@ function getGifProvider() {
     } catch { /* DB not ready yet or no key stored */ }
     return '';
   };
-  const tenorKey = readSetting('tenor_api_key') || process.env.TENOR_API_KEY || '';
-  if (tenorKey) return { provider: 'tenor', key: tenorKey };
   const giphyKey = readSetting('giphy_api_key') || process.env.GIPHY_API_KEY || '';
   if (giphyKey) return { provider: 'giphy', key: giphyKey };
+  const tenorKey = readSetting('tenor_api_key') || process.env.TENOR_API_KEY || '';
+  if (tenorKey) return { provider: 'tenor', key: tenorKey };
   return null;
 }
 
@@ -3728,17 +3766,16 @@ app.post('/api/webhooks/:token', webhookLimiter, express.json({ limit: '64kb' })
   if (replyTo) {
     try {
       const r = db.prepare(`
-        SELECT m.id, m.content, m.user_id, m.is_webhook, m.webhook_username,
+        SELECT m.id, m.content, m.user_id, m.is_webhook, m.webhook_username, m.imported_from, m.persona_username,
                COALESCE(u.display_name, u.username) AS username
         FROM messages m LEFT JOIN users u ON m.user_id = u.id
         WHERE m.id = ?
       `).get(replyTo);
       if (r) {
-        replyContext = {
-          id: r.id,
+        replyContext = toReplyContext({
+          ...r,
           content: (r.content || '').slice(0, 200),
-          username: r.is_webhook ? `[BOT] ${r.webhook_username || 'Bot'}` : (r.username || 'Unknown')
-        };
+        });
       }
     } catch { /* best-effort */ }
   }
@@ -3792,6 +3829,111 @@ app.post('/api/webhooks/:token', webhookLimiter, express.json({ limit: '64kb' })
   }
 
   res.status(200).json({ success: true, message_id: result.lastInsertRowid });
+});
+
+// ── Listening presence webhook (any music player) ──
+// A reserved path, deliberately kept off the generic /api/webhooks/:token bot
+// route (different segment count, so the two never collide). A user generates
+// the token from Settings → Activity → Listening; any player's plugin or a
+// small script posts presence here (title/artist/album/position/duration +
+// optional cover bytes). See docs/listening-api.md for the full contract.
+//
+// Strict on purpose: this is an unauthenticated-by-header endpoint reachable by
+// a user-generated token, and the cover bytes are served back to other users.
+const MAX_LISTENING_DURATION = 24 * 60 * 60; // cap seconds so a phony duration can't linger
+const listeningLimiter = rateLimit({ windowMs: 60 * 1000, max: 60, message: { error: 'Rate limit exceeded' } });
+// The cover route is viewer-facing (every open profile card fetches it), so it
+// gets a looser cap than the single-poster webhook while still bounding abuse.
+const listeningCoverLimiter = rateLimit({ windowMs: 60 * 1000, max: 120, message: { error: 'Rate limit exceeded' } });
+const listeningUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 512 * 1024, files: 1, fields: 8, fieldSize: 4096 },
+}).single('cover');
+
+// sniffImageType returns the MIME type from a buffer's magic bytes, or null for
+// anything that isn't one of the accepted image formats.
+function sniffImageType(buf) {
+  if (!buf || buf.length < 12) return null;
+  if (buf[0] === 0xFF && buf[1] === 0xD8 && buf[2] === 0xFF) return 'image/jpeg';
+  if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47) return 'image/png';
+  if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46) return 'image/gif';
+  if (buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46 &&
+      buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50) return 'image/webp';
+  return null;
+}
+
+app.post('/api/webhooks/listening/:token', listeningLimiter, (req, res) => {
+  // Resolve the token before touching the body, so a post to an unknown or
+  // malformed token is refused without buffering up to 512KB of upload first.
+  const { token } = req.params;
+  if (!token || typeof token !== 'string' || !/^[0-9a-f]{64}$/i.test(token)) {
+    return res.status(400).json({ error: 'Invalid token' });
+  }
+  const row = require('./src/database').getDb()
+    .prepare('SELECT user_id FROM listening_tokens WHERE token = ?')
+    .get(token);
+  if (!row) return res.status(404).json({ error: 'Webhook not found' });
+
+  listeningUpload(req, res, (err) => {
+    if (err) return res.status(400).json({ error: 'Invalid upload' });
+
+    const engine = activityRef.engine;
+    if (!engine) return res.sendStatus(204);
+
+    const b = req.body || {};
+    const state = typeof b.state === 'string' ? b.state : '';
+
+    // Stop/expired clears the profile; no track fields needed.
+    if (state === 'stopped' || state === 'expired') {
+      engine.clearListeningPresence(row.user_id);
+      return res.sendStatus(204);
+    }
+
+    // Cover is optional, but when present the bytes must be a real image.
+    let cover = null, coverType = null;
+    if (req.file && req.file.buffer && req.file.buffer.length) {
+      coverType = sniffImageType(req.file.buffer);
+      if (!coverType) return res.status(400).json({ error: 'Unsupported cover format' });
+      cover = req.file.buffer;
+    }
+
+    const hasTitle = typeof b.title === 'string' && b.title.trim();
+    // An empty body is a reachability ping (or nothing playing); accept it.
+    if (!cover && !hasTitle) return res.sendStatus(204);
+    if (!hasTitle) return res.status(400).json({ error: 'Title required' });
+
+    // Every track has a duration by definition; reject anything without one and
+    // cap it so a track can't schedule a runaway expiry.
+    let duration = parseInt(b.duration, 10);
+    if (!duration || duration <= 0) return res.status(400).json({ error: 'Duration required' });
+    duration = Math.min(duration, MAX_LISTENING_DURATION);
+
+    engine.setListeningPresence(row.user_id, {
+      title: b.title,
+      artist: typeof b.artist === 'string' ? b.artist : '',
+      album: typeof b.album === 'string' ? b.album : '',
+      position: parseInt(b.position, 10) || 0,
+      duration,
+      cover,
+      coverType,
+      paused: state === 'paused',
+      heartbeat: state === 'heartbeat',
+      source: typeof b.source === 'string' ? b.source : '',
+    });
+    return res.sendStatus(204);
+  });
+});
+
+// Serves a user's current listening cover from memory. The opaque version must
+// match, so the URL only works for someone who received the current presence.
+app.get('/api/activity/listening-cover/:userId', listeningCoverLimiter, (req, res) => {
+  const engine = activityRef.engine;
+  const userId = parseInt(req.params.userId, 10);
+  const cover = engine && !isNaN(userId) ? engine.getListeningCover(userId) : null;
+  if (!cover || req.query.v !== cover.version) return res.sendStatus(404);
+  res.setHeader('Content-Type', cover.contentType);
+  res.setHeader('Cache-Control', 'private, max-age=300');
+  return res.end(cover.buf);
 });
 
 // Voice presence is scoped to the bot's assigned channel, channels its
@@ -5087,27 +5229,8 @@ app.post('/api/import/discord/execute', express.json({ limit: '1mb' }), (req, re
 
 // Create HTTP or HTTPS server
 let server;
-
-// Resolve SSL paths: if set in .env resolve relative to DATA_DIR, otherwise auto-detect
-let sslCert = process.env.SSL_CERT_PATH;
-let sslKey  = process.env.SSL_KEY_PATH;
-
-// If not explicitly configured, check if the startup scripts generated certs
-if (!sslCert && !sslKey) {
-  const autoCert = path.join(CERTS_DIR, 'cert.pem');
-  const autoKey  = path.join(CERTS_DIR, 'key.pem');
-  if (fs.existsSync(autoCert) && fs.existsSync(autoKey)) {
-    sslCert = autoCert;
-    sslKey  = autoKey;
-  }
-} else {
-  // Resolve relative paths against the data directory
-  if (sslCert && !path.isAbsolute(sslCert)) sslCert = path.resolve(DATA_DIR, sslCert);
-  if (sslKey  && !path.isAbsolute(sslKey))  sslKey  = path.resolve(DATA_DIR, sslKey);
-}
-
-const forceHttp = (process.env.FORCE_HTTP || '').toLowerCase() === 'true';
-const useSSL = sslCert && sslKey && !forceHttp;
+// sslCert, sslKey, forceHttp and useSSL are resolved up with the security
+// headers, which have to know whether this process serves TLS.
 
 if (forceHttp) {
   console.log('⚡ FORCE_HTTP=true — running plain HTTP (reverse proxy mode)');
@@ -5999,7 +6122,9 @@ server.on('error', (err) => {
       ? `port ${PORT} is already in use — is another Haven instance (or other app) running?`
       : err.code === 'EADDRNOTAVAIL'
         ? `this machine has no network interface with address ${HOST} — check HOST in your .env`
-        : `no permission to bind port ${PORT} (ports below 1024 need elevation)`;
+        : process.platform === 'win32'
+          ? `Windows refused port ${PORT}. Ports below 1024 need an elevated prompt; otherwise the port is usually inside a reserved range held by Hyper-V/WSL (see: netsh interface ipv4 show excludedportrange protocol=tcp). Pick another PORT in your .env, or free the range with: net stop winnat && net start winnat`
+          : `no permission to bind port ${PORT} (ports below 1024 need elevation)`;
     console.error(`\n❌ Haven could not start: ${why}`);
     console.error(`   Stop the other process or change PORT in your .env, then start Haven again.`);
     logCrash('Fatal listen error (exiting)', err);
@@ -6009,6 +6134,17 @@ server.on('error', (err) => {
 });
 
 server.listen(PORT, HOST, () => {
+  // Print the machine's LAN address rather than a YOUR_IP placeholder, which
+  // more than one self-hoster has read as a broken config. (#5572)
+  const lanIps = [];
+  try {
+    for (const ifaces of Object.values(require('os').networkInterfaces())) {
+      for (const i of ifaces || []) {
+        if (i.family === 'IPv4' && !i.internal) lanIps.push(i.address);
+      }
+    }
+  } catch { /* leave the placeholder */ }
+  const networkLine = `${protocol}://${lanIps[0] || 'YOUR_IP'}:${PORT}`;
   console.log(`
 â•”â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•╗
 ║       ðŸ   HAVEN is running               ║
@@ -6019,6 +6155,9 @@ server.listen(PORT, HOST, () => {
 ║  Admin:   ${(process.env.ADMIN_USERNAME || 'admin').padEnd(29)}║
 â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
   `);
+  if (lanIps.length > 1) {
+    console.log(`  Also reachable on: ${lanIps.slice(1).map(ip => `${protocol}://${ip}:${PORT}`).join(', ')}`);
+  }
   // Tunnel is now started manually via the admin panel button (no auto-start)
   // Dynamic DNS auto-updater (kicks in only if DDNS_PROVIDER is set in .env)
   try { startDdns(); } catch (err) { console.warn('[ddns] failed to start:', err && err.message); }

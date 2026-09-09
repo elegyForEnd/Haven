@@ -4,21 +4,22 @@
 //           notifications, volume sliders, status bar
 // ═══════════════════════════════════════════════════════════
 
-import SocketMethods   from './modules/app-socket.js?v=3.51.0';
-import UIBindMethods   from './modules/app-ui.js?v=3.51.0';
-import MediaMethods    from './modules/app-media.js?v=3.51.0';
-import ContextMethods  from './modules/app-context.js?v=3.44.4';
-import ChannelMethods  from './modules/app-channels.js?v=3.44.3';
-import MessageMethods  from './modules/app-messages.js?v=3.51.0';
-import UserMethods     from './modules/app-users.js?v=3.25.4';
-import VoiceMethods    from './modules/app-voice.js?v=3.37.12';
+import SocketMethods   from './modules/app-socket.js?v=4.6.1';
+import UIBindMethods   from './modules/app-ui.js?v=4.6.1';
+import MediaMethods    from './modules/app-media.js?v=4.6.1';
+import ContextMethods  from './modules/app-context.js?v=4.6.1';
+import ChannelMethods  from './modules/app-channels.js?v=4.6.1';
+import MessageMethods  from './modules/app-messages.js?v=4.6.1';
+import UserMethods     from './modules/app-users.js?v=4.6.1';
+import VoiceMethods    from './modules/app-voice.js?v=4.6.1';
 import MusicPlayerMethods from './modules/app-music-player.js?v=8';
-import UtilityMethods  from './modules/app-utilities.js?v=3.34.0';
-import AdminMethods    from './modules/app-admin.js?v=3.51.0';
-import PlatformMethods from './modules/app-platform.js?v=3.16.12';
+import UtilityMethods  from './modules/app-utilities.js?v=4.6.1';
+import AdminMethods    from './modules/app-admin.js?v=4.6.1';
+import PlatformMethods from './modules/app-platform.js?v=4.6.1';
 import SearchMethods   from './modules/app-search.js?v=3.49.0';
 import FerryMethods    from './modules/app-ferry.js?v=3.51.4';
 import DrawingMethods  from './modules/app-drawing.js?v=3';
+import ForumMethods    from './modules/app-forum.js?v=4.5.0';
 
 class HavenApp {
   constructor() {
@@ -70,30 +71,31 @@ class HavenApp {
 
     // Slash command definitions for autocomplete
     this.slashCommands = [
-      { cmd: 'shrug',      args: '[text]',   desc: 'Appends ¯\\_(ツ)_/¯' },
-      { cmd: 'tableflip',  args: '[text]',   desc: 'Flip a table (╯°□°)╯︵ ┻━┻' },
-      { cmd: 'unflip',     args: '[text]',   desc: 'Put the table back ┬─┬ ノ( ゜-゜ノ)' },
-      { cmd: 'lenny',      args: '[text]',   desc: 'Lenny face ( ͡° ͜ʖ ͡°)' },
-      { cmd: 'disapprove', args: '[text]',   desc: 'ಠ_ಠ look of disapproval' },
-      { cmd: 'me',         args: '<action>', desc: 'Italic action message' },
-      { cmd: 'spoiler',    args: '<text>',   desc: 'Hidden spoiler text' },
-      { cmd: 'tts',        args: '<text>',   desc: 'Text-to-speech message' },
-      { cmd: 'tts:stop',   args: '',         desc: 'Stop all TTS playback' },
-      { cmd: 'break',      args: '<message>', desc: 'Force a new message group (no compacting with previous)' },
-      { cmd: 'bbs',        args: '',         desc: 'Announce you\'ll be back soon' },
-      { cmd: 'brb',        args: '',         desc: 'Announce you\'ll be right back' },
-      { cmd: 'afk',        args: '',         desc: 'Away from keyboard' },
+      { cmd: 'shrug',      args: t('commands.args.optional_text'),   desc: t('commands.description.shrug') },
+      { cmd: 'tableflip',  args: t('commands.args.optional_text'),   desc: t('commands.description.tableflip') },
+      { cmd: 'unflip',     args: t('commands.args.optional_text'),   desc: t('commands.description.unflip') },
+      { cmd: 'lenny',      args: t('commands.args.optional_text'),   desc: t('commands.description.lenny') },
+      { cmd: 'disapprove', args: t('commands.args.optional_text'),   desc: t('commands.description.disapprove') },
+      { cmd: 'me',         args: t('commands.args.action'),          desc: t('commands.description.me') },
+      { cmd: 'spoiler',    args: t('commands.args.text'),            desc: t('commands.description.spoiler') },
+      { cmd: 'tts',        args: t('commands.args.text'),            desc: t('commands.description.tts') },
+      { cmd: 'tts:stop',   args: '',                                 desc: t('commands.description.tts_stop') },
+      { cmd: 'break',      args: t('commands.args.message'),         desc: t('commands.description.break') },
+      { cmd: 'bbs',        args: '',                                 desc: t('commands.description.bbs') },
+      { cmd: 'brb',        args: '',                                 desc: t('commands.description.brb') },
+      { cmd: 'afk',        args: '',                                 desc: t('commands.description.afk') },
       { cmd: 'boobs',      args: '',         desc: '( . Y . )' },
       { cmd: 'butt',       args: '',         desc: '( . )( . )' },
-      { cmd: 'nick',       args: '<name>',   desc: 'Change your username' },
-      { cmd: 'clear',      args: '',         desc: 'Clear your chat view' },
-      { cmd: 'flip',       args: '',         desc: 'Flip a coin: heads or tails' },
-      { cmd: 'roll',       args: '[NdN]',    desc: 'Roll dice (e.g. /roll 2d6)' },
-      { cmd: 'hug',        args: '<@user>',  desc: 'Send a hug to someone' },
-      { cmd: 'wave',       args: '[text]',   desc: 'Wave at the chat 👋' },
-      { cmd: 'play',       args: '<name or url>',    desc: 'Search & play music (e.g. /play Cut Your Teeth Kygo)' },
-      { cmd: 'gif',        args: '<query>',  desc: 'Search & send a GIF inline (e.g. /gif thumbs up)' },
-      { cmd: 'poll',       args: '[question]',       desc: 'Open the poll creator' },
+      { cmd: 'nick',       args: t('commands.args.name'),              desc: t('commands.description.nick') },
+      { cmd: 'clear',      args: '',                                   desc: t('commands.description.clear') },
+      { cmd: 'flip',       args: '',                                   desc: t('commands.description.flip') },
+      { cmd: 'roll',       args: '[NdN]',                              desc: t('commands.description.roll') },
+      { cmd: 'hug',        args: '<@user>',                            desc: t('commands.description.hug') },
+      { cmd: 'wave',       args: t('commands.args.optional_text'),     desc: t('commands.description.wave') },
+      { cmd: 'play',       args: t('commands.args.name_or_url'),       desc: t('commands.description.play') },
+      { cmd: 'gif',        args: t('commands.args.query'),             desc: t('commands.description.gif') },
+      { cmd: 'poll',       args: t('commands.args.optional_question'), desc: t('commands.description.poll') },
+      { cmd: 'time',       args: t('commands.args.time'),              desc: t('commands.description.time') },
     ];
 
     // Load bot-registered slash commands for autocomplete
@@ -143,6 +145,18 @@ class HavenApp {
     this._canModerate = () => this.user.isAdmin || (this.user.effectiveLevel || 0) >= 25;
     this._isServerMod = () => this.user.isAdmin || (this.user.effectiveLevel || 0) >= 50;
     this._hasPerm = (p) => this.user.isAdmin || (this.user.permissions || []).includes('*') || (this.user.permissions || []).includes(p);
+    // Whether Settings should offer the Admin tab at all. One list, shared by
+    // the tab switch, the admin panel container and the settings nav, so a
+    // permission added in one place cannot be missed in the others. (#5470:
+    // invite_users was in the nav but not in the tab gate, so holders saw an
+    // Admin tab that did nothing when clicked.)
+    // Mirrors the access table in _syncSettingsNav (app-admin.js): anyone who
+    // can see at least one admin section must also be allowed onto the tab.
+    this._hasAnyAdminSettingsAccess = () => this.user.isAdmin || [
+      'manage_emojis', 'manage_stickers', 'manage_soundboard', 'manage_roles',
+      'manage_server', 'manage_webhooks', 'view_audit_log', 'invite_users',
+      'ban_user', 'kick_user', 'view_all_members'
+    ].some(p => this._hasPerm(p));
     // Global-only variant: excludes permissions granted via a channel-scoped
     // role assignment, for gating UI that always performs a server-wide
     // action (e.g. the sidebar "Create Channel" section always creates a
@@ -321,12 +335,14 @@ class HavenApp {
     this.modMode = typeof ModMode === 'function' ? new ModMode() : null;
     this.modMode?.init();
     this._setupDensityPicker();
+    this._setupChannelScrollPicker();
     this._setupToggleStylePicker();
     this._setupAnimatePfpPicker();
     this._setupAnimateChatPicker();
     this._setupZoomSlider();
     this._setupEmojiSizePicker();
     this._setupImageModePicker();
+    this._setupLazyMedia();
     this._setupEmbedSizePicker();
     this._setupRoleDisplayPicker();
     this._setupToolbarIconPicker();
@@ -399,7 +415,7 @@ class HavenApp {
           // Bot commands can have arbitrary args; a hardcoded "<...>" makes
           // subcommand entries look broken and encourages base-command clicks.
           args: '',
-          desc: `${bc.description || 'Bot command'}  [${bc.bot_name || 'Bot'}]`
+          desc: `${bc.description || t('commands.bot_command')}  [${bc.bot_name || t('commands.bot')}]`
         });
       }
     } catch { /* non-critical */ }
@@ -424,6 +440,7 @@ Object.assign(HavenApp.prototype,
   DrawingMethods,
   SearchMethods,
   FerryMethods,
+  ForumMethods,
 );
 
 // ── Boot ───────────────────────────────────────────────

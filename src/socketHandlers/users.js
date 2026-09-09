@@ -556,13 +556,26 @@ module.exports = function register(socket, ctx) {
     const value = typeof data.value === 'string' ? data.value.trim() : '';
 
     const allowedKeys = [
-      'theme', 'hide_score_badge',
+      'theme', 'hide_score_badge', 'hide_nsfw',
+      // Visual effects picker (theme.js). Same reason as theme: a desktop app
+      // that lands on a different storage origin (http vs https autodetect)
+      // loses localStorage, and only server-side preferences come back.
+      'effects',
       // Rich presence. share_activity is the master switch and defaults to
       // OFF (absent row = not sharing); the two sub-toggles default ON but
       // only matter once the master is enabled.
       'share_activity', 'share_game_activity', 'share_music_activity',
+      // "Don't show again" for the desktop / mobile promo modals and the
+      // recovery-codes notice. Persisted per-account (not localStorage) so
+      // hardened browsers that wipe local storage every session still honour a
+      // prior dismissal instead of re-showing the modal on every login.
+      'promo_seen_desktop', 'promo_seen_android', 'recovery_notice_seen',
+      // The top-bar Android banner, closed once (#5594).
+      'android_banner_seen',
     ];
-    if (!allowedKeys.includes(key) || !value || value.length > 50) return;
+    // 'effects' is a JSON array of effect ids, longer than the other values.
+    const maxLen = key === 'effects' ? 400 : 50;
+    if (!allowedKeys.includes(key) || !value || value.length > maxLen) return;
 
     db.prepare(
       'INSERT OR REPLACE INTO user_preferences (user_id, key, value) VALUES (?, ?, ?)'
@@ -578,6 +591,30 @@ module.exports = function register(socket, ctx) {
     const ACTIVITY_KEYS = ['share_activity', 'share_game_activity', 'share_music_activity'];
     if ((key === 'hide_score_badge' || ACTIVITY_KEYS.includes(key)) && socket.currentChannel) {
       emitOnlineUsers(socket.currentChannel);
+    }
+  });
+
+  // ── Recovery-codes notice gating ────────────────────────
+  // The client asks whether to surface the one-time "generate recovery codes"
+  // notice; the decision is made entirely server-side. Skip it when the account
+  // already has at least one usable recovery code (nothing to nudge), or when
+  // the user ticked "never show again" (persisted in user_preferences, exactly
+  // like the promo-modal dismissals).
+  socket.on('get-recovery-notice-state', () => {
+    try {
+      const codes = db.prepare(
+        'SELECT COUNT(*) AS c FROM account_recovery_codes WHERE user_id = ? AND used = 0'
+      ).get(socket.user.id);
+      const pref = db.prepare(
+        "SELECT value FROM user_preferences WHERE user_id = ? AND key = 'recovery_notice_seen'"
+      ).get(socket.user.id);
+      const hasCodes = (codes?.c || 0) > 0;
+      const dismissed = pref?.value === 'true';
+      socket.emit('recovery-notice-state', { show: !hasCodes && !dismissed });
+    } catch (err) {
+      console.error('recovery-notice-state error:', err);
+      // Fail closed: never nag if we couldn't determine the state.
+      socket.emit('recovery-notice-state', { show: false });
     }
   });
 
@@ -759,6 +796,27 @@ module.exports = function register(socket, ctx) {
     });
     socket.emit('toast', { message: `Unlinked ${provider}`, type: 'success' });
     if (socket.currentChannel) emitOnlineUsers(socket.currentChannel);
+  });
+
+  // ── Listening presence webhook (any music player) ──
+  // A per-user webhook token a player's plugin or script posts presence to.
+  // Enabling generates and stores a token; disabling removes it. Only the token
+  // travels to the client; it builds the full URL from its own origin, so the
+  // server never needs to know its public address.
+  socket.on('get-listening', () => {
+    if (!activity) return;
+    socket.emit('listening-state', { token: activity.getListeningToken(socket.user.id) });
+  });
+
+  socket.on('set-listening', (data) => {
+    if (!activity) return;
+    let token = null;
+    if (data && data.enabled) {
+      token = activity.enableListening(socket.user.id);
+    } else {
+      activity.disableListening(socket.user.id);
+    }
+    socket.emit('listening-state', { token });
   });
 
   // ── High Scores ─────────────────────────────────────────

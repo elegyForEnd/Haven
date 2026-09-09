@@ -9,6 +9,7 @@ class NotificationManager {
     this.audioCtx = null;
     this.enabled = this._loadPref('haven_notif_enabled', false);
     this.mentionsEnabled = this._loadPref('haven_notif_mentions_enabled', true);
+    this.roleMentionsEnabled = this._loadPref('haven_notif_role_mentions_enabled', true); // @Role pings (#5579)
     this.repliesEnabled = this._loadPref('haven_notif_replies_enabled', true);
     this.dmEnabled = this._loadPref('haven_notif_dm_enabled', true);
     this.voiceActionCuesEnabled = this._loadPref('haven_notif_voice_action_cues_enabled', true);
@@ -152,8 +153,9 @@ class NotificationManager {
     else if (opts && opts.isReply && this.repliesEnabled) { /* allowed */ }
     else if (opts && opts.isDm && this.dmEnabled) { /* allowed */ }
     // Regular message & announcement sounds are gated by the master toggle;
-    // everything else (sent, join, leave) always plays
-    else if ((event === 'message' || event === 'announcement') && !this.enabled) return;
+    // everything else (sent, join, leave) always plays. A settings preview
+    // skips the gate: picking a sound should let you hear it either way.
+    else if ((event === 'message' || event === 'announcement') && !this.enabled && !(opts && opts.preview)) return;
 
     const sound = this.sounds[event];
     if (!sound || sound === 'none') return;

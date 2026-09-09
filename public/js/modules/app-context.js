@@ -2,7 +2,7 @@ export default {
 
 // ── User Context Menu (right-click → options) ──
 
-_showUserContextMenu(e, targetUserId) {
+_showUserContextMenu(e, targetUserId, targetNameOverride) {
   this._hideUserContextMenu();
   this._closeProfilePopup();
 
@@ -10,9 +10,10 @@ _showUserContextMenu(e, targetUserId) {
   menu.id = 'user-context-menu';
   menu.className = 'user-context-menu';
 
-  // Find target username from online users
+  // Find target username from online users; fall back to a caller-supplied name
+  // (e.g. the author name on a chat message, whose sender may be offline).
   const targetUser = (this._lastOnlineUsers || []).find(u => u.id === targetUserId);
-  const targetName = targetUser ? targetUser.username : 'User';
+  const targetName = targetUser ? targetUser.username : (targetNameOverride || 'User');
 
   // Header with username
   const header = document.createElement('div');
@@ -20,26 +21,36 @@ _showUserContextMenu(e, targetUserId) {
   header.textContent = targetName;
   menu.appendChild(header);
 
-  // 1) View Profile
-  const profileBtn = document.createElement('button');
-  profileBtn.innerHTML = `👤 ${t('context.view_profile')}`;
-  profileBtn.addEventListener('click', () => {
+  // Helper: append a menu button. `danger` paints it red (destructive action).
+  const addBtn = (label, onClick, danger = false) => {
+    const btn = document.createElement('button');
+    btn.innerHTML = label;
+    if (danger) btn.classList.add('user-ctx-danger');
+    btn.addEventListener('click', onClick);
+    menu.appendChild(btn);
+  };
+  const addDivider = () => {
+    const div = document.createElement('div');
+    div.className = 'user-ctx-divider';
+    menu.appendChild(div);
+  };
+
+  // ── Section 1: profile / social (always available) ──
+
+  // View Profile
+  addBtn(`👤 ${t('context.view_profile')}`, () => {
     this._hideUserContextMenu();
     this._isHoverPopup = false;
     this._profilePopupAnchor = e.target.closest('.user-item') || e.target;
     this.socket.emit('get-user-profile', { userId: targetUserId });
   });
-  menu.appendChild(profileBtn);
 
-  // 2) Direct Message
-  const dmBtn = document.createElement('button');
-  dmBtn.innerHTML = `💬 ${t('users.direct_message')}`;
-  dmBtn.addEventListener('click', () => {
+  // Direct Message
+  addBtn(`💬 ${t('users.direct_message')}`, () => {
     this._hideUserContextMenu();
     this.socket.emit('start-dm', { targetUserId });
     this._showToast(t('users.opening_dm', { name: this._escapeHtml(targetName) }), 'info');
   });
-  menu.appendChild(dmBtn);
 
   // Remote assistance is channel-scoped. The server performs the final
   // capability and membership checks so stale online lists cannot grant access.
@@ -113,14 +124,74 @@ _showUserContextMenu(e, targetUserId) {
     menu.appendChild(inviteItem);
   }
 
-  // 4) Set Nickname
-  const nickBtn = document.createElement('button');
-  nickBtn.innerHTML = `🏷️ ${t('users.set_nickname')}`;
-  nickBtn.addEventListener('click', () => {
+  // Set Nickname
+  addBtn(`🏷️ ${t('users.set_nickname')}`, () => {
     this._hideUserContextMenu();
     this._showNicknameDialog(targetUserId, targetName, targetName);
   });
-  menu.appendChild(nickBtn);
+
+  // ── Moderation sections: same gating the old gear menu used ──
+  const isAdmin = this.user.isAdmin;
+  const canMod = isAdmin || this._canModerate();
+  const canPromote = this._hasPerm('promote_user');
+  // The server has always accepted ban_user; a moderator who holds it should
+  // see Ban even when below the level-25 _canModerate() threshold. (v3.43.0)
+  const canBan = isAdmin || this._hasPerm('ban_user');
+
+  // "Add to Channel" mirrors the invite filter but also skips sub-channels and
+  // never targets yourself. Its own picker validates membership server-side.
+  // It used to live inside the mod-only gear menu, so it stays gated on the same
+  // mod-ish powers — regular members use "Invite to Channel" above instead.
+  const addToChannelList = (this.channels || []).filter(ch =>
+    !ch.is_dm && ch.name && !ch.parent_channel_id &&
+    ((!ch.is_private && ch.code_visibility !== 'private') || isAdmin || ch.canInvitePrivate)
+  );
+  const canAddToChannel = (canMod || canPromote || canBan) && addToChannelList.length > 0 && targetUserId !== this.user?.id;
+
+  // ── Section 2: role / channel management ──
+  if (canPromote || canAddToChannel) {
+    addDivider();
+    if (canPromote) addBtn(`👑 ${t('users.gear_menu.role_management')}`, () => {
+      this._hideUserContextMenu();
+      this._openRoleAssignCenter(targetUserId);
+    });
+    if (canAddToChannel) addBtn(`➕ ${t('users.gear_menu.add_to_channel')}`, () => {
+      this._hideUserContextMenu();
+      this._openGearMenuChannelPicker(targetUserId, targetName, addToChannelList);
+    });
+  }
+
+  // ── Section 3: moderation (kick / mute / ban / delete / transfer) ──
+  // Admin password reset stays opt-in: hidden unless the server setting is on
+  // and the target isn't yourself (#5300).
+  const canResetPassword = isAdmin && this.serverSettings?.admin_password_reset_enabled === 'true' && targetUserId !== this.user?.id;
+  if (canMod || canBan || isAdmin) {
+    addDivider();
+    if (canMod) addBtn(`👢 ${t('users.gear_menu.kick')}`, () => {
+      this._hideUserContextMenu();
+      this._showAdminActionModal('kick', targetUserId, targetName);
+    });
+    if (canMod) addBtn(`🔇 ${t('users.gear_menu.mute')}`, () => {
+      this._hideUserContextMenu();
+      this._showAdminActionModal('mute', targetUserId, targetName);
+    });
+    if (canBan) addBtn(`⛔ ${t('users.gear_menu.ban')}`, () => {
+      this._hideUserContextMenu();
+      this._showAdminActionModal('ban', targetUserId, targetName);
+    }, true);
+    if (isAdmin) addBtn(`🗑️ ${t('users.gear_menu.delete_user')}`, () => {
+      this._hideUserContextMenu();
+      this._showAdminActionModal('delete-user', targetUserId, targetName);
+    }, true);
+    if (canResetPassword) addBtn(`🔑 ${t('users.gear_menu.reset_password')}`, () => {
+      this._hideUserContextMenu();
+      this._confirmAdminResetPassword(targetUserId, targetName);
+    }, true);
+    if (isAdmin) addBtn(`🔑 ${t('users.gear_menu.transfer_admin')}`, () => {
+      this._hideUserContextMenu();
+      this._confirmTransferAdmin(targetUserId, targetName);
+    }, true);
+  }
 
   menu.style.left = e.clientX + 'px';
   menu.style.top = e.clientY + 'px';
@@ -275,6 +346,8 @@ _setupNotifications() {
     });
   }
   if (mentionsToggle) { mentionsToggle.checked = this.notifications.mentionsEnabled; mentionsToggle.addEventListener('change', () => { this.notifications.mentionsEnabled = mentionsToggle.checked; this.notifications._savePref('haven_notif_mentions_enabled', mentionsToggle.checked); }); }
+  const roleMentionsToggle = document.getElementById('notif-role-mentions-enabled');
+  if (roleMentionsToggle) { roleMentionsToggle.checked = this.notifications.roleMentionsEnabled !== false; roleMentionsToggle.addEventListener('change', () => { this.notifications.roleMentionsEnabled = roleMentionsToggle.checked; this.notifications._savePref('haven_notif_role_mentions_enabled', roleMentionsToggle.checked); }); }
   if (repliesToggle) { repliesToggle.checked = this.notifications.repliesEnabled; repliesToggle.addEventListener('change', () => { this.notifications.repliesEnabled = repliesToggle.checked; this.notifications._savePref('haven_notif_replies_enabled', repliesToggle.checked); }); }
   if (dmToggle) { dmToggle.checked = this.notifications.dmEnabled; dmToggle.addEventListener('change', () => { this.notifications.dmEnabled = dmToggle.checked; this.notifications._savePref('haven_notif_dm_enabled', dmToggle.checked); }); }
 
@@ -302,7 +375,8 @@ _setupNotifications() {
 
   msgSound.addEventListener('change', () => {
     this.notifications.setSound('message', msgSound.value);
-    this.notifications.play('message'); // Preview the selected sound
+    // Preview even while the Notifications toggle is off, which is the default.
+    this.notifications.play('message', { preview: true });
   });
 
   if (sentSound) {
@@ -406,6 +480,16 @@ _setupNotifications() {
     });
   }
 
+  // Profile card on hover (on by default). The hover handler reads the flag
+  // live, so no reload is needed.
+  const hoverCardToggle = document.getElementById('hover-profile-card');
+  if (hoverCardToggle) {
+    hoverCardToggle.checked = localStorage.getItem('haven_hover_profile_card') !== 'false';
+    hoverCardToggle.addEventListener('change', () => {
+      localStorage.setItem('haven_hover_profile_card', String(hoverCardToggle.checked));
+    });
+  }
+
   // DM single-click default — open fullscreen DM instead of PiP. (#5295)
   const dmFsToggle = document.getElementById('dm-fullscreen-default');
   if (dmFsToggle) {
@@ -475,6 +559,12 @@ _setupNotifications() {
       if (this._lastOnlineUsers) this._renderOnlineUsers(this._lastOnlineUsers);
     });
   }
+  const hideNsfwToggle = document.getElementById('hide-nsfw-channels');
+  if (hideNsfwToggle) {
+    hideNsfwToggle.checked = localStorage.getItem('haven_hide_nsfw') === 'true';
+    hideNsfwToggle.addEventListener('change', () => this._setHideNsfw?.(hideNsfwToggle.checked));
+  }
+  this._setupSettingsSearch?.();
   const hideOwnScoreToggle = document.getElementById('hide-own-score');
   if (hideOwnScoreToggle) {
     // Initial value comes from the server-synced preferences cache, falling
@@ -535,6 +625,25 @@ _setupNotifications() {
   // credentials for, so we don't offer a button that can only fail.
   this.socket?.emit('get-connections');
 
+  // ── Listening presence (any music player) ──
+  // A single on/off switch: on generates a webhook token a player posts to,
+  // off removes it. The read-only URL box is only shown once we have a token.
+  const listeningToggle = document.getElementById('listening-enabled');
+  const listeningUrlRow = document.getElementById('listening-url-row');
+  const listeningUrlInput = document.getElementById('listening-url');
+  // Selecting the whole URL on focus makes copy-paste one gesture.
+  listeningUrlInput?.addEventListener('focus', () => listeningUrlInput.select());
+  this._applyListeningState = (token) => {
+    const on = !!token;
+    if (listeningToggle) listeningToggle.checked = on;
+    if (listeningUrlInput) listeningUrlInput.value = on ? `${location.origin}/api/webhooks/listening/${token}` : '';
+    if (listeningUrlRow) listeningUrlRow.hidden = !on;
+  };
+  listeningToggle?.addEventListener('change', () => {
+    this.socket?.emit('set-listening', { enabled: listeningToggle.checked });
+  });
+  this.socket?.emit('get-listening');
+
   // Coming back from a Steam/Spotify redirect? Report the outcome once.
   this._handleConnectRedirect?.();
 
@@ -561,12 +670,12 @@ _setupNotifications() {
         statusUrlEl.textContent = origin;
         statusUrlEl.classList.remove('url-hidden');
         statusUrlToggle.textContent = '👁';
-        statusUrlToggle.title = 'Hide server address';
+        statusUrlToggle.title = t('context.hide_server_address');
       } else {
         statusUrlEl.textContent = '••••••••';
         statusUrlEl.classList.add('url-hidden');
         statusUrlToggle.textContent = '👁\u200d🗨';
-        statusUrlToggle.title = 'Show server address';
+        statusUrlToggle.title = t('context.show_server_address');
       }
     };
     applyUrlVis();
@@ -601,7 +710,7 @@ _setupNotifications() {
     // so fall back to a hidden-textarea execCommand('copy') like the other
     // copy buttons do. (#182)
     const _flashCopied = () => {
-      statusUrlEl.textContent = 'Copied!';
+      statusUrlEl.textContent = t('common.copied');
       setTimeout(() => { statusUrlEl.textContent = urlVisible ? origin : '••••••••'; }, 1500);
     };
     const _fallbackCopy = (text) => {
@@ -659,7 +768,7 @@ async _setupPushNotifications() {
   if (!window.isSecureContext) {
     if (toggle) toggle.disabled = true;
     if (statusEl) statusEl.textContent = t('context.push_requires_https');
-    this._pushErrorReason = 'Push notifications require a secure (HTTPS) connection. Check the Haven setup guide for SSL configuration.';
+    this._pushErrorReason = t('context.push_error.secure');
     if (!localStorage.getItem('haven_push_error_dismissed')) this._showPushError(this._pushErrorReason);
     return;
   }
@@ -667,16 +776,17 @@ async _setupPushNotifications() {
   // Check browser support
   if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
     if (toggle) toggle.disabled = true;
-    let reason = 'Your browser does not support push notifications.';
+    let reason = t('context.push_error.unsupported');
+    let helpType = '';
     if (isIOS && !isStandalone) {
-      reason = 'On iOS, push notifications only work when Haven is installed as an app. ' +
-        'Tap the Share button → "Add to Home Screen", then open Haven from your home screen.';
+      reason = t('context.push_error.ios_install');
+      helpType = 'ios_install';
     } else if (isIOS) {
-      reason = 'Push notifications are not supported on this iOS browser version. Update to iOS 16.4 or later.';
+      reason = t('context.push_error.ios_version');
     }
     if (statusEl) statusEl.textContent = t('context.push_not_supported');
     this._pushErrorReason = reason;
-    if (!localStorage.getItem('haven_push_error_dismissed')) this._showPushError(reason);
+    if (!localStorage.getItem('haven_push_error_dismissed')) this._showPushError(reason, helpType);
     return;
   }
 
@@ -686,27 +796,20 @@ async _setupPushNotifications() {
   } catch (err) {
     console.error('SW registration failed:', err);
     if (toggle) toggle.disabled = true;
-    let reason = `Service worker registration failed: ${err.message}`;
+    let reason = t('context.push_error.service_worker', { error: err.message });
+    let helpType = '';
     const host = location.hostname;
     const isSelfSigned = location.protocol === 'https:' && host !== 'localhost' && host !== '127.0.0.1' && !host.endsWith('.trycloudflare.com');
     if (err.name === 'SecurityError' || (err.message && err.message.includes('SSL')) || isSelfSigned) {
-      reason = 'Push notifications require a trusted SSL certificate.\n\n' +
-        'Self-signed certificates (used by default) do not support push. To fix this:\n' +
-        '• Use a Cloudflare Tunnel (Settings → Admin → Tunnel) which provides a trusted cert automatically\n' +
-        '• Or access Haven via localhost (push works on localhost even with self-signed certs)\n' +
-        '• Or install a real SSL certificate (e.g. from Let\'s Encrypt)';
+      reason = t('context.push_error.ssl_required');
     }
     if (isBrave) {
-      reason = 'Brave blocks push notifications by default.\n\n' +
-        'To fix this:\n' +
-        '1. Open brave://settings/privacy in your address bar\n' +
-        '2. Enable "Use Google Services for Push Messaging"\n' +
-        '3. Restart Brave and reload Haven\n\n' +
-        'If that doesn\'t work, try Chrome or Edge instead.';
+      reason = t('context.push_error.brave_setup');
+      helpType = 'brave';
     }
     if (statusEl) statusEl.textContent = isBrave ? t('context.push_blocked_brave') : t('context.push_registration_failed');
     this._pushErrorReason = reason;
-    if (!localStorage.getItem('haven_push_error_dismissed')) this._showPushError(reason);
+    if (!localStorage.getItem('haven_push_error_dismissed')) this._showPushError(reason, helpType);
     return;
   }
 
@@ -815,7 +918,7 @@ async _openActivitiesModal() {
         });
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
-          throw new Error(data.error || 'Download failed');
+          throw new Error(data.error || t('context.flash_download_failed'));
         }
         const data = await res.json();
         const installed = data.results.filter(r => r.status === 'installed').length;
@@ -909,11 +1012,11 @@ _popoutGame() {
     this._gameWindow = win;
     this._closeGameIframe();
   } else {
-    this._showToast?.('Popup blocked — check your browser settings', 'error');
+    this._showToast?.(t('toasts.popup_blocked'), 'error');
   }
 },
 
-_showPushError(reason) {
+_showPushError(reason, helpType = '') {
   const modal = document.getElementById('push-error-modal');
   const reasonEl = document.getElementById('push-error-reason');
   if (!modal || !reasonEl) return;
@@ -922,36 +1025,31 @@ _showPushError(reason) {
   let html = this._escapeHtml(reason);
 
   // Detect Brave-specific advice and add a copy button for the settings URL
-  if (reason.includes('brave://settings')) {
+  if (helpType === 'brave') {
     const settingsUrl = 'brave://settings/privacy';
     html += `<div style="margin-top:12px;padding:10px;background:var(--bg-secondary);border-radius:6px;font-family:monospace;font-size:0.8125rem;display:flex;align-items:center;gap:8px;justify-content:center;">
       <span style="user-select:all;">${settingsUrl}</span>
-      <button class="btn-accent" onclick="navigator.clipboard.writeText('${settingsUrl}');this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',1500)"
-        style="padding:4px 10px;font-size:0.75rem;min-width:52px;">Copy</button>
+      <button class="btn-accent" id="push-error-copy-settings" style="padding:4px 10px;font-size:0.75rem;min-width:52px;">${t('common.copy')}</button>
     </div>
-    <p style="color:var(--text-muted);font-size:0.6875rem;margin:8px 0 0;">Paste this into your Brave address bar, then enable "Use Google Services for Push Messaging" and restart Brave.</p>`;
+    <p style="color:var(--text-muted);font-size:0.6875rem;margin:8px 0 0;">${t('context.push_error.brave_copy_hint')}</p>`;
   }
 
   // Detect permission denied and provide Chrome/Edge settings hints
-  if (reason.includes('Permission denied') || reason.includes('permission was denied')) {
-    html += `<div style="margin-top:12px;font-size:0.75rem;color:var(--text-secondary);line-height:1.6;">
-      <strong>How to fix:</strong><br>
-      \u2022 Click the lock/info icon in your address bar → Site settings → Notifications → Allow<br>
-      \u2022 Or go to browser settings → Privacy → Site Settings → Notifications
-    </div>`;
+  if (helpType === 'permission') {
+    html += `<div style="margin-top:12px;font-size:0.75rem;color:var(--text-secondary);line-height:1.6;">${t('context.push_error.permission_help_html')}</div>`;
   }
 
   // iOS standalone hint
-  if (reason.includes('Add to Home Screen')) {
-    html += `<div style="margin-top:12px;font-size:0.75rem;color:var(--text-secondary);line-height:1.6;">
-      <strong>Steps:</strong><br>
-      1. Tap the <strong>Share</strong> button (box with arrow) in Safari<br>
-      2. Scroll down and tap <strong>"Add to Home Screen"</strong><br>
-      3. Open Haven from your home screen icon
-    </div>`;
+  if (helpType === 'ios_install') {
+    html += `<div style="margin-top:12px;font-size:0.75rem;color:var(--text-secondary);line-height:1.6;">${t('context.push_error.ios_help_html')}</div>`;
   }
 
   reasonEl.innerHTML = html;
+  reasonEl.querySelector('#push-error-copy-settings')?.addEventListener('click', async (event) => {
+    await navigator.clipboard.writeText('brave://settings/privacy');
+    event.currentTarget.textContent = t('common.copied');
+    setTimeout(() => { event.currentTarget.textContent = t('common.copy'); }, 1500);
+  });
   modal.style.display = 'flex';
 },
 
@@ -983,15 +1081,13 @@ async _subscribePush() {
     if (permission !== 'granted') {
       if (toggle) toggle.checked = false;
       if (statusEl) statusEl.textContent = t('context.push_permission_denied');
-      this._showPushError(
-        'Notification permission was denied. Check your browser\'s site settings and allow notifications for this site, then try again.'
-      );
+      this._showPushError(t('context.push_error.permission_denied'), 'permission');
       return;
     }
 
     // Fetch VAPID public key from server
     const res = await fetch('/api/push/vapid-key');
-    if (!res.ok) throw new Error('Server error fetching push key');
+    if (!res.ok) throw new Error(t('context.push_error.key_fetch_failed'));
     const { publicKey } = await res.json();
 
     // Convert VAPID key to Uint8Array
@@ -1022,28 +1118,23 @@ async _subscribePush() {
       }
     });
 
-    if (statusEl) statusEl.textContent = 'Subscribing...';
+    if (statusEl) statusEl.textContent = t('context.push_subscribing');
   } catch (err) {
     console.error('Push subscribe error:', err);
     if (toggle) toggle.checked = false;
 
     const isBrave = navigator.brave && (await navigator.brave.isBrave?.()) || false;
-    let reason = `Push subscription failed: ${err.message}`;
+    let reason = t('context.push_error.subscription_failed', { error: err.message });
+    let helpType = '';
     if (isBrave) {
-      reason = 'Brave blocked the push subscription.\n\n' +
-        'Troubleshooting steps:\n' +
-        '1. Open brave://settings/privacy and make sure "Use Google Services for Push Messaging" is ON\n' +
-        '2. Click the Brave shields icon (lion) in the address bar for this site and disable shields, then reload\n' +
-        '3. Restart Brave completely (close all windows) and reload Haven\n' +
-        '4. If none of the above work, try clearing site data or using Chrome/Edge instead.\n\n' +
-        'Technical detail: ' + (err.message || 'unknown error');
+      reason = t('context.push_error.brave_subscription', { error: err.message || t('context.push_error.unknown') });
+      helpType = 'brave';
     } else if (err.message?.includes('push service')) {
-      reason = 'The browser\'s push service returned an error. This is usually a browser-level restriction. ' +
-        'Try Google Chrome or Microsoft Edge if this persists.';
+      reason = t('context.push_error.browser_service');
     }
 
-    if (statusEl) statusEl.textContent = 'Failed';
-    this._showPushError(reason);
+    if (statusEl) statusEl.textContent = t('context.push_registration_failed');
+    this._showPushError(reason, helpType);
   }
 },
 
@@ -1058,10 +1149,10 @@ async _unsubscribePush() {
       // Tell server to remove subscription
       this.socket.emit('push-unsubscribe', { endpoint });
     }
-    if (statusEl) statusEl.textContent = 'Disabled';
+    if (statusEl) statusEl.textContent = t('context.push_disabled');
   } catch (err) {
     console.error('Push unsubscribe error:', err);
-    if (statusEl) statusEl.textContent = 'Error';
+    if (statusEl) statusEl.textContent = t('context.push_registration_failed');
   }
 },
 
@@ -1072,7 +1163,7 @@ async _syncTunnelState(enabled) {
   const provider = document.getElementById('tunnel-provider-select')?.value || 'localtunnel';
   const statusEl = document.getElementById('tunnel-status-display');
   const btn = document.getElementById('tunnel-toggle-btn');
-  if (statusEl) statusEl.textContent = enabled ? 'Starting…' : 'Stopping…';
+  if (statusEl) statusEl.textContent = t(enabled ? 'settings.admin.tunnel_starting' : 'settings.admin.tunnel_stopping');
   if (btn) btn.disabled = true;
   try {
     const res = await fetch('/api/tunnel/sync', {
@@ -1085,7 +1176,7 @@ async _syncTunnelState(enabled) {
     });
     if (!res.ok) {
       console.error('Tunnel sync failed:', res.status);
-      if (statusEl) statusEl.textContent = 'Sync failed';
+      if (statusEl) statusEl.textContent = t('settings.admin.tunnel_sync_failed');
       return;
     }
     // Update status from the response directly (no delay needed)
@@ -1093,7 +1184,7 @@ async _syncTunnelState(enabled) {
     this._updateTunnelStatusUI(data);
   } catch (err) {
     console.error('Tunnel sync error:', err);
-    if (statusEl) statusEl.textContent = 'Error';
+    if (statusEl) statusEl.textContent = t('settings.admin.tunnel_error');
   } finally {
     if (btn) btn.disabled = false;
   }
@@ -1118,7 +1209,7 @@ async _refreshTunnelStatus() {
     }
   } catch (err) {
     const statusEl = document.getElementById('tunnel-status-display');
-    if (statusEl) statusEl.textContent = 'Error checking status';
+    if (statusEl) statusEl.textContent = t('settings.admin.tunnel_status_error');
     console.error('Tunnel status error:', err);
   }
 },
@@ -1129,11 +1220,11 @@ _updateTunnelStatusUI(data) {
   const btn = document.getElementById('tunnel-toggle-btn');
   if (btn) {
     if (data.active) {
-      btn.textContent = 'Stop Tunnel';
+      btn.textContent = t('settings.admin.tunnel_stop_btn');
       btn.classList.add('btn-danger');
       btn.classList.remove('btn-accent');
     } else {
-      btn.textContent = 'Start Tunnel';
+      btn.textContent = t('settings.admin.tunnel_start_btn');
       btn.classList.remove('btn-danger');
       btn.classList.add('btn-accent');
     }
@@ -1141,10 +1232,10 @@ _updateTunnelStatusUI(data) {
   if (!statusEl) return;
   if (data.active && data.url) {
     statusEl.textContent = data.url;
-    statusEl.title = 'Tunnel is active — click to copy';
+    statusEl.title = t('settings.admin.tunnel_active_title');
     statusEl.style.cursor = 'pointer';
     statusEl.onclick = () => {
-      const markCopied = () => { statusEl.textContent = 'Copied!'; };
+      const markCopied = () => { statusEl.textContent = t('common.copied'); };
       navigator.clipboard.writeText(data.url).then(markCopied).catch(() => {
         try {
           const ta = document.createElement('textarea');
@@ -1160,11 +1251,11 @@ _updateTunnelStatusUI(data) {
       setTimeout(() => { statusEl.textContent = data.url; }, 1500);
     };
   } else if (data.starting) {
-    statusEl.textContent = 'Starting…';
+    statusEl.textContent = t('settings.admin.tunnel_starting');
     statusEl.style.cursor = '';
     statusEl.onclick = null;
   } else {
-    statusEl.textContent = data.error || 'Inactive';
+    statusEl.textContent = data.error || t('settings.admin.tunnel_inactive');
     statusEl.style.cursor = '';
     statusEl.onclick = null;
   }
@@ -1441,7 +1532,7 @@ _perfHUD(enable) {
       const mem = performance.memory ? Math.round(performance.memory.usedJSHeapSize / 1048576) : '?';
       const dom = document.querySelectorAll('*').length;
       const rgb = document.documentElement.classList.contains('rgb-cycling') ? ' RGB' : '';
-      hud.textContent = `FPS: ${fps}  Heap: ${mem} MB  DOM: ${dom}${rgb}`;
+      hud.textContent = t('context.performance_hud', { fps, memory: mem, dom, rgb });
       frames = 0;
       lastSec = now;
     }

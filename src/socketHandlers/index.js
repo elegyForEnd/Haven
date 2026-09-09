@@ -10,7 +10,7 @@ const { sendFcm, isFcmEnabled } = require('../fcm');
 const { DATA_DIR, UPLOADS_DIR, DELETED_ATTACHMENTS_DIR } = require('../paths');
 const HAVEN_VERSION = require('../../package.json').version;
 
-const { sanitizeText, utcStamp, isString, isInt, isValidUploadPath, sanitizeBorderTransform, parseBorderTransform, VALID_ROLE_PERMS, filterIdleOnline } = require('./helpers');
+const { sanitizeText, sanitizeSoundName, utcStamp, isString, isInt, isValidUploadPath, sanitizeBorderTransform, parseBorderTransform, VALID_ROLE_PERMS, filterIdleOnline, toReplyContext } = require('./helpers');
 const { resolveSpotifyToYouTube, resolveBilibiliLink, searchYouTube, fetchYouTubePlaylist, extractYouTubeVideoId, resolveMusicMetadata } = require('./musicResolver');
 const {
   createBilibiliMediaPayload,
@@ -29,6 +29,7 @@ const {
   validateCallbackUrl
 } = require('../webhookCallback');
 const {
+  clearChannelRuntimeState,
   createTempChannelDeleteCallback,
   generateUniqueChannelCode,
   persistChannelCodeRotation,
@@ -58,6 +59,12 @@ const registerRoles      = require('./roles');
 const registerAdmin      = require('./admin');
 const registerDrawing    = require('./drawing');
 const registerFerry      = require('./ferry');
+const registerGroupE2E   = require('./groupE2E');
+const {
+  NATIVE_SCREEN_SIGNAL_EVENTS,
+  clearNativeScreenOfferWindows,
+  nativeScreenSignalFloodScope,
+} = require('./nativeScreen');
 
 const ADMIN_USERNAME = (process.env.ADMIN_USERNAME || 'admin').toLowerCase();
 
@@ -105,10 +112,12 @@ function setupSocketHandlers(io, db, opts = {}) {
   const activeMusic         = new Map(); // code → { url, userId, username, playbackState, ... }
   const musicQueues         = new Map(); // code → [{ id, url, title, userId, username, resolvedFrom }]
   const activeScreenSharers = new Map(); // code → Set<userId>
+  const activeScreenSessions = new Map(); // code → Map<userId, { transport, sessionId }>
   const activeWebcamUsers   = new Map(); // code → Set<userId>
   const remoteControlRequests = new Map(); // requestId → pending consent handshake
   const remoteControlSessions = new Map(); // sessionId → active host/controller pairing
   const remoteControlRateLimits = new Map(); // userId → recent request timestamps
+  const nativeScreenOfferWindows = new Map(); // `${sharerId}:${viewerId}` → timestamps
   const userFloodBuckets    = new Map(); // `${userId}:${bucket}` → number[] (send timestamps)
   // Presence timing for the "idle but online" flag. onlineSince is set when a
   // user goes from having zero live sockets to one; lastActiveAt advances only
@@ -162,7 +171,8 @@ function setupSocketHandlers(io, db, opts = {}) {
   const state = {
     channelUsers, voiceUsers, voiceLastActivity,
     activeMusic, musicQueues,
-    activeScreenSharers, activeWebcamUsers, streamViewers,
+    activeScreenSharers, activeScreenSessions, activeWebcamUsers,
+    nativeScreenOfferWindows, streamViewers,
     remoteControlRequests, remoteControlSessions, remoteControlRateLimits,
     slowModeTracker, pendingTempDelete, pendingVoiceLeave,
     drawingBoards, drawingParticipants, drawingStateSyncLimits,
@@ -577,7 +587,7 @@ function setupSocketHandlers(io, db, opts = {}) {
                c.parent_channel_id, c.position, c.is_private, c.expires_at, c.is_temp_voice,
                c.streams_enabled, c.music_enabled, c.media_enabled, c.soundboard_enabled, c.slow_mode_interval, c.category, c.sort_alphabetical,
                c.cleanup_exempt, c.channel_type, c.voice_user_limit, c.notification_type, c.voice_enabled, c.text_enabled, c.voice_bitrate,
-               c.afk_sub_code, c.afk_timeout_minutes, c.read_only, c.auto_delete_mode, c.auto_delete_interval_hours, c.default_role_id, c.show_welcome
+               c.afk_sub_code, c.afk_timeout_minutes, c.read_only, c.auto_delete_mode, c.auto_delete_interval_hours, c.default_role_id, c.show_welcome, c.is_forum, c.forum_tags, c.is_nsfw
         FROM channels c WHERE c.is_dm = 0
         UNION
         SELECT c.id, c.name, c.code, c.created_by, c.topic, c.is_dm,
@@ -585,7 +595,7 @@ function setupSocketHandlers(io, db, opts = {}) {
                c.parent_channel_id, c.position, c.is_private, c.expires_at, c.is_temp_voice,
                c.streams_enabled, c.music_enabled, c.media_enabled, c.soundboard_enabled, c.slow_mode_interval, c.category, c.sort_alphabetical,
                c.cleanup_exempt, c.channel_type, c.voice_user_limit, c.notification_type, c.voice_enabled, c.text_enabled, c.voice_bitrate,
-               c.afk_sub_code, c.afk_timeout_minutes, c.read_only, c.auto_delete_mode, c.auto_delete_interval_hours, c.default_role_id, c.show_welcome
+               c.afk_sub_code, c.afk_timeout_minutes, c.read_only, c.auto_delete_mode, c.auto_delete_interval_hours, c.default_role_id, c.show_welcome, c.is_forum, c.forum_tags, c.is_nsfw
         FROM channels c
         JOIN channel_members cm ON c.id = cm.channel_id
         WHERE cm.user_id = ? AND c.is_dm = 1
@@ -602,7 +612,7 @@ function setupSocketHandlers(io, db, opts = {}) {
                c.parent_channel_id, c.position, c.is_private, c.expires_at, c.is_temp_voice,
                c.streams_enabled, c.music_enabled, c.media_enabled, c.soundboard_enabled, c.slow_mode_interval, c.category, c.sort_alphabetical,
                c.cleanup_exempt, c.channel_type, c.voice_user_limit, c.notification_type, c.voice_enabled, c.text_enabled, c.voice_bitrate,
-               c.afk_sub_code, c.afk_timeout_minutes, c.read_only, c.auto_delete_mode, c.auto_delete_interval_hours, c.default_role_id, c.show_welcome
+               c.afk_sub_code, c.afk_timeout_minutes, c.read_only, c.auto_delete_mode, c.auto_delete_interval_hours, c.default_role_id, c.show_welcome, c.is_forum, c.forum_tags, c.is_nsfw
         FROM channels c
         JOIN channel_members cm ON c.id = cm.channel_id
         WHERE cm.user_id = ?
@@ -647,7 +657,7 @@ function setupSocketHandlers(io, db, opts = {}) {
                      c.parent_channel_id, c.position, c.is_private, c.expires_at, c.is_temp_voice,
                      c.streams_enabled, c.music_enabled, c.media_enabled, c.soundboard_enabled, c.slow_mode_interval, c.category, c.sort_alphabetical,
                      c.cleanup_exempt, c.channel_type, c.voice_user_limit, c.notification_type, c.voice_enabled, c.text_enabled, c.voice_bitrate,
-                     c.afk_sub_code, c.afk_timeout_minutes, c.read_only, c.auto_delete_mode, c.auto_delete_interval_hours, c.default_role_id, c.show_welcome
+                     c.afk_sub_code, c.afk_timeout_minutes, c.read_only, c.auto_delete_mode, c.auto_delete_interval_hours, c.default_role_id, c.show_welcome, c.is_forum, c.forum_tags, c.is_nsfw
               FROM channels c
               JOIN channel_members cm ON c.id = cm.channel_id
               WHERE cm.user_id = ?
@@ -853,6 +863,23 @@ function setupSocketHandlers(io, db, opts = {}) {
       if (!sock || !sock.connected) {
         if (entry.isBot) botAudioManager?.stopWebhook(-Number(userId));
         room.delete(userId);
+        clearNativeScreenOfferWindows(nativeScreenOfferWindows, code, userId);
+        const sharers = activeScreenSharers.get(code);
+        if (sharers) {
+          sharers.delete(userId);
+          if (sharers.size === 0) activeScreenSharers.delete(code);
+        }
+        const sessions = activeScreenSessions.get(code);
+        if (sessions) {
+          sessions.delete(userId);
+          if (sessions.size === 0) activeScreenSessions.delete(code);
+        }
+        streamViewers.delete(`${code}:${userId}`);
+        for (const [key, viewers] of streamViewers) {
+          if (!key.startsWith(`${code}:`)) continue;
+          viewers.delete(userId);
+          if (viewers.size === 0) streamViewers.delete(key);
+        }
         removed.push({ id: userId, username: entry.username });
         console.log(`[Voice] Pruned stale voice entry for user ${userId} (socket ${entry.socketId} gone)`);
       }
@@ -1108,10 +1135,16 @@ function setupSocketHandlers(io, db, opts = {}) {
 
     if (socket.user.isBot) botAudioManager?.stopWebhook(socket.user.webhookId);
     voiceRoom.delete(socket.user.id);
+    clearNativeScreenOfferWindows(nativeScreenOfferWindows, code, socket.user.id);
     socket.leave(`voice:${code}`);
 
     const sharers = activeScreenSharers.get(code);
     if (sharers) { sharers.delete(socket.user.id); if (sharers.size === 0) activeScreenSharers.delete(code); }
+    const screenSessions = activeScreenSessions.get(code);
+    if (screenSessions) {
+      screenSessions.delete(socket.user.id);
+      if (screenSessions.size === 0) activeScreenSessions.delete(code);
+    }
 
     const camUsers = activeWebcamUsers.get(code);
     if (camUsers) { camUsers.delete(socket.user.id); if (camUsers.size === 0) activeWebcamUsers.delete(code); }
@@ -1596,13 +1629,10 @@ function setupSocketHandlers(io, db, opts = {}) {
           }
           botAudioManager?.stopChannel(ch.code, 'channel-expired');
           clearDrawingChannelState(ch.id);
-          io.to(`channel:${ch.code}`).to(`voice:${ch.code}`).emit('channel-deleted', { code: ch.code, reason: 'expired' });
-          channelUsers.delete(ch.code);
-          voiceUsers.delete(ch.code);
           clearMusicMedia(activeMusic.get(ch.code));
-          activeMusic.delete(ch.code);
+          io.to(`channel:${ch.code}`).to(`voice:${ch.code}`).emit('channel-deleted', { code: ch.code, reason: 'expired' });
+          clearChannelRuntimeState(state, ch.code);
           syncMusicActivity(ch.code);
-          musicQueues.delete(ch.code);
           console.log(`[Temporary] Channel "${ch.code}" expired and was deleted`);
         }
       }
@@ -1632,6 +1662,27 @@ function setupSocketHandlers(io, db, opts = {}) {
             if (!sock || !sock.connected) {
               if (entry.isBot) botAudioManager?.stopWebhook(-Number(userId));
               room.delete(userId);
+              clearNativeScreenOfferWindows(nativeScreenOfferWindows, ch.code, userId);
+              const sharers = activeScreenSharers.get(ch.code);
+              if (sharers) {
+                sharers.delete(userId);
+                if (sharers.size === 0) activeScreenSharers.delete(ch.code);
+              }
+              const sessions = activeScreenSessions.get(ch.code);
+              if (sessions) {
+                sessions.delete(userId);
+                if (sessions.size === 0) activeScreenSessions.delete(ch.code);
+              }
+              streamViewers.delete(`${ch.code}:${userId}`);
+              for (const [key, viewers] of streamViewers) {
+                if (!key.startsWith(`${ch.code}:`)) continue;
+                viewers.delete(userId);
+                if (viewers.size === 0) streamViewers.delete(key);
+              }
+              io.to(`voice:${ch.code}`).to(`channel:${ch.code}`).emit('voice-user-left', {
+                channelCode: ch.code,
+                user: { id: userId, username: entry.username }
+              });
             }
           }
           if (room.size > 0) continue;
@@ -1996,6 +2047,10 @@ function setupSocketHandlers(io, db, opts = {}) {
     const FLOOD_LIMITS = {
       message: { max: 10, windowMs: 10000 },
       event:   { max: 60, windowMs: 10000 },
+      nativeSignal: { max: 120, windowMs: 10000 },
+      nativeSignalGlobal: { max: 12000, windowMs: 10000 },
+      screenLifecycle: { max: 12, windowMs: 10000 },
+      screenRecovery: { max: 12, windowMs: 10000 },
       // Search is far heavier than the typing/presence traffic the event
       // bucket was sized for (FTS MATCH + count(*) + joins across every
       // channel you're in), so it gets its own tighter per-account cap on
@@ -2010,9 +2065,9 @@ function setupSocketHandlers(io, db, opts = {}) {
       ferrySearch: { max: 8, windowMs: 10000 },
     };
 
-    function floodCheck(bucket) {
+    function floodCheck(bucket, scope = '') {
       const limit = FLOOD_LIMITS[bucket];
-      const key = `${socket.user.id}:${bucket}`;
+      const key = `${socket.user.id}:${bucket}:${scope}`;
       const now = Date.now();
       const timestamps = (userFloodBuckets.get(key) || []).filter(t => now - t < limit.windowMs);
       if (timestamps.length >= limit.max) {
@@ -2026,8 +2081,6 @@ function setupSocketHandlers(io, db, opts = {}) {
 
     const FLOOD_EXEMPT = new Set([
       'voice-offer', 'voice-answer', 'voice-ice-candidate',
-      'screen-share-started', 'screen-share-stopped',
-      'request-screen-renegotiate',
       'voice-speaking', 'webcam-started', 'webcam-stopped',
       'stream-viewer-joined', 'stream-viewer-left',
       'drawing-stroke-begin', 'drawing-stroke-points',
@@ -2048,7 +2101,30 @@ function setupSocketHandlers(io, db, opts = {}) {
 
     socket.use((packet, next) => {
       const eventName = packet[0];
+      const acknowledgeFlood = error => {
+        const callback = packet[packet.length - 1];
+        if (typeof callback === 'function') callback({ ok: false, error });
+      };
       if (PRESENCE_ACTIVE_EVENTS.has(eventName)) touchPresenceActivity(socket.user.id);
+      if (eventName === 'screen-share-stopped') return next();
+      if (eventName === 'screen-share-started') {
+        if (floodCheck('screenLifecycle')) return acknowledgeFlood('rate_limited');
+        return next();
+      }
+      if (eventName === 'request-screen-renegotiate') {
+        if (floodCheck('screenRecovery')) return;
+        return next();
+      }
+      if (NATIVE_SCREEN_SIGNAL_EVENTS.has(eventName)) {
+        if (floodCheck('nativeSignalGlobal')) return;
+        const scope = nativeScreenSignalFloodScope(eventName, packet[1], {
+          socket,
+          voiceUsers,
+          activeScreenSessions,
+        });
+        if (floodCheck('nativeSignal', scope)) return;
+        return next();
+      }
       if (FLOOD_EXEMPT.has(eventName)) return next();
       if (floodCheck('event')) {
         socket.emit('error-msg', 'Slow down — too many requests');
@@ -2352,6 +2428,7 @@ function setupSocketHandlers(io, db, opts = {}) {
     registerBilibiliAdmin(socket, ctx);
     registerDrawing(socket, ctx);
     registerFerry(socket, ctx);
+    registerGroupE2E(socket, ctx);
 
     // ── Disconnect handler ────────────────────────────────
     // Socket.IO hands us why the socket went away, and throwing that away made
@@ -2377,6 +2454,9 @@ function setupSocketHandlers(io, db, opts = {}) {
             if (s.user && s.user.id === uid) return; // still online elsewhere
           }
           presenceTimers.delete(uid);
+          // Drop pushed listening presence so it doesn't render for a user
+          // whose app is now closed.
+          state.activity?.clearListeningPresence(uid);
         }, 5000);
       }
 
@@ -2473,4 +2553,4 @@ function setupSocketHandlers(io, db, opts = {}) {
   return { activity, state };
 }
 
-module.exports = { setupSocketHandlers, sanitizeText, sanitizeBorderTransform };
+module.exports = { setupSocketHandlers, sanitizeText, sanitizeSoundName, sanitizeBorderTransform, toReplyContext };

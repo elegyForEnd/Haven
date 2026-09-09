@@ -628,6 +628,10 @@ _applyServerSettings() {
     if (maxUpload) {
       maxUpload.value = this.serverSettings.max_upload_mb || '25';
     }
+    const maxAttach = document.getElementById('max-attachments');
+    if (maxAttach) {
+      maxAttach.value = this.serverSettings.max_attachments || '10';
+    }
     const maxSoundKb = document.getElementById('max-sound-kb');
     if (maxSoundKb) {
       maxSoundKb.value = this.serverSettings.max_sound_kb || '1024';
@@ -852,7 +856,7 @@ _applyServerSettings() {
     if (this.serverSettings.server_banner) {
       bannerPreview.innerHTML = `<img src="${this._escapeHtml(this.serverSettings.server_banner)}" style="max-width:100%;max-height:80px;border-radius:6px;object-fit:cover">`;
     } else {
-      bannerPreview.innerHTML = '<span class="muted-text" style="font-size:0.6875rem">No banner</span>';
+      bannerPreview.innerHTML = `<span class="muted-text" style="font-size:0.6875rem">${t('settings.admin.no_banner')}</span>`;
     }
   }
 
@@ -890,132 +894,156 @@ _renderWebhooksList(webhooks) {
 },
 
 _syncSettingsNav() {
+  // Dict of admin settings sections and the roles that can access them.
+  // (Admin has access to all)
+  //
+  // Dict key: The section id to grant access to
+  // Key value: A list of roles that can access the section, or a dictionary
+  // of roles listing the sub-sections they can access. ('*' for all subsection access)
+  const settingsSectionsAccess = {
+    'section-update':       [],
+    'section-branding':     ['manage_server'],
+    'section-members':      ['manage_server'],
+    // Idle-online oversight (v3.46.0): moderators who can act on it see it too,
+    // the same bar the server enforces. Keep this list in step with
+    // _hasAnyAdminSettingsAccess in app.js, which gates the Admin tab switch.
+    'section-moderation':   ['view_audit_log', 'ban_user', 'kick_user', 'view_all_members'],
+    'section-security':     [],
+    'section-automod':      [],
+    'section-whitelist':    ['manage_server'],
+    'section-invite':       {'manage_server': '*', 'invite_users': ['invite-links-block']}, // invite_users only have access to the id="invite-links-block" section within id="section-invite"
+    'section-guests':       [],
+    'section-cleanup':      ['manage_server'],
+    'section-backup':       ['manage_server'],
+    'section-uploads':      ['manage_server'],
+    'section-connectivity': [],
+    'section-tunnel':       ['manage_server'],
+    'section-bots':         ['manage_server', 'manage_webhooks'],
+    'section-ferry':        [],
+    'section-custom-tos':   [],
+    'section-import':       ['manage_server'],
+    'section-modmode':      ['manage_server'],
+    'section-emojis':       ['manage_emojis'],
+    'section-stickers':     ['manage_stickers'],
+    'section-sounds-admin': ['manage_soundboard'],
+    'section-roles':        ['manage_roles'],
+    'section-audit-log':    ['view_audit_log']
+  };
+  
   // Use the canonical authoritative flag from the server, not DOM visibility.
   const isAdmin = !!(this.user && this.user.isAdmin);
-  const canManageEmojis = isAdmin || this._hasPerm('manage_emojis');
-  const canManageStickers = isAdmin || this._hasPerm('manage_stickers') || this._hasPerm('manage_emojis');
-  const canManageSounds = isAdmin || this._hasPerm('manage_soundboard');
-  const canManageRoles = isAdmin || this._hasPerm('manage_roles');
-  const canManageServer = isAdmin || this._hasPerm('manage_server');
-  const canManageWebhooks = isAdmin || this._hasPerm('manage_webhooks');
-  const canInviteUsers = isAdmin || this._hasPerm('invite_users'); // (#5470)
-  const hasAnyAdminAccess = isAdmin || canManageEmojis || canManageStickers || canManageSounds || canManageRoles || canManageServer || canManageWebhooks || canInviteUsers;
 
-  // Show/hide individual admin nav items (default: hidden for non-admins)
-  document.querySelectorAll('.settings-nav-admin').forEach(el => {
-    el.style.display = isAdmin ? '' : 'none';
+  //Returns the actual access level for a settings section:
+  //   '*'              = full access
+  //   ['some-block']   = limited access to specific subsections
+  //   null             = no access
+  const getSectionAccess = (target) => {
+    const access = settingsSectionsAccess[target];
+
+    if (isAdmin) return '*';
+    if (!access) return null;
+
+    // Simple permission list: any matching permission grants full access.
+    if (Array.isArray(access)) {
+      return access.some(permission => this._hasPerm(permission)) ? '*' : null;
+    }
+    // Permission -> subsection access map.
+    const allowedSubSections = new Set();
+    for (const [permission, subSections] of Object.entries(access)) {
+      if (!this._hasPerm(permission)) continue;
+
+      // Any full-access permission wins, regardless of object order.
+      if (subSections === '*') return '*';
+
+      for (const subSection of subSections) {
+        allowedSubSections.add(subSection);
+      }
+    }
+    return allowedSubSections.size > 0 ? [...allowedSubSections] : null;
+  };
+
+  const canAccessSection = (target) => {
+    return getSectionAccess(target) !== null;
+  };
+
+  // Determine whether the user has access to any admin settings.
+  const hasAnyAdminAccess = isAdmin || Object.keys(settingsSectionsAccess).some(target => canAccessSection(target));
+
+  // Admin settings navigation.
+  // Unknown nav targets are hidden for non-admins.
+  document.querySelectorAll('.settings-nav-item.settings-nav-admin').forEach(navItem => {
+    if (isAdmin) {
+      navItem.style.display = '';
+      return;
+    }
+    navItem.style.display = canAccessSection(navItem.dataset.target) ? '' : 'none';
   });
-  // Show/hide the admin tab button + group + body — gate on ANY admin access
+
+  // Admin settings navigation group labels.
+  document.querySelectorAll('.settings-nav-group-label.settings-nav-admin').forEach(label => {
+    if (isAdmin) {
+      label.style.display = '';
+      return;
+    }
+
+    let hasVisibleItem = false;
+    let sibling = label.nextElementSibling;
+    while (sibling && !sibling.classList.contains('settings-nav-group-label')) {
+      if (sibling.classList.contains('settings-nav-item') && sibling.classList.contains('settings-nav-admin') && sibling.style.display !== 'none') {
+        hasVisibleItem = true;
+        break;
+      }
+      sibling = sibling.nextElementSibling;
+    }
+    label.style.display = hasVisibleItem ? '' : 'none';
+  });
+
+  document.querySelectorAll('.settings-nav-admin-group').forEach(group => {
+    group.style.display = hasAnyAdminAccess ? '' : 'none';
+  });
+
+  // Admin settings sections.
+  // Every section must be explicitly represented in settingsSectionsAccess.
+  // This prevents an unlisted admin section from becoming visible to
+  // non-admin users simply because its nav item was hidden.
+  document.querySelectorAll('#admin-mod-panel .admin-settings').forEach(section => {
+    const access = getSectionAccess(section.id);
+    section.style.display = (access === null) ? 'none' : '';
+  });
+
+  // Apply subsection restrictions.
+  // Sections using object-form access can restrict access to specific
+  // direct-child subsections.
+  Object.entries(settingsSectionsAccess).forEach(([sectionId, access]) => {
+    if (isAdmin || !access || Array.isArray(access)) return;
+
+    const section = document.getElementById(sectionId);
+    if (!section) return;
+
+    const sectionAccess = getSectionAccess(sectionId);
+    if (sectionAccess === null || sectionAccess === '*') return;
+
+    section.querySelectorAll(':scope > *').forEach(subSection => {
+      subSection.style.display = sectionAccess.includes(subSection.id) ? '' : 'none';
+    });
+  });
+  // With the server-config blocks above it hidden, the invite-links divider has
+  // nothing to divide. (#5470)
+  document.getElementById('invite-links-block')
+    ?.classList.toggle('invite-links-flush', Array.isArray(getSectionAccess('section-invite')));
+
   const adminTab = document.querySelector('.settings-tab-admin');
-  if (adminTab) adminTab.style.display = hasAnyAdminAccess ? '' : 'none';
-  const adminNavGroup = document.querySelector('.settings-nav-admin-group');
-  if (adminNavGroup) adminNavGroup.style.display = hasAnyAdminAccess ? '' : 'none';
-  const adminBody = document.getElementById('settings-body-admin');
-  // settings-body-admin display is governed by tab switching too — only force-hide
-  // when the user has zero admin access so a stale 'block' doesn't leak through.
-  if (adminBody && !hasAnyAdminAccess) adminBody.style.display = 'none';
-  // Show/hide the admin save bar (only visible when admin tab is active AND has access)
+  if (adminTab) {
+    adminTab.style.display = hasAnyAdminAccess ? '' : 'none';
+  }
+  const adminPanel = document.getElementById('settings-body-admin');
+  if (adminPanel) {
+    adminPanel.style.display = hasAnyAdminAccess ? '' : 'none';
+  }
   const saveBar = document.querySelector('.admin-save-bar');
   if (saveBar) {
     const adminTabActive = adminTab?.classList.contains('active');
     saveBar.style.display = (hasAnyAdminAccess && adminTabActive) ? '' : 'none';
-  }
-  // Show the Emojis settings tab for users with manage_emojis permission even if not full admin/mod
-  // (#5335) manage_stickers also unhides this tab — the Stickers admin block
-  // currently lives inside the Emojis section so users with sticker access
-  // need to see that nav item even if they can't touch emojis themselves.
-  const emojiNavItem = document.querySelector('.settings-nav-item[data-target="section-emojis"]');
-  if (emojiNavItem && !isAdmin && (canManageEmojis || canManageStickers)) {
-    emojiNavItem.style.display = '';
-  }
-  // Hide the emoji-only and sticker-only sub-blocks based on which perms the
-  // user actually has, so a manage_stickers-only user doesn't see an Emoji
-  // upload panel they can't use (and vice versa).
-  const emojiBlock = document.getElementById('section-emojis');
-  const stickerBlock = document.getElementById('section-stickers');
-  if (emojiBlock && !isAdmin) emojiBlock.style.display = canManageEmojis ? '' : 'none';
-  if (stickerBlock && !isAdmin) stickerBlock.style.display = canManageStickers ? '' : 'none';
-  // Show the Sounds admin tab for users with manage_soundboard permission
-  const soundsNavItem = document.querySelector('.settings-nav-item[data-target="section-sounds-admin"]');
-  if (soundsNavItem && !isAdmin && canManageSounds) {
-    soundsNavItem.style.display = '';
-  }
-  // Show Roles tab for users with manage_roles permission
-  const rolesNavItem = document.querySelector('.settings-nav-item[data-target="section-roles"]');
-  if (rolesNavItem && !isAdmin && canManageRoles) {
-    rolesNavItem.style.display = '';
-  }
-  // Show Server settings tab for users with manage_server permission.
-  // manage_server gates many categories on the server-side, so unhide the
-  // full set of server-management nav items (categories with their own
-  // dedicated perm — emojis/sounds/roles/audit log — are handled separately).
-  if (!isAdmin && canManageServer) {
-    const serverManagedTargets = [
-      'section-branding',
-      'section-members',
-      'section-whitelist',
-      'section-invite',
-      'section-cleanup',
-      'section-backup',
-      'section-uploads',
-      'section-tunnel',
-      'section-bots',
-      'section-import',
-      'section-modmode'
-    ];
-    serverManagedTargets.forEach(target => {
-      const navItem = document.querySelector(`.settings-nav-item[data-target="${target}"]`);
-      if (navItem) navItem.style.display = '';
-    });
-  }
-  // (#5470) invite_users reaches the Invite Links block and nothing else in
-  // that section. The server code, the vanity link and the default-join list
-  // are server configuration and stay behind manage_server, so hide those
-  // rather than showing controls whose saves would be refused.
-  const inviteNavItem = document.querySelector('.settings-nav-item[data-target="section-invite"]');
-  const inviteLinksOnly = !isAdmin && !canManageServer && canInviteUsers;
-  if (!isAdmin && !canManageServer) {
-    if (inviteNavItem) inviteNavItem.style.display = canInviteUsers ? '' : 'none';
-    const inviteSection = document.getElementById('section-invite');
-    if (inviteSection) inviteSection.style.display = canInviteUsers ? '' : 'none';
-  }
-  document.querySelectorAll('#section-invite .invite-server-config').forEach(el => {
-    el.style.display = inviteLinksOnly ? 'none' : '';
-  });
-  // With everything above it hidden, the block's divider has nothing to divide.
-  document.getElementById('invite-links-block')
-    ?.classList.toggle('invite-links-flush', inviteLinksOnly);
-  // Show Bots tab for users with manage_webhooks permission
-  const botsNavItem = document.querySelector('.settings-nav-item[data-target="section-bots"]');
-  if (botsNavItem && !isAdmin && canManageWebhooks) {
-    botsNavItem.style.display = '';
-  }
-  // Show Audit Log nav item for users with view_audit_log permission
-  const canViewAuditLog = isAdmin || this._hasPerm('view_audit_log');
-  const auditNavItem = document.querySelector('.settings-nav-item[data-target="section-audit-log"]');
-  if (auditNavItem) auditNavItem.style.display = canViewAuditLog ? '' : 'none';
-  // Make sure the admin tab/group/body are visible if the user only has audit-log access
-  if (canViewAuditLog && !hasAnyAdminAccess) {
-    if (adminTab) adminTab.style.display = '';
-    if (adminNavGroup) adminNavGroup.style.display = '';
-  }
-
-  // Moderation section (idle-online oversight, v3.46.0). Visible to admins and
-  // to moderators who can act on it — the same bar the server enforces. A
-  // non-admin mod sees ONLY this section, not the admin-only ones, because
-  // every other admin nav item stays display:none unless isAdmin.
-  const canSeeOversight = isAdmin || this._hasPerm('view_audit_log') ||
-    this._hasPerm('ban_user') || this._hasPerm('kick_user') || this._hasPerm('view_all_members');
-  const modNavItem = document.querySelector('.settings-nav-item[data-target="section-moderation"]');
-  if (modNavItem) modNavItem.style.display = canSeeOversight ? '' : 'none';
-  if (canSeeOversight && !hasAnyAdminAccess) {
-    if (adminTab) adminTab.style.display = '';
-    if (adminNavGroup) adminNavGroup.style.display = '';
-  }
-  // Also show save bar for users with manage_server perm (when admin tab active)
-  if (saveBar && !isAdmin && this._hasPerm('manage_server')) {
-    const adminTabActive = adminTab?.classList.contains('active');
-    if (adminTabActive) saveBar.style.display = '';
   }
 },
 
@@ -1034,6 +1062,7 @@ _snapshotAdminSettings() {
     cleanup_max_size_mb: this.serverSettings.cleanup_max_size_mb || '0',
     whitelist_enabled: this.serverSettings.whitelist_enabled || 'false',
     max_upload_mb: this.serverSettings.max_upload_mb || '25',
+    max_attachments: this.serverSettings.max_attachments || '10',
     max_sound_kb: this.serverSettings.max_sound_kb || '1024',
     max_emoji_kb: this.serverSettings.max_emoji_kb || '256',
     max_sticker_kb: this.serverSettings.max_sticker_kb || '1024',
@@ -1172,6 +1201,12 @@ _saveAdminSettings() {
     changed = true;
   }
 
+  const maxAttach = String(Math.max(1, Math.min(50, parseInt(document.getElementById('max-attachments')?.value) || 10)));
+  if (maxAttach !== (snap.max_attachments || '10')) {
+    this.socket.emit('update-server-setting', { key: 'max_attachments', value: maxAttach });
+    changed = true;
+  }
+
   const maxSoundKb = String(Math.max(256, Math.min(10240, parseInt(document.getElementById('max-sound-kb')?.value) || 1024)));
   if (maxSoundKb !== (snap.max_sound_kb || '1024')) {
     this.socket.emit('update-server-setting', { key: 'max_sound_kb', value: maxSoundKb });
@@ -1258,6 +1293,21 @@ _saveAdminSettings() {
     changed = true;
   }
 
+  const themeList = document.getElementById('admin-theme-list');
+  if (themeList?.dataset.loaded === '1') {
+    const publishedThemes = JSON.stringify(
+      [...themeList.querySelectorAll('input[type="checkbox"]')]
+        .filter(cb => cb.checked)
+        .map(cb => cb.dataset.file)
+    );
+    if (publishedThemes !== (snap.published_themes || '[]')) {
+      this.socket.emit('update-server-setting', { key: 'published_themes', value: publishedThemes });
+      changed = true;
+    }
+  }
+
+  // Publish first so a newly-published file can pass server validation when it
+  // is selected as the default in the same save operation.
   const defaultTheme = document.getElementById('default-theme-select')?.value || '';
   if (defaultTheme !== (snap.default_theme || '')) {
     this.socket.emit('update-server-setting', { key: 'default_theme', value: defaultTheme });
@@ -1267,16 +1317,6 @@ _saveAdminSettings() {
   const defaultLocale = document.getElementById('default-locale-select')?.value || '';
   if (defaultLocale !== (snap.default_locale || '')) {
     this.socket.emit('update-server-setting', { key: 'default_locale', value: defaultLocale });
-    changed = true;
-  }
-
-  const publishedThemes = JSON.stringify(
-    [...document.querySelectorAll('#admin-theme-list input[type="checkbox"]')]
-      .filter(cb => cb.checked)
-      .map(cb => cb.dataset.file)
-  );
-  if (publishedThemes !== (snap.published_themes || '[]')) {
-    this.socket.emit('update-server-setting', { key: 'published_themes', value: publishedThemes });
     changed = true;
   }
 
@@ -1364,6 +1404,8 @@ _cancelAdminSettings() {
     if (wl) wl.checked = snap.whitelist_enabled === 'true';
     const mu = document.getElementById('max-upload-mb');
     if (mu) mu.value = snap.max_upload_mb || '25';
+    const ma = document.getElementById('max-attachments');
+    if (ma) ma.value = snap.max_attachments || '10';
     const msk = document.getElementById('max-sound-kb');
     if (msk) msk.value = snap.max_sound_kb || '1024';
     const mek = document.getElementById('max-emoji-kb');
@@ -1391,13 +1433,19 @@ _cancelAdminSettings() {
 async _renderAdminThemeList() {
   const container = document.getElementById('admin-theme-list');
   if (!container) return;
+  container.dataset.loaded = '0';
   let themes = [];
   try {
-    themes = await fetch('/api/themes').then(r => r.json());
+    const response = await fetch('/api/themes');
+    if (!response.ok) throw new Error('Theme metadata request failed');
+    const result = await response.json();
+    if (!Array.isArray(result)) throw new Error('Invalid theme metadata response');
+    themes = result;
+    container.dataset.loaded = '1';
   } catch { /* server not ready */ }
 
   if (themes.length === 0) {
-    container.innerHTML = '<span style="font-size:0.75rem;color:var(--text-muted)">No themes found. Add <code>.theme.css</code> files to the <code>themes/</code> folder and refresh.</span>';
+    container.innerHTML = `<span style="font-size:0.75rem;color:var(--text-muted)">${t('settings.admin.no_themes')}</span>`;
     return;
   }
 
@@ -1408,14 +1456,22 @@ async _renderAdminThemeList() {
     const cb = document.createElement('input');
     cb.type = 'checkbox';
     cb.dataset.file = theme.file;
-    cb.checked = !!theme.published;
+    cb.checked = !!theme.published && theme.compatible !== false;
+    cb.disabled = theme.compatible === false;
     const nameSpan = document.createElement('span');
     nameSpan.textContent = theme.name || theme.file;
     const descSpan = document.createElement('span');
     descSpan.style.cssText = 'font-size:0.6875rem;color:var(--text-muted)';
-    descSpan.textContent = theme.description || '';
+    const compatibility = theme.compatible === false
+      ? ` [${t('settings.plugins_section.incompatible_theme')}]`
+      : '';
+    descSpan.textContent = `${theme.description || ''}${compatibility}`;
+    if (theme.compatible === false) {
+      label.style.opacity = '0.65';
+      label.title = t('settings.plugins_section.incompatible_theme_hint');
+    }
     label.append(cb, nameSpan);
-    if (theme.description) label.append(descSpan);
+    if (theme.description || theme.compatible === false) label.append(descSpan);
     container.appendChild(label);
   }
 
@@ -1424,17 +1480,30 @@ async _renderAdminThemeList() {
   if (dtSelect) {
     // Remove any previously injected file: options
     dtSelect.querySelectorAll('option[data-custom-theme]').forEach(o => o.remove());
-    const published = themes.filter(t => t.published);
+    const published = themes.filter(theme => theme.published && theme.compatible !== false);
     if (published.length > 0) {
       const sep = document.createElement('option');
       sep.disabled = true;
-      sep.textContent = '── Custom ──';
+      sep.textContent = `── ${t('settings.admin.custom_themes')} ──`;
       sep.setAttribute('data-custom-theme', '1');
       dtSelect.appendChild(sep);
       for (const theme of published) {
         const opt = document.createElement('option');
         opt.value = `file:${theme.file}`;
         opt.textContent = theme.name || theme.file;
+        opt.setAttribute('data-custom-theme', '1');
+        dtSelect.appendChild(opt);
+      }
+    }
+    const currentDefault = this.serverSettings.default_theme || '';
+    if (currentDefault.startsWith('file:') && !published.some(theme => `file:${theme.file}` === currentDefault)) {
+      const file = currentDefault.slice(5);
+      const theme = themes.find(item => item.file === file);
+      if (theme) {
+        const opt = document.createElement('option');
+        opt.value = currentDefault;
+        opt.textContent = `${theme.name || file} (${t('settings.plugins_section.incompatible_theme')})`;
+        opt.disabled = true;
         opt.setAttribute('data-custom-theme', '1');
         dtSelect.appendChild(opt);
       }
@@ -1539,7 +1608,7 @@ _applyServerBranding() {
   const preview = document.getElementById('server-icon-preview');
   if (preview) {
     if (icon) {
-      preview.innerHTML = `<img src="${icon}" alt="Server Icon">`;
+      preview.innerHTML = `<img src="${icon}" alt="${t('media.server_icon_alt')}">`;
     } else {
       preview.innerHTML = '<span class="server-icon-text">⬡</span>';
     }
@@ -1606,7 +1675,7 @@ _initServerBranding() {
   // Server banner upload
   document.getElementById('server-banner-upload-btn')?.addEventListener('click', async () => {
     const fileInput = document.getElementById('server-banner-file');
-    if (!fileInput || !fileInput.files[0]) return this._showToast('Select an image first', 'error');
+    if (!fileInput || !fileInput.files[0]) return this._showToast(t('settings.admin.select_image_first'), 'error');
     const form = new FormData();
     form.append('image', fileInput.files[0]);
     try {
@@ -1618,25 +1687,30 @@ _initServerBranding() {
       const data = await res.json();
       if (data.error) return this._showToast(data.error, 'error');
       this.socket.emit('update-server-setting', { key: 'server_banner', value: data.url });
-      this._showToast('Server banner updated', 'success');
+      this._showToast(t('settings.admin.server_banner_updated'), 'success');
       fileInput.value = '';
     } catch (err) {
-      this._showToast('Upload failed', 'error');
+      this._showToast(t('settings.admin.upload_failed'), 'error');
     }
   });
 
   // Server banner remove
   document.getElementById('server-banner-remove-btn')?.addEventListener('click', () => {
     this.socket.emit('update-server-setting', { key: 'server_banner', value: '' });
-    this._showToast('Server banner removed', 'success');
+    this._showToast(t('settings.admin.server_banner_removed'), 'success');
   });
 
   // Banner header mode dropdown (client-side / localStorage)
   document.getElementById('banner-header-mode')?.addEventListener('change', (e) => {
     localStorage.setItem('haven_banner_header_mode', e.target.value);
     this._applyServerSettings();
-    const labels = { full: 'Full header (opaque)', shaded: 'Shaded header', minimal: 'Minimal header', transparent: 'Transparent header' };
-    this._showToast(labels[e.target.value] || 'Header mode updated', 'success');
+    const labels = {
+      full: t('settings.admin.banner_mode_full'),
+      shaded: t('settings.admin.banner_mode_shaded'),
+      minimal: t('settings.admin.banner_mode_minimal'),
+      transparent: t('settings.admin.banner_mode_transparent')
+    };
+    this._showToast(labels[e.target.value] || t('settings.admin.header_mode_updated'), 'success');
   });
 
   // Banner height slider (client-side / localStorage)
@@ -1671,16 +1745,16 @@ _initServerBranding() {
   document.getElementById('vanity-code-save-btn')?.addEventListener('click', () => {
     const val = document.getElementById('vanity-code-input')?.value.trim() || '';
     if (val && (val.length < 3 || val.length > 32 || !/^[a-zA-Z0-9_-]+$/.test(val))) {
-      return this._showToast('Vanity code must be 3-32 chars (letters, numbers, hyphens, underscores)', 'error');
+      return this._showToast(t('settings.admin.vanity_invalid'), 'error');
     }
     this.socket.emit('update-server-setting', { key: 'vanity_code', value: val });
-    this._showToast(val ? 'Vanity invite link saved' : 'Vanity invite link cleared', 'success');
+    this._showToast(t(val ? 'settings.admin.vanity_saved' : 'settings.admin.vanity_cleared'), 'success');
   });
 
   document.getElementById('vanity-code-clear-btn')?.addEventListener('click', () => {
     document.getElementById('vanity-code-input').value = '';
     this.socket.emit('update-server-setting', { key: 'vanity_code', value: '' });
-    this._showToast('Vanity invite link cleared', 'success');
+    this._showToast(t('settings.admin.vanity_cleared'), 'success');
   });
 },
 
@@ -1736,18 +1810,18 @@ _renderIpBanList(bans) {
   const list = document.getElementById('ip-bans-list');
   if (!list) return;
   if (!Array.isArray(bans) || bans.length === 0) {
-    list.innerHTML = `<p class="muted-text">${t('settings.admin.no_banned_ips') || 'No banned IPs.'}</p>`;
+    list.innerHTML = `<p class="muted-text">${t('settings.admin.no_banned_ips')}</p>`;
     return;
   }
   list.innerHTML = bans.map(b => `
     <div class="ban-item">
       <div class="ban-info">
         <strong>${this._escapeHtml(b.ip)}</strong>
-        <span class="ban-reason">${b.reason ? this._escapeHtml(b.reason) : (t('settings.admin.no_reason') || 'No reason')}</span>
+        <span class="ban-reason">${b.reason ? this._escapeHtml(b.reason) : t('settings.admin.no_reason')}</span>
         <span class="ban-date">${new Date(b.created_at).toLocaleDateString()}${b.banned_by_name ? ` — ${this._escapeHtml(b.banned_by_name)}` : ''}</span>
       </div>
       <div class="ban-actions">
-        <button class="btn-sm btn-unban" data-ip="${this._escapeHtml(b.ip)}">${t('settings.admin.unban_btn') || 'Unban'}</button>
+        <button class="btn-sm btn-unban" data-ip="${this._escapeHtml(b.ip)}">${t('settings.admin.unban_btn')}</button>
       </div>
     </div>
   `).join('');
@@ -1964,7 +2038,7 @@ _openBulkCleanup() {
     this.socket.emit('bulk-remove-users', { filter, dryRun: true }, (res) => {
       previewBox.style.display = 'block';
       if (!res || res.error) {
-        previewBox.innerHTML = `<span style="color:var(--danger)">${this._escapeHtml(res && res.error ? res.error : 'Preview failed')}</span>`;
+        previewBox.innerHTML = `<span style="color:var(--danger)">${this._escapeHtml(res && res.error ? res.error : t('settings.admin.bulk_preview_failed'))}</span>`;
         return;
       }
       const users = res.users || [];
@@ -2276,7 +2350,7 @@ _openMemberChannelPicker(userId, username, mode) {
       <div class="aml-ch-picker-subtitle">
         <span class="aml-ch-picker-count">0 / ${channels.length}</span>
         <input type="search" id="${searchId}" class="aml-ch-picker-search"
-               placeholder="${t('settings.admin.select_all') === 'Select All' ? 'Filter channels…' : ''}">
+               placeholder="${t('settings.admin.filter_channels')}">
       </div>
       <div class="aml-channel-list">
         ${channels.map(c => `
@@ -2375,10 +2449,97 @@ _openMemberChannelPicker(userId, username, mode) {
 // INVITE LINKS
 // ═══════════════════════════════════════════════════════
 
+// Run the configured STUN/TURN through a real ICE gathering and say, in words
+// an admin can act on, what works and what does not.
+//
+// Every voice thread has run the same course: it fails for users, the admin has
+// no way to see why, and it only gets solved when someone walks them through a
+// third-party ICE test page and reads the candidate list back to them. The
+// browser knows all of this the moment it gathers candidates. #5542 cost three
+// people several days between them, and the answer in the end was a mistyped
+// port that this would have named in ten seconds.
+async _runConnectivityTest() {
+  const btn = document.getElementById('test-connectivity-btn');
+  const box = document.getElementById('connectivity-test-result');
+  if (!btn || !box || !this.voice) return;
+
+  const line = (icon, text, muted) =>
+    `<div style="display:flex;gap:6px;align-items:flex-start;margin:3px 0${muted ? ';opacity:0.75' : ''}">` +
+    `<span style="flex:none">${icon}</span><span>${text}</span></div>`;
+
+  btn.disabled = true;
+  box.style.display = '';
+  box.innerHTML = `<small class="settings-hint">${t('settings.admin.test_connectivity_running')}</small>`;
+
+  try {
+    // Deliberately the live endpoint rather than the values in the boxes, so
+    // this tests what users are actually handed, including unsaved edits being
+    // absent. Saying "save first" in the hint is cheaper than guessing here.
+    const res = await fetch('/api/ice-servers', {
+      headers: { Authorization: `Bearer ${localStorage.getItem('haven_token')}` }
+    });
+    if (!res.ok) throw new Error(t('settings.admin.test_server_list_failed'));
+    const cfg = await res.json();
+    const report = await this.voice.diagnoseConnectivity(cfg.iceServers || []);
+
+    const out = [];
+
+    if (!report.stunTotal && !report.turnTotal) {
+      out.push(line('⚠️', t('settings.admin.test_none_configured')));
+    }
+
+    // Headline first: can two people on different networks reach each other.
+    if (report.hasRelay) {
+      out.push(line('✅', t('settings.admin.test_ok_relay')));
+    } else if (report.canCrossNetworks) {
+      out.push(line('✅', t('settings.admin.test_ok_stun')));
+    } else if (report.stunTotal || report.turnTotal) {
+      out.push(line('❌', t('settings.admin.test_fail_nothing')));
+    }
+
+    // Then the specifics, naming each server, because "one of them is wrong"
+    // is the part that takes days to find by hand.
+    for (const r of report.results) {
+      const name = this._escapeHtml(r.urls);
+      const why = r.error ? ` <span style="opacity:0.8">(${this._escapeHtml(r.error)})</span>` : '';
+      if (r.isTurn) {
+        out.push(r.relay
+          ? line('✅', t('settings.admin.test_turn_ok', { server: name }), true)
+          : line('❌', t('settings.admin.test_turn_dead', { server: name }) + why));
+      } else {
+        out.push(r.srflx
+          ? line('✅', t('settings.admin.test_stun_ok', { server: name }), true)
+          : line('❌', t('settings.admin.test_stun_dead', { server: name }) + why));
+      }
+    }
+
+    // Advice, only where it applies.
+    if (report.deadTurn.length) {
+      out.push(line('💡', t('settings.admin.test_tip_turn')));
+    } else if (report.canCrossNetworks && !report.turnTotal) {
+      out.push(line('💡', t('settings.admin.test_tip_no_turn')));
+    }
+    if (report.deadStun.length && report.stunLive) {
+      out.push(line('💡', t('settings.admin.test_tip_partial')));
+    }
+
+    // The caveat that actually bit people: this ran from wherever the admin is
+    // sitting. A server reachable only on the LAN passes here and fails for
+    // everyone else, which is precisely how #5542 stayed hidden for days.
+    out.push(line('ℹ️', t('settings.admin.test_caveat'), true));
+
+    box.innerHTML = `<div style="font-size:0.8125rem;line-height:1.45">${out.join('')}</div>`;
+  } catch (err) {
+    box.innerHTML = `<small class="settings-hint">${this._escapeHtml(t('settings.admin.test_connectivity_failed', { error: err.message || t('settings.admin.unknown_error') }))}</small>`;
+  } finally {
+    btn.disabled = false;
+  }
+},
+
 _openInviteLinksModal() {
   const modal = document.getElementById('invite-links-modal');
   if (!modal) return;
-  if (!this.user.isAdmin && !this._hasGlobalPerm('manage_server') && !this._hasGlobalPerm('invite_users')) return this._showToast('You don\'t have permission to manage invite links', 'error');
+  if (!this.user.isAdmin && !this._hasGlobalPerm('manage_server') && !this._hasGlobalPerm('invite_users')) return this._showToast(t('settings.admin.invite_links_no_permission'), 'error');
   if (typeof this._renderInviteCreateChannels === 'function') {
     try { this._renderInviteCreateChannels(true); } catch { /* non-critical */ }
   }
@@ -2396,6 +2557,80 @@ _openInviteLinksModal() {
     maxUsesInput.min = restrictUses ? 1 : 0;
     maxUsesInput.max = restrictUses ? maxInvtUses : 100000;
   }
+},
+
+// ═══════════════════════════════════════════════════════
+// markdown keyboard shortcut helper functions
+// ═══════════════════════════════════════════════════════
+
+_wrapSelectedText(inputEl, before, after, forEachLine = false) {
+  const input = inputEl || document.getElementById('message-input');
+
+  const start = input.selectionStart;
+  const end = input.selectionEnd;
+  if (start === end) return false;
+
+  const selectedText = input.value.substring(start, end);
+  const replacement = forEachLine ? selectedText.split('\n').map(line => line ? `${before}${line}${after}` : line).join('\n') : `${before}${selectedText}${after}`;
+
+  input.setRangeText(replacement, start, end);
+  input.setSelectionRange(start, start + replacement.length);
+  // setRangeText does not fire 'input', and the composers rely on it for
+  // auto-resize, the draft, and the typing indicator.
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  return true;
+},
+
+_handleMarkdownLinkPaste(inputEl, event) {
+  const input = inputEl || document.getElementById('message-input');
+  const url = event.clipboardData.getData('text/plain').trim();
+
+  // Only handle pasted URLs.
+  if (!/^https?:\/\/\S+$/i.test(url)) return false;
+  return this._wrapSelectedText(input, '[', `](${url})`);
+},
+
+_handleMarkdownShortcuts(inputEl, event) {
+  const input = inputEl || document.getElementById('message-input');
+
+  const modifier = event.ctrlKey || event.metaKey;
+  // AltGr reports as Ctrl+Alt on Windows, and those combos type characters.
+  if (!modifier || event.altKey) return false;
+  const key = (event.key || '').toLowerCase();
+
+  // Italic (Ctrl/Cmd + I). Shift+I is left to the browser (DevTools).
+  if (key === 'i' && !event.shiftKey) {
+    return this._wrapSelectedText(input, '*', `*`, true);
+  }
+
+  // Bold (Ctrl/Cmd + B). Shift+B is the bookmarks bar in Chrome.
+  if (key === 'b' && !event.shiftKey) {
+    return this._wrapSelectedText(input, '**', `**`, true);
+  }
+
+  // Code (Ctrl/Cmd + Shift + C)
+  if (event.shiftKey && key === 'c') {
+    const start = input.selectionStart;
+    const end = input.selectionEnd;
+    if (start === end) return false;
+
+    const selectedText = input.value.substring(start, end);
+    if (selectedText.includes('\n')) {
+      return this._wrapSelectedText(input, '```\n', '\n```');
+    }
+    return this._wrapSelectedText(input, '`', '`');
+  }
+
+  // Strikethrough (Ctrl/Cmd + Shift + X)
+  if (event.shiftKey && key === 'x') {
+    return this._wrapSelectedText(input, '~~', `~~`, true);
+  }
+
+  // Spoiler (Ctrl/Cmd + Shift + P)
+  if (event.shiftKey && key === 'p') {
+    return this._wrapSelectedText(input, '||', `||`);
+  }
+  return false;
 },
 
 // ═══════════════════════════════════════════════════════
@@ -2456,11 +2691,15 @@ _showMentionDropdown() {
   const canMentionEveryone = this.user && (this.user.isAdmin || this._hasPerm?.('mention_everyone'));
   const everyoneOptions = [];
   if (canMentionEveryone) {
-    if ('everyone'.startsWith(query)) everyoneOptions.push({ name: 'everyone', label: '@everyone', desc: 'Notify everyone in the channel' });
-    if ('here'.startsWith(query)) everyoneOptions.push({ name: 'here', label: '@here', desc: 'Notify online members' });
+    if ('everyone'.startsWith(query)) everyoneOptions.push({ name: 'everyone', label: '@everyone', desc: t('settings.admin.mention_everyone_desc') });
+    if ('here'.startsWith(query)) everyoneOptions.push({ name: 'here', label: '@here', desc: t('settings.admin.mention_here_desc') });
   }
+  // Roles sit behind the same permission, since a role ping fans out the same way. (#5579)
+  const roleOptions = canMentionEveryone
+    ? (this._mentionableRoles || []).filter(r => r && r.name && r.name.toLowerCase().startsWith(query)).slice(0, 5)
+    : [];
 
-  if (filtered.length === 0 && everyoneOptions.length === 0) {
+  if (filtered.length === 0 && everyoneOptions.length === 0 && roleOptions.length === 0) {
     dropdown.style.display = 'none';
     return;
   }
@@ -2474,8 +2713,14 @@ _showMentionDropdown() {
     return `<div class="mention-item${active}" data-username="${opt.name}" data-everyone="1"><strong>${opt.label}</strong> <span class="mention-item-handle">${this._escapeHtml(opt.desc)}</span></div>`;
   }).join('');
 
+  const roleItems = roleOptions.map((r, i) => {
+    const active = (i === 0 && filtered.length === 0 && everyoneOptions.length === 0) ? ' active' : '';
+    const dot = r.color ? `<span class="mention-role-dot" style="background:${this._escapeHtml(r.color)}"></span>` : '';
+    return `<div class="mention-item${active}" data-username="${this._escapeHtml(r.name)}" data-role="1">${dot}<strong>@${this._escapeHtml(r.name)}</strong> <span class="mention-item-handle">${this._escapeHtml(t('settings.admin.mention_role_desc'))}</span></div>`;
+  }).join('');
+
   const memberItems = filtered.map((m, i) => {
-    const isFirstMember = (i === 0 && everyoneOptions.length === 0);
+    const isFirstMember = (i === 0 && everyoneOptions.length === 0 && roleOptions.length === 0);
     const nick = m.id && this._nicknames ? this._nicknames[m.id] : '';
     const display = nick || m.username || m.loginName || '';
     const login = m.loginName || m.username || '';
@@ -2485,7 +2730,7 @@ _showMentionDropdown() {
     return `<div class="mention-item${isFirstMember ? ' active' : ''}" data-username="${this._escapeHtml(login)}">${this._escapeHtml(display)}${suffix}</div>`;
   }).join('');
 
-  dropdown.innerHTML = everyoneItems + memberItems;
+  dropdown.innerHTML = everyoneItems + roleItems + memberItems;
 
   dropdown.style.display = 'block';
 
@@ -3278,7 +3523,7 @@ async _maybeUploadEncryptedDmFile(file, code, ch) {
     formData.append('file', blob, 'e2e-file.enc');
     const data = await this._uploadWithProgress('/api/upload-file', formData);
     if (!data || !data.url) {
-      this._showToast(t('toasts.encrypted_image_failed') || 'Encrypted upload failed', 'error');
+      this._showToast(t('toasts.encrypted_image_failed'), 'error');
       return true;
     }
     const meta = JSON.stringify({
@@ -3306,7 +3551,7 @@ async _maybeUploadEncryptedDmFile(file, code, ch) {
     if (err?.aborted) return true;
     console.error('[E2E] File encryption failed:', err);
     const _detail = err?.message ? ` — ${err.message}` : '';
-    this._showToast(`${t('toasts.encrypted_image_failed') || 'Encrypted upload failed'}${_detail}`, 'error');
+    this._showToast(`${t('toasts.encrypted_image_failed')}${_detail}`, 'error');
     return true;
   }
 },
@@ -3604,7 +3849,7 @@ _setupDiscordImport() {
         body: JSON.stringify({ discordToken })
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Connection failed');
+      if (!res.ok) throw new Error(data.error || t('settings.admin.import_connection_failed'));
 
       // Show server list
       document.getElementById('import-connect-step-token').style.display = 'none';
@@ -3721,13 +3966,13 @@ async _importUploadFile(file) {
         } else {
           try {
             const err = JSON.parse(xhr.responseText);
-            reject(new Error(err.error || 'Upload failed'));
+            reject(new Error(err.error || t('settings.admin.import_upload_failed')));
           } catch {
-            reject(new Error('Upload failed (status ' + xhr.status + ')'));
+            reject(new Error(t('settings.admin.import_upload_failed_status', { status: xhr.status })));
           }
         }
       };
-      xhr.onerror = () => reject(new Error('Network error'));
+      xhr.onerror = () => reject(new Error(t('settings.admin.import_network_error')));
       xhr.send(formData);
     });
 
@@ -3760,10 +4005,10 @@ async _importUploadFile(file) {
         <label>
           <input type="checkbox" checked>
           <span class="import-ch-name">
-            <input type="text" value="${this._escapeHtml(ch.name)}" title="Rename channel">
+            <input type="text" value="${this._escapeHtml(ch.name)}" title="${t('settings.admin.import_rename_channel')}">
           </span>
         </label>
-        <span class="import-ch-count">${ch.messageCount.toLocaleString()} msgs</span>
+        <span class="import-ch-count">${t('settings.admin.import_messages_short', { count: ch.messageCount.toLocaleString() })}</span>
       `;
       channelList.appendChild(row);
     });
@@ -3802,7 +4047,7 @@ async _importPickGuild(guild) {
       body: JSON.stringify({ discordToken, guildId: guild.id })
     });
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Failed to load channels');
+    if (!res.ok) throw new Error(data.error || t('settings.admin.import_load_channels_failed'));
 
     const cList = document.getElementById('import-connect-channel-list');
     cList.innerHTML = '';
@@ -3857,7 +4102,7 @@ async _importPickGuild(guild) {
               <input type="checkbox" checked>
               <span class="import-ch-name">🧵 ${this._escapeHtml(t.name)}${tagStr}</span>
             </label>
-            <span class="import-ch-count import-type-badge">thread</span>
+            <span class="import-ch-count import-type-badge">${t('settings.admin.import_thread')}</span>
           `;
           cList.appendChild(tRow);
         });
@@ -3883,9 +4128,9 @@ async _importPickGuild(guild) {
           tRow.innerHTML = `
             <label>
               <input type="checkbox" checked>
-              <span class="import-ch-name">🧵 ${this._escapeHtml(t.name)}${t.parentName ? ` <span class="muted-text" style="font-size:0.625rem">in #${this._escapeHtml(t.parentName)}</span>` : ''}</span>
+              <span class="import-ch-name">🧵 ${this._escapeHtml(t.name)}${t.parentName ? ` <span class="muted-text" style="font-size:0.625rem">${window.t('settings.admin.import_in_channel', { name: this._escapeHtml(t.parentName) })}</span>` : ''}</span>
             </label>
-            <span class="import-ch-count import-type-badge">thread</span>
+            <span class="import-ch-count import-type-badge">${window.t('settings.admin.import_thread')}</span>
           `;
           cList.appendChild(tRow);
         });
@@ -3923,7 +4168,7 @@ async _importConnectFetch() {
   if (!selected.length) { this._showToast(t('settings.admin.select_channel_warning'), 'error'); return; }
 
   fetchBtn.disabled = true;
-  fetchBtn.textContent = '⏳ Fetching...';
+  fetchBtn.textContent = `⏳ ${t('settings.admin.import_fetching')}`;
   fetchStatus.style.display = '';
   fetchStatus.textContent = t(selected.length === 1 ? 'settings.admin.import_fetching_one' : 'settings.admin.import_fetching_other', { count: selected.length });
   fetchStatus.style.color = '';
@@ -3940,7 +4185,7 @@ async _importConnectFetch() {
       })
     });
     const result = await res.json();
-    if (!res.ok) throw new Error(result.error || 'Fetch failed');
+    if (!res.ok) throw new Error(result.error || t('settings.admin.import_fetch_failed'));
 
     // Transition to the standard preview step (reuses existing execute flow)
     this._importSetState(result.importId, result);
@@ -3964,10 +4209,10 @@ async _importConnectFetch() {
         <label>
           <input type="checkbox" checked>
           <span class="import-ch-name">
-            <input type="text" value="${this._escapeHtml(ch.name)}" title="Rename channel">
+            <input type="text" value="${this._escapeHtml(ch.name)}" title="${t('settings.admin.import_rename_channel')}">
           </span>
         </label>
-        <span class="import-ch-count">${ch.messageCount.toLocaleString()} msgs</span>
+        <span class="import-ch-count">${t('settings.admin.import_messages_short', { count: ch.messageCount.toLocaleString() })}</span>
       `;
       channelList.appendChild(row);
     });
@@ -4056,7 +4301,7 @@ _initRoleManagement() {
     const levelStr = await this._showPromptModal(t('settings.admin.roles_level_title'), t('settings.admin.roles_level_hint'), '25');
     if (levelStr === null) return;
     const level = parseInt(levelStr, 10);
-    if (isNaN(level) || level < 1 || level > 99) { this._showToast(t('settings.admin.roles_level_invalid'), 'error'); return; }
+    if (isNaN(level) || level < 0 || level > 99) { this._showToast(t('settings.admin.roles_level_invalid'), 'error'); return; }
     this._roleEmit('create-role', { name: name.trim(), level, color: '#aaaaaa' }, (res) => {
       if (res.error) { this._showToast(res.error, 'error'); return; }
       this._showToast(t('settings.admin.roles_created'), 'success');
@@ -4231,12 +4476,30 @@ _renderRoleSidebar() {
     </div>
     <div class="role-sidebar-divider"></div>`;
   }
-  html += this._allRoles.map(r =>
+
+  // leveled roles
+  const leveledRoles = this._allRoles.filter(r => r.level > 0);
+  html += leveledRoles.map(r =>
+    `<div class="role-sidebar-item${this._selectedRoleId === r.id ? ' active' : ''}" data-role-id="${r.id}">
+      <span class="role-color-dot" style="background:${this._safeColor(r.color, '#aaa')}"></span>
+      ${this._escapeHtml(r.name)}
+      <span class="role-sidebar-level">Lv.${r.level}</span>
+    </div>`
+  ).join('');
+
+  // Groups (level 0) sit below real roles, separated by a divider.
+  const groups = this._allRoles.filter(r => r.level === 0);
+  if (leveledRoles.length && groups.length) {
+    html += '<div class="role-sidebar-divider"></div>';
+    html += '<div class="role-sidebar-section-label">' + t('modals.role_management.groups_label') + '</div>';
+  }
+  html += groups.map(r =>
     `<div class="role-sidebar-item${this._selectedRoleId === r.id ? ' active' : ''}" data-role-id="${r.id}">
       <span class="role-color-dot" style="background:${this._safeColor(r.color, '#aaa')}"></span>
       ${this._escapeHtml(r.name)}
     </div>`
   ).join('');
+
   list.innerHTML = html;
   list.querySelectorAll('.role-sidebar-item').forEach(el => {
     el.addEventListener('click', () => {
@@ -4270,8 +4533,8 @@ _renderAdminRoleDetail() {
   const sharedSave = document.getElementById('save-role-btn');
   if (sharedSave) sharedSave.style.display = 'none';
   const iconPreview = d.icon
-    ? `<img class="role-icon-preview" src="${this._escapeHtml(d.icon)}" alt="icon">`
-    : '<div class="role-icon-preview" style="display:flex;align-items:center;justify-content:center;font-size:0.6875rem;color:var(--text-muted)">None</div>';
+    ? `<img class="role-icon-preview" src="${this._escapeHtml(d.icon)}" alt="${t('settings.admin.role_form.icon')}">`
+    : `<div class="role-icon-preview" style="display:flex;align-items:center;justify-content:center;font-size:0.6875rem;color:var(--text-muted)">${t('settings.admin.role_form.icon_none')}</div>`;
 
   panel.innerHTML = `
     <div class="role-detail-form">
@@ -4280,14 +4543,14 @@ _renderAdminRoleDetail() {
       <input type="text" class="settings-text-input" id="admin-role-name" value="${this._escapeHtml(d.name)}" maxlength="30">
       <label class="settings-label" style="margin-top:8px;">${t('settings.admin.role_form.color')}</label>
       <input type="color" id="admin-role-color" value="${this._safeColor(d.color, '#e74c3c')}" style="width:50px;height:30px;border:none;cursor:pointer">
-      <label class="settings-label" style="margin-top:8px;">Role Icon</label>
+      <label class="settings-label" style="margin-top:8px;">${t('settings.admin.role_form.icon')}</label>
       <div class="role-icon-upload-row">
         ${iconPreview}
         <input type="file" id="admin-role-icon-file" accept="image/png,image/jpeg,image/gif,image/webp" style="display:none">
-        <button class="btn-sm" id="admin-role-icon-upload-btn" type="button">Upload</button>
-        ${d.icon ? '<button class="btn-sm danger" id="admin-role-icon-remove-btn" type="button">Remove</button>' : ''}
+        <button class="btn-sm" id="admin-role-icon-upload-btn" type="button">${t('settings.admin.upload_btn')}</button>
+        ${d.icon ? `<button class="btn-sm danger" id="admin-role-icon-remove-btn" type="button">${t('settings.admin.remove_btn')}</button>` : ''}
       </div>
-      <small class="muted-text" style="font-size:0.6875rem;">Icon shown next to the role name (auto-resized to 16×16). Max 512KB.</small>
+      <small class="muted-text" style="font-size:0.6875rem;">${t('settings.admin.role_form.icon_hint')}</small>
       <label class="toggle-row" style="margin-top:12px;">
         <span>${t('settings.admin.role_form.visibility')}</span>
         <input type="checkbox" id="admin-role-visible" ${d.visible ? 'checked' : ''}>
@@ -4306,7 +4569,7 @@ _renderAdminRoleDetail() {
   fileInput?.addEventListener('change', async () => {
     const file = fileInput.files[0];
     if (!file) return;
-    if (file.size > 512 * 1024) { this._showToast('Icon must be under 512KB', 'error'); return; }
+    if (file.size > 512 * 1024) { this._showToast(t('settings.admin.role_form.icon_too_large'), 'error'); return; }
     let uploadFile = file;
     try {
       const bmp = await createImageBitmap(file);
@@ -4326,16 +4589,16 @@ _renderAdminRoleDetail() {
       if (j.error) { this._showToast(j.error, 'error'); return; }
       this._pendingAdminIcon = j.path;
       const preview = panel.querySelector('.role-icon-preview');
-      if (preview) preview.outerHTML = `<img class="role-icon-preview" src="${this._escapeHtml(j.path)}" alt="icon">`;
-      this._showToast('Icon uploaded — save to apply', 'success');
-    } catch { this._showToast('Upload failed', 'error'); }
+      if (preview) preview.outerHTML = `<img class="role-icon-preview" src="${this._escapeHtml(j.path)}" alt="${t('settings.admin.role_form.icon')}">`;
+      this._showToast(t('settings.admin.role_form.icon_uploaded_admin'), 'success');
+    } catch { this._showToast(t('settings.admin.upload_failed'), 'error'); }
   });
   document.getElementById('admin-role-icon-remove-btn')?.addEventListener('click', () => {
     this._pendingAdminIcon = null;
     const preview = panel.querySelector('.role-icon-preview');
-    if (preview) preview.outerHTML = '<div class="role-icon-preview" style="display:flex;align-items:center;justify-content:center;font-size:0.6875rem;color:var(--text-muted)">None</div>';
+    if (preview) preview.outerHTML = `<div class="role-icon-preview" style="display:flex;align-items:center;justify-content:center;font-size:0.6875rem;color:var(--text-muted)">${t('settings.admin.role_form.icon_none')}</div>`;
     document.getElementById('admin-role-icon-remove-btn')?.remove();
-    this._showToast('Icon removed — save to apply', 'success');
+    this._showToast(t('settings.admin.role_form.icon_removed_admin'), 'success');
   });
 
   document.getElementById('admin-role-save-btn')?.addEventListener('click', () => {
@@ -4354,6 +4617,24 @@ _renderAdminRoleDetail() {
       this._renderAdminRoleDetail();
     });
   });
+},
+
+_updateRoleLevelPermsVis(levelInputId, permissionsSectionId, permissionsNoteId) {
+  const levelInput = document.getElementById(levelInputId);
+  const permissionsSection = document.getElementById(permissionsSectionId);
+  const permissionsNote = document.getElementById(permissionsNoteId);
+
+  if (!levelInput || (!permissionsSection && !permissionsNote)) return;
+  const update = () => {
+    const level = parseInt(levelInput.value, 10);
+    const isLevelZero = level === 0;
+
+    if(permissionsSection) permissionsSection.style.display = isLevelZero ? 'none' : '';
+    if (permissionsNote) permissionsNote.textContent = isLevelZero ? t('settings.admin.role_form.level_0_role_note') : t('settings.admin.role_form.admin_only_note');
+  };
+
+  levelInput.addEventListener('input', update);
+  update();
 },
 
 _renderRoleDetail() {
@@ -4375,17 +4656,17 @@ _renderRoleDetail() {
       <label class="settings-label">${t('settings.admin.role_form.name')}</label>
       <input type="text" class="settings-text-input" id="role-edit-name" value="${this._escapeHtml(role.name)}" maxlength="30">
       <label class="settings-label" style="margin-top:8px;">${t('settings.admin.role_form.level')}</label>
-      <input type="number" class="settings-number-input" id="role-edit-level" value="${role.level}" min="1" max="99">
+      <input type="number" class="settings-number-input" id="role-edit-level" value="${role.level}" min="0" max="99">
       <label class="settings-label" style="margin-top:8px;">${t('settings.admin.role_form.color')}</label>
       <input type="color" id="role-edit-color" value="${role.color || '#aaaaaa'}" style="width:50px;height:30px;border:none;cursor:pointer">
-      <label class="settings-label" style="margin-top:8px;">Role Icon</label>
+      <label class="settings-label" style="margin-top:8px;">${t('settings.admin.role_form.icon')}</label>
       <div class="role-icon-upload-row">
-        ${role.icon ? `<img class="role-icon-preview" src="${this._escapeHtml(role.icon)}" alt="icon">` : '<div class="role-icon-preview" style="display:flex;align-items:center;justify-content:center;font-size:0.6875rem;color:var(--text-muted)">None</div>'}
+        ${role.icon ? `<img class="role-icon-preview" src="${this._escapeHtml(role.icon)}" alt="${t('settings.admin.role_form.icon')}">` : `<div class="role-icon-preview" style="display:flex;align-items:center;justify-content:center;font-size:0.6875rem;color:var(--text-muted)">${t('settings.admin.role_form.icon_none')}</div>`}
         <input type="file" id="role-icon-file" accept="image/png,image/jpeg,image/gif,image/webp" style="display:none">
-        <button class="btn-sm" id="role-icon-upload-btn" type="button">Upload</button>
-        ${role.icon ? '<button class="btn-sm danger" id="role-icon-remove-btn" type="button">Remove</button>' : ''}
+        <button class="btn-sm" id="role-icon-upload-btn" type="button">${t('settings.admin.upload_btn')}</button>
+        ${role.icon ? `<button class="btn-sm danger" id="role-icon-remove-btn" type="button">${t('settings.admin.remove_btn')}</button>` : ''}
       </div>
-      <small class="muted-text" style="font-size:0.6875rem;">Icon shown next to role name (auto-resized to 16×16). Max 512KB.</small>
+      <small class="muted-text" style="font-size:0.6875rem;">${t('settings.admin.role_form.icon_hint')}</small>
       <label class="toggle-row" style="margin-top:12px;">
         <span>${t('settings.admin.role_form.auto_assign')}</span>
         <input type="checkbox" id="role-edit-auto-assign" ${role.auto_assign ? 'checked' : ''}>
@@ -4402,27 +4683,32 @@ _renderRoleDetail() {
           <div class="role-channel-access-list" id="role-channel-access-list">
             <p class="muted-text" style="padding:12px;text-align:center;font-size:0.75rem">${t('modals.common.loading')}</p>
           </div>
-          <button class="btn-sm btn-accent rca-reapply-btn" id="rca-reapply-btn" title="${this._escapeHtml(t('settings.admin.role_form.reapply_access_tooltip') || 'Re-runs the channel-access rules above against every user who already holds this role. Useful after editing the Grant/Revoke checkboxes: it brings existing members in line with the current configuration without you having to re-assign the role.')}">🔄 ${t('settings.admin.role_form.reapply_access')}</button>
+          <button class="btn-sm btn-accent rca-reapply-btn" id="rca-reapply-btn" title="${this._escapeHtml(t('settings.admin.role_form.reapply_access_tooltip'))}">🔄 ${t('settings.admin.role_form.reapply_access')}</button>
         </div>
       </div>
       <h5 class="settings-section-subtitle" style="margin-top:12px;">${t('settings.admin.role_form.permissions')}</h5>
-      <p class="perm-admin-note">${t('settings.admin.role_form.admin_only_note')}</p>
-      ${allPerms.map(p => {
-        const locked = !this._canControlRolePerm(p);
-        const adminOnly = ADMIN_ONLY_PERMS.includes(p);
-        return `
-        <label class="toggle-row${adminOnly ? ' perm-admin-only' : ''}"${locked ? ' style="opacity:.55" title="You can only change permissions you hold"' : ''}>
-          <span>${permLabels[p] || p.replace(/_/g, ' ')}</span>
-          <input type="checkbox" class="role-perm-checkbox" data-perm="${p}" ${rolePerms.includes(p) ? 'checked' : ''}${locked ? ' disabled' : ''}>
-        </label>`;
-      }).join('')}
+      <p class="perm-admin-note" id="perm-admin-note">${role.level === 0 ? t('settings.admin.role_form.level_0_role_note') : t('settings.admin.role_form.admin_only_note')}</p>
+      <div id="role-permissions-list" style="${role.level === 0 ? 'display:none;' : ''}">
+        ${allPerms.map(p => {
+          const locked = !this._canControlRolePerm(p);
+          const adminOnly = ADMIN_ONLY_PERMS.includes(p);
+          return `
+          <label class="toggle-row${adminOnly ? ' perm-admin-only' : ''}"${locked ? ` style="opacity:.55" title="${t('settings.admin.role_form.permissions_held_only')}"` : ''}>
+            <span>${permLabels[p] || p.replace(/_/g, ' ')}</span>
+            <input type="checkbox" class="role-perm-checkbox" data-perm="${p}" ${rolePerms.includes(p) ? 'checked' : ''}${locked ? ' disabled' : ''}>
+          </label>`;
+        }).join('')}
+      </div>
       <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn-sm btn-accent" id="role-members-btn">👥 Members</button>
-        <button class="btn-sm" id="duplicate-role-btn">📋 Duplicate</button>
+        <button class="btn-sm btn-accent" id="role-members-btn">👥 ${t('settings.admin.role_form.members')}</button>
+        <button class="btn-sm" id="duplicate-role-btn">📋 ${t('settings.admin.role_form.duplicate')}</button>
         <button class="btn-sm danger" id="delete-role-btn">${t('settings.admin.role_form.delete')}</button>
       </div>
     </div>
   `;
+
+  // Toggle permissions visibility based on the current role level.
+  this._updateRoleLevelPermsVis('role-edit-level', 'role-permissions-list', 'perm-admin-note');
 
   // Toggle channel access panel visibility
   const linkCheckbox = document.getElementById('role-edit-link-channel-access');
@@ -4435,7 +4721,7 @@ _renderRoleDetail() {
   iconFileInput?.addEventListener('change', async () => {
     const file = iconFileInput.files[0];
     if (!file) return;
-    if (file.size > 512 * 1024) { this._showToast('Icon must be under 512KB', 'error'); return; }
+    if (file.size > 512 * 1024) { this._showToast(t('settings.admin.role_form.icon_too_large'), 'error'); return; }
     // Auto-resize to 16x16 on a canvas so any image size works
     let uploadFile = file;
     try {
@@ -4457,17 +4743,17 @@ _renderRoleDetail() {
       if (data.error) { this._showToast(data.error, 'error'); return; }
       this._pendingRoleIcon = data.path;
       const preview = panel.querySelector('.role-icon-preview');
-      if (preview) { preview.outerHTML = `<img class="role-icon-preview" src="${this._escapeHtml(data.path)}" alt="icon">`; }
-      this._showToast('Icon uploaded — save role to apply', 'success');
-    } catch { this._showToast('Upload failed', 'error'); }
+      if (preview) { preview.outerHTML = `<img class="role-icon-preview" src="${this._escapeHtml(data.path)}" alt="${t('settings.admin.role_form.icon')}">`; }
+      this._showToast(t('settings.admin.role_form.icon_uploaded_role'), 'success');
+    } catch { this._showToast(t('settings.admin.upload_failed'), 'error'); }
   });
   document.getElementById('role-icon-remove-btn')?.addEventListener('click', () => {
     this._pendingRoleIcon = null;
     const preview = panel.querySelector('.role-icon-preview');
-    if (preview) { preview.outerHTML = '<div class="role-icon-preview" style="display:flex;align-items:center;justify-content:center;font-size:0.6875rem;color:var(--text-muted)">None</div>'; }
+    if (preview) { preview.outerHTML = `<div class="role-icon-preview" style="display:flex;align-items:center;justify-content:center;font-size:0.6875rem;color:var(--text-muted)">${t('settings.admin.role_form.icon_none')}</div>`; }
     const removeBtn = document.getElementById('role-icon-remove-btn');
     if (removeBtn) removeBtn.remove();
-    this._showToast('Icon removed — save role to apply', 'success');
+    this._showToast(t('settings.admin.role_form.icon_removed_role'), 'success');
   });
   linkCheckbox.addEventListener('change', () => {
     accessPanel.style.display = linkCheckbox.checked ? 'block' : 'none';
@@ -4577,8 +4863,8 @@ _renderRoleDetail() {
   // Channel-access linkage and auto-assign are intentionally NOT copied —
   // both are rarely what an admin wants on a freshly cloned role.
   document.getElementById('duplicate-role-btn')?.addEventListener('click', async () => {
-    const defaultName = `${role.name} (copy)`.slice(0, 30);
-    const newName = await this._showPromptModal('Duplicate Role', 'Name for the duplicated role:', defaultName);
+    const defaultName = t('settings.admin.roles_copy_name', { name: role.name }).slice(0, 30);
+    const newName = await this._showPromptModal(t('settings.admin.roles_duplicate_title'), t('settings.admin.roles_duplicate_prompt'), defaultName);
     if (!newName || !newName.trim()) return;
     const trimmed = newName.trim().slice(0, 30);
     this._roleEmit('create-role', {
@@ -4590,7 +4876,7 @@ _renderRoleDetail() {
       permissions: role.permissions || []
     }, (res) => {
       if (res && res.error) { this._showToast(res.error, 'error'); return; }
-      this._showToast(`Duplicated as "${trimmed}"`, 'success');
+      this._showToast(t('settings.admin.roles_duplicated_as', { name: trimmed }), 'success');
       if (res && res.roleId) this._selectedRoleId = res.roleId;
       this._loadRoles?.();
     });
@@ -4654,7 +4940,7 @@ _openRoleMembersModal(role) {
       (u.displayName || '').toLowerCase().includes(q)
     );
     if (!filtered.length) {
-      listEl.innerHTML = `<p class="rac-placeholder" style="padding:16px;text-align:center">No members found</p>`;
+      listEl.innerHTML = `<p class="rac-placeholder" style="padding:16px;text-align:center">${t('settings.admin.roles_no_members_found')}</p>`;
       return;
     }
     listEl.innerHTML = filtered.map(u => {
@@ -4673,7 +4959,7 @@ _openRoleMembersModal(role) {
         <span style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:0.8125rem">${this._escapeHtml(this._getNickname(u.id, u.displayName))}</span>
         ${badgeHtml}
         <button class="btn-sm${hasRole ? ' danger' : ' btn-accent'} role-member-toggle-btn" data-uid="${u.id}" data-has="${hasRole}" style="flex-shrink:0;min-width:64px">
-          ${hasRole ? 'Remove' : 'Assign'}
+          ${t(hasRole ? 'settings.admin.roles_remove' : 'settings.admin.roles_assign')}
         </button>
       </div>`;
     }).join('');
@@ -4831,7 +5117,7 @@ _renderChannelRolesMembers() {
     const badges = m.isAdmin
       ? `<span class="channel-roles-badge badge-admin"><span class="badge-dot" style="background:#e74c3c"></span>${t('settings.admin.badge_admin')}</span>`
       : (m.roles || []).map(r =>
-          `<span class="channel-roles-badge"><span class="badge-dot" style="background:${this._safeColor(r.color, '#aaa')}"></span>${this._escapeHtml(r.name)}<span class="badge-scope">${r.scope === 'channel' ? '📌 Channel' : '🌐 Server'}</span><span class="revoke-btn" data-uid="${m.id}" data-rid="${r.roleId}" data-scope="${r.scope}" title="Revoke">✕</span></span>`
+          `<span class="channel-roles-badge"><span class="badge-dot" style="background:${this._safeColor(r.color, '#aaa')}"></span>${this._escapeHtml(r.name)}<span class="badge-scope">${r.scope === 'channel' ? `📌 ${t('settings.admin.roles_scope_channel')}` : `🌐 ${t('settings.admin.roles_scope_server')}`}</span><span class="revoke-btn" data-uid="${m.id}" data-rid="${r.roleId}" data-scope="${r.scope}" title="${t('settings.admin.roles_revoke')}">✕</span></span>`
         ).join('') || `<span class="channel-roles-no-role">${t('settings.admin.roles_no_roles')}</span>`;
 
     return `<div class="channel-roles-member${sel}" data-uid="${m.id}">
@@ -4882,7 +5168,7 @@ _showChannelRolesActions(userId) {
 
   // Admins cannot modify their own roles
   if (member.isAdmin && member.id === this.user.id) {
-    currentDiv.innerHTML = '<span class="channel-roles-badge" style="background:rgba(231,76,60,0.2);color:#e74c3c"><span class="badge-dot" style="background:#e74c3c"></span>Admin</span>';
+    currentDiv.innerHTML = `<span class="channel-roles-badge" style="background:rgba(231,76,60,0.2);color:#e74c3c"><span class="badge-dot" style="background:#e74c3c"></span>${t('settings.admin.badge_admin')}</span>`;
     const assignArea = panel.querySelector('.channel-roles-assign-area');
     if (assignArea) assignArea.style.display = 'none';
     return;
@@ -4895,7 +5181,7 @@ _showChannelRolesActions(userId) {
     currentDiv.innerHTML = `<span class="channel-roles-badge badge-admin"><span class="badge-dot" style="background:#e74c3c"></span>${t('settings.admin.badge_admin')}</span>`;
   } else if (member.roles.length) {
     currentDiv.innerHTML = member.roles.map(r =>
-      `<span class="channel-roles-badge"><span class="badge-dot" style="background:${this._safeColor(r.color, '#aaa')}"></span>${this._escapeHtml(r.name)} <span class="badge-scope">${r.scope === 'channel' ? '📌 Channel' : '🌐 Server'}</span></span>`
+      `<span class="channel-roles-badge"><span class="badge-dot" style="background:${this._safeColor(r.color, '#aaa')}"></span>${this._escapeHtml(r.name)} <span class="badge-scope">${r.scope === 'channel' ? `📌 ${t('settings.admin.roles_scope_channel')}` : `🌐 ${t('settings.admin.roles_scope_server')}`}</span></span>`
     ).join('');
   } else {
     currentDiv.innerHTML = `<span style="font-size:0.78rem;color:var(--text-muted)">${t('settings.admin.roles_no_assigned')}</span>`;
@@ -4944,13 +5230,25 @@ _renderChannelRolesRoleList() {
     list.innerHTML = `<p style="font-size:0.82rem;color:var(--text-muted);text-align:center;padding:8px">${t('settings.admin.roles_none_yet')}</p>`;
     return;
   }
-  list.innerHTML = this._allRoles.map(r =>
+
+  const renderRole = r =>
     `<div class="channel-roles-role-item${this._channelRolesSelectedRole === r.id ? ' active' : ''}" data-role-id="${r.id}">
       <span class="role-color-dot" style="background:${this._safeColor(r.color, '#aaa')}"></span>
       <span class="channel-roles-role-name">${this._escapeHtml(r.name)}</span>
       <span class="channel-roles-role-level">Lv.${r.level}</span>
-    </div>`
-  ).join('');
+    </div>`;
+
+  const leveledRoles = this._allRoles.filter(r => r.level > 0);
+  let html = leveledRoles.map(renderRole).join('');
+
+  const groups = this._allRoles.filter(r => r.level === 0);
+  if (leveledRoles.length && groups.length) {
+    html += '<div class="role-sidebar-divider"></div>';
+    html += '<div class="role-sidebar-section-label">' + t('modals.role_management.groups_label') + '</div>';
+  }
+  html += groups.map(renderRole).join('');
+
+  list.innerHTML = html;
   list.querySelectorAll('.channel-roles-role-item').forEach(el => {
     el.addEventListener('click', () => {
       this._channelRolesSelectedRole = parseInt(el.dataset.roleId, 10);
@@ -4981,7 +5279,7 @@ _renderChannelRolesRoleDetail() {
       <div class="cr-role-form-row cr-role-inline">
         <div>
           <label class="cr-role-label">${t('settings.admin.role_form.level')}</label>
-          <input type="number" class="settings-number-input" id="cr-role-level" value="${role.level}" min="1" max="99" style="width:60px">
+          <input type="number" class="settings-number-input" id="cr-role-level" value="${role.level}" min="0" max="99" style="width:60px">
         </div>
         <div>
           <label class="cr-role-label">${t('settings.admin.role_form.color')}</label>
@@ -4993,13 +5291,13 @@ _renderChannelRolesRoleDetail() {
         <span>${t('settings.admin.role_form.auto_assign')}</span>
       </label>
       <label class="cr-role-label" style="margin-top:4px">${t('settings.admin.role_form.permissions')}</label>
-      <p class="perm-admin-note">${t('settings.admin.role_form.admin_only_note')}</p>
-      <div class="cr-role-perms">
+      <p class="perm-admin-note" id="cr-perm-admin-note">${role.level === 0 ? t('settings.admin.role_form.level_0_role_note') : t('settings.admin.role_form.admin_only_note')}</p>
+      <div class="cr-role-perms" id="cr-role-permissions-list" style="${role.level === 0 ? 'display:none;' : ''}">
         ${allPerms.map(p => {
           const locked = !this._canControlRolePerm(p);
           const adminOnly = ADMIN_ONLY_PERMS.includes(p);
           return `
-          <label class="cr-perm-toggle${adminOnly ? ' perm-admin-only' : ''}"${locked ? ' style="opacity:.55" title="You can only change permissions you hold"' : ''}>
+          <label class="cr-perm-toggle${adminOnly ? ' perm-admin-only' : ''}"${locked ? ` style="opacity:.55" title="${t('settings.admin.role_form.permissions_held_only')}"` : ''}>
             <input type="checkbox" class="cr-perm-cb" data-perm="${p}" ${rolePerms.includes(p) ? 'checked' : ''}${locked ? ' disabled' : ''}>
             <span>${permLabels[p] || p.replace(/_/g, ' ')}</span>
           </label>`;
@@ -5012,10 +5310,13 @@ _renderChannelRolesRoleDetail() {
     </div>
   `;
 
+  // Toggle permissions visibility based on the current role level.
+  this._updateRoleLevelPermsVis('cr-role-level', 'cr-role-permissions-list', 'cr-perm-admin-note');
+
   document.getElementById('cr-save-role-btn').addEventListener('click', () => {
     const perms = [...panel.querySelectorAll('.cr-perm-cb:checked')].map(cb => cb.dataset.perm);
     const newLevel = parseInt(document.getElementById('cr-role-level').value, 10);
-    if (isNaN(newLevel) || newLevel < 1 || newLevel > 99) { this._showToast(t('settings.admin.roles_level_invalid'), 'error'); return; }
+    if (isNaN(newLevel) || newLevel < 0 || newLevel > 99) { this._showToast(t('settings.admin.roles_level_invalid'), 'error'); return; }
     this._roleEmit('update-role', {
       roleId: role.id,
       name: document.getElementById('cr-role-name').value.trim(),
@@ -5069,7 +5370,7 @@ async _createChannelRole() {
   const levelStr = await this._showPromptModal(t('settings.admin.roles_level_title'), t('settings.admin.roles_level_hint'), '25');
   if (levelStr === null) return;
   const level = parseInt(levelStr, 10);
-  if (isNaN(level) || level < 1 || level > 99) { this._showToast(t('settings.admin.roles_level_invalid'), 'error'); return; }
+  if (isNaN(level) || level < 0 || level > 99) { this._showToast(t('settings.admin.roles_level_invalid'), 'error'); return; }
   this._roleEmit('create-role', { name: name.trim(), level, color: '#aaaaaa' }, (res) => {
     if (res.error) { this._showToast(res.error, 'error'); return; }
     this._showToast(t('settings.admin.roles_created'), 'success');
@@ -5100,7 +5401,7 @@ _openAssignRoleModal(userId, username) {
   const renderCheckboxes = (heldRoleIds) => {
     if (!container) return;
     if (!this._allRoles.length) {
-      container.innerHTML = `<p class="muted-text">${this._escapeHtml(t('settings.admin.roles_none') || 'No roles defined yet.')}</p>`;
+      container.innerHTML = `<p class="muted-text">${this._escapeHtml(t('settings.admin.roles_none'))}</p>`;
       return;
     }
     container.innerHTML = this._allRoles.map(r => {
@@ -5360,7 +5661,7 @@ _renderRacChannels() {
     html += `
       <div class="rac-add-channel-row" style="padding:8px;border-top:1px solid var(--border-color, rgba(255,255,255,0.08));margin-top:6px">
         <select id="rac-add-channel-dropdown" class="rac-role-select" style="width:100%" ${missingChannels.length ? '' : 'disabled'}>
-          <option value="">${this._escapeHtml(missingChannels.length ? '+ Add user to channel…' : 'User is in every channel')}</option>
+          <option value="">${this._escapeHtml(t(missingChannels.length ? 'settings.admin.roles_add_user_channel' : 'settings.admin.roles_user_every_channel'))}</option>
           ${opts}
         </select>
       </div>`;
@@ -5488,7 +5789,7 @@ _renderRacConfig() {
   const inheritedRoles = [];
   if (channelId !== null) {
     const serverWide = user.currentRoles.filter(r => !r.channel_id);
-    serverWide.forEach(r => inheritedRoles.push({ ...r, _inheritedFrom: t('settings.admin.roles_server_wide') || 'Server-wide' }));
+    serverWide.forEach(r => inheritedRoles.push({ ...r, _inheritedFrom: t('settings.admin.roles_server_wide') }));
 
     const thisChannel = this._racData.channels.find(c => c.id === channelId);
     if (thisChannel && thisChannel.parentId) {
@@ -5520,23 +5821,23 @@ _renderRacConfig() {
     const applyToSubs = !!(assignment && assignment.applyToSubs);
 
     let stateBadge = '';
-    if (removed) stateBadge = `<span class="rac-state-badge rac-state-removed">${this._escapeHtml(t('settings.admin.roles_pending_remove') || 'Pending remove')}</span>`;
-    else if (assignment && !card.held) stateBadge = `<span class="rac-state-badge rac-state-added">${this._escapeHtml(t('settings.admin.roles_pending_add') || 'Pending add')}</span>`;
-    else if (assignment && card.held) stateBadge = `<span class="rac-state-badge rac-state-edited">${this._escapeHtml(t('settings.admin.roles_pending_edit') || 'Edited')}</span>`;
-    else if (card.held) stateBadge = `<span class="rac-state-badge rac-state-held">${this._escapeHtml(t('settings.admin.roles_held') || 'Held')}</span>`;
+    if (removed) stateBadge = `<span class="rac-state-badge rac-state-removed">${this._escapeHtml(t('settings.admin.roles_pending_remove'))}</span>`;
+    else if (assignment && !card.held) stateBadge = `<span class="rac-state-badge rac-state-added">${this._escapeHtml(t('settings.admin.roles_pending_add'))}</span>`;
+    else if (assignment && card.held) stateBadge = `<span class="rac-state-badge rac-state-edited">${this._escapeHtml(t('settings.admin.roles_pending_edit'))}</span>`;
+    else if (card.held) stateBadge = `<span class="rac-state-badge rac-state-held">${this._escapeHtml(t('settings.admin.roles_held'))}</span>`;
 
     let actionBtn = '';
     if (removed) {
-      actionBtn = `<button type="button" class="btn-sm rac-card-undo-remove" data-role="${card.roleId}">${this._escapeHtml(t('settings.admin.roles_undo') || 'Undo')}</button>`;
+      actionBtn = `<button type="button" class="btn-sm rac-card-undo-remove" data-role="${card.roleId}">${this._escapeHtml(t('settings.admin.roles_undo'))}</button>`;
     } else if (card.held) {
-      actionBtn = `<button type="button" class="btn-sm rac-card-remove" data-role="${card.roleId}">${this._escapeHtml(t('settings.admin.roles_remove') || 'Remove')}</button>`;
+      actionBtn = `<button type="button" class="btn-sm rac-card-remove" data-role="${card.roleId}">${this._escapeHtml(t('settings.admin.roles_remove'))}</button>`;
     } else {
-      actionBtn = `<button type="button" class="btn-sm rac-card-discard" data-role="${card.roleId}">${this._escapeHtml(t('settings.admin.roles_discard') || 'Discard')}</button>`;
+      actionBtn = `<button type="button" class="btn-sm rac-card-discard" data-role="${card.roleId}">${this._escapeHtml(t('settings.admin.roles_discard'))}</button>`;
     }
 
     let editToggle = '';
     if (!removed) {
-      editToggle = `<button type="button" class="btn-sm rac-card-edit" data-role="${card.roleId}">${this._escapeHtml(expanded ? (t('settings.admin.roles_collapse') || 'Collapse') : (t('settings.admin.roles_configure') || 'Configure'))}</button>`;
+      editToggle = `<button type="button" class="btn-sm rac-card-edit" data-role="${card.roleId}">${this._escapeHtml(t(expanded ? 'settings.admin.roles_collapse' : 'settings.admin.roles_configure'))}</button>`;
     }
 
     const editorHtml = expanded ? `
@@ -5559,7 +5860,9 @@ _renderRacConfig() {
             const callerHasPerm = callerIsAdmin || callerPerms.includes('*') || callerPerms.includes(p);
             const isAdminOnly = adminOnlyPerms.includes(p) && !callerIsAdmin;
             const isReadOnly = isAdminOnly || !callerHasPerm;
-            const tooltip = isReadOnly ? (isAdminOnly ? 'Owner only' : "You don't have this permission") : '';
+            const tooltip = isReadOnly
+              ? t(isAdminOnly ? 'settings.admin.roles_owner_only' : 'settings.admin.roles_permission_unavailable')
+              : '';
             return `<label class="rac-perm-item${isReadOnly ? ' disabled' : ''}${checked ? ' checked' : ''}"${tooltip ? ` title="${tooltip}"` : ''}>
               <input type="checkbox" data-perm="${p}" ${checked ? 'checked' : ''} ${isReadOnly ? 'disabled' : ''}>
               ${permLabels[p] || p}
@@ -5570,7 +5873,7 @@ _renderRacConfig() {
     ` : '';
 
     const lockedNotice = !card.held && !grantableIds.has(card.roleId)
-      ? `<span class="rac-card-locked" title="${this._escapeHtml("You can't grant a role at or above your own level")}">🔒</span>`
+      ? `<span class="rac-card-locked" title="${this._escapeHtml(t('settings.admin.roles_cannot_grant_level'))}">🔒</span>`
       : '';
 
     return `
@@ -5593,16 +5896,16 @@ _renderRacConfig() {
   body.innerHTML = `
     <div class="rac-config-section">
       <div class="rac-config-label">${this._escapeHtml(t('settings.admin.roles_assigning_to', { name: user.displayName }))} — ${this._escapeHtml(scopeLabel)}</div>
-      <p class="rac-card-hint">${this._escapeHtml(t('settings.admin.roles_multi_hint') || 'Users may hold multiple roles per scope. Effective permissions are the union of every held role; the highest role drives display color.')}</p>
+      <p class="rac-card-hint">${this._escapeHtml(t('settings.admin.roles_multi_hint'))}</p>
     </div>
 
     <div class="rac-config-section rac-roles-list">
-      ${cards.length ? cards.map(renderCard).join('') : `<p class="rac-placeholder">${this._escapeHtml(t('settings.admin.roles_no_assigned') || 'No roles assigned at this scope.')}</p>`}
+      ${cards.length ? cards.map(renderCard).join('') : `<p class="rac-placeholder">${this._escapeHtml(t('settings.admin.roles_no_assigned'))}</p>`}
     </div>
 
     ${inheritedRoles.length ? `
     <div class="rac-config-section rac-inherited-section">
-      <div class="rac-config-label" style="opacity:0.7;margin-top:4px">${this._escapeHtml(t('settings.admin.roles_inherited_label') || 'Inherited (read-only)')}</div>
+      <div class="rac-config-label" style="opacity:0.7;margin-top:4px">${this._escapeHtml(t('settings.admin.roles_inherited_label'))}</div>
       ${inheritedRoles.map(r => {
         const color = this._safeColor(r.color, '#888');
         return `<div class="rac-role-card rac-role-inherited">
@@ -5610,7 +5913,7 @@ _renderRacConfig() {
             <span class="rac-role-dot" style="background:${color}"></span>
             <span class="rac-card-name" style="opacity:0.8">${this._escapeHtml(r.name)}</span>
             <span class="rac-card-level">Lv.${r.level}</span>
-            <span class="rac-card-locked" title="${this._escapeHtml(t('settings.admin.roles_inherited_title') || 'Inherited — manage at the source scope')}">↑ ${this._escapeHtml(r._inheritedFrom)}</span>
+            <span class="rac-card-locked" title="${this._escapeHtml(t('settings.admin.roles_inherited_title', { role: r._inheritedFrom }))}">↑ ${this._escapeHtml(r._inheritedFrom)}</span>
           </div>
         </div>`;
       }).join('')}
@@ -5618,10 +5921,10 @@ _renderRacConfig() {
     ` : ''}
 
     <div class="rac-config-section rac-add-role-section">
-      <div class="rac-config-label">${this._escapeHtml(t('settings.admin.roles_add_label') || 'Add another role')}</div>
+      <div class="rac-config-label">${this._escapeHtml(t('settings.admin.roles_add_label'))}</div>
       <div class="rac-config-row">
         <select class="rac-role-select" id="rac-add-role-dropdown" ${addableRoles.length ? '' : 'disabled'}>
-          <option value="">${this._escapeHtml(addableRoles.length ? (t('settings.admin.roles_select_to_add') || '-- Select a role to add --') : (t('settings.admin.roles_no_addable') || 'No more roles available'))}</option>
+          <option value="">${this._escapeHtml(t(addableRoles.length ? 'settings.admin.roles_select_to_add' : 'settings.admin.roles_no_addable'))}</option>
           ${addableRoles.map(r => `<option value="${r.id}">● ${this._escapeHtml(r.name)} — Lv.${r.level}</option>`).join('')}
         </select>
       </div>
@@ -5983,21 +6286,21 @@ _setupAuditLog() {
   this._auditHasMore = false;
 
   const ACTION_META = {
-    server_setting_update: { icon: '⚙️', label: 'updated server setting' },
-    channel_create:        { icon: '➕', label: 'created channel' },
-    channel_delete:        { icon: '🗑️', label: 'deleted channel' },
-    channel_rename:        { icon: '✏️', label: 'renamed channel' },
-    role_create:           { icon: '🎭', label: 'created role' },
-    role_update:           { icon: '🎭', label: 'updated role' },
-    role_delete:           { icon: '🎭', label: 'deleted role' },
-    role_assign:           { icon: '👤', label: 'assigned role to' },
-    role_revoke:           { icon: '👤', label: 'revoked role from' },
-    user_kick:             { icon: '👢', label: 'kicked' },
-    user_ban:              { icon: '🚫', label: 'banned' },
-    user_unban:            { icon: '✅', label: 'unbanned' },
-    user_mute:             { icon: '🔇', label: 'muted' },
-    user_unmute:           { icon: '🔊', label: 'unmuted' },
-    user_rename:           { icon: '✏️', label: 'renamed' },
+    server_setting_update: { icon: '⚙️', label: t('modals.audit_log.actions.server_setting_update') },
+    channel_create:        { icon: '➕', label: t('modals.audit_log.actions.channel_create') },
+    channel_delete:        { icon: '🗑️', label: t('modals.audit_log.actions.channel_delete') },
+    channel_rename:        { icon: '✏️', label: t('modals.audit_log.actions.channel_rename') },
+    role_create:           { icon: '🎭', label: t('modals.audit_log.actions.role_create') },
+    role_update:           { icon: '🎭', label: t('modals.audit_log.actions.role_update') },
+    role_delete:           { icon: '🎭', label: t('modals.audit_log.actions.role_delete') },
+    role_assign:           { icon: '👤', label: t('modals.audit_log.actions.role_assign') },
+    role_revoke:           { icon: '👤', label: t('modals.audit_log.actions.role_revoke') },
+    user_kick:             { icon: '👢', label: t('modals.audit_log.actions.user_kick') },
+    user_ban:              { icon: '🚫', label: t('modals.audit_log.actions.user_ban') },
+    user_unban:            { icon: '✅', label: t('modals.audit_log.actions.user_unban') },
+    user_mute:             { icon: '🔇', label: t('modals.audit_log.actions.user_mute') },
+    user_unmute:           { icon: '🔊', label: t('modals.audit_log.actions.user_unmute') },
+    user_rename:           { icon: '✏️', label: t('modals.audit_log.actions.user_rename') },
   };
 
   const _esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -6012,7 +6315,7 @@ _setupAuditLog() {
   const renderRows = (append = false) => {
     if (!append) listEl.innerHTML = '';
     if (!this._auditRows.length) {
-      listEl.innerHTML = '<div class="audit-log-empty">No audit log entries match the current filters.</div>';
+      listEl.innerHTML = `<div class="audit-log-empty">${t('modals.audit_log.empty')}</div>`;
       loadMoreBtn.style.display = 'none';
       return;
     }
@@ -6042,7 +6345,7 @@ _setupAuditLog() {
         <span class="audit-icon">${meta.icon}</span>
         <div class="audit-body">
           <div class="audit-line">
-            <span class="audit-actor">${_esc(r.actor_username || 'system')}</span>
+            <span class="audit-actor">${_esc(r.actor_username || t('modals.audit_log.system'))}</span>
             <span class="audit-action">${_esc(meta.label)}</span>
             ${r.target_name ? `<span class="audit-target">${_esc(r.target_name)}</span>` : ''}
           </div>
@@ -6065,11 +6368,11 @@ _setupAuditLog() {
     if (!append) {
       this._auditRows = [];
       this._auditOldestId = 0;
-      listEl.innerHTML = '<div class="audit-log-empty">Loading...</div>';
+      listEl.innerHTML = `<div class="audit-log-empty">${t('modals.audit_log.loading')}</div>`;
     }
     this.socket.emit('get-audit-log', opts, (resp) => {
       if (!resp || resp.error) {
-        listEl.innerHTML = `<div class="audit-log-empty">${_esc(resp && resp.error ? resp.error : 'Failed to load audit log')}</div>`;
+        listEl.innerHTML = `<div class="audit-log-empty">${_esc(resp && resp.error ? resp.error : t('modals.audit_log.load_failed'))}</div>`;
         loadMoreBtn.style.display = 'none';
         return;
       }
@@ -6199,8 +6502,9 @@ _initAutomodPanel() {
     const el = document.getElementById('media-cache-stats');
     if (!el) return;
     const mb = ((s?.bytes || 0) / 1048576).toFixed(1);
-    el.innerHTML = `Cached: ${s?.items || 0} image(s), ${mb} MB` +
-      (this.user?.isAdmin ? ' <button class="btn-sm" id="media-cache-clear" style="margin-left:6px">Clear</button>' : '');
+    const count = s?.items || 0;
+    el.innerHTML = t(count === 1 ? 'settings.admin.media_cache_one' : 'settings.admin.media_cache_other', { count, size: mb }) +
+      (this.user?.isAdmin ? ` <button class="btn-sm" id="media-cache-clear" style="margin-left:6px">${t('settings.admin.media_cache_clear')}</button>` : '');
     const clearBtn = document.getElementById('media-cache-clear');
     if (clearBtn) clearBtn.addEventListener('click', () => this.socket.emit('clear-media-cache'));
   });
@@ -6223,7 +6527,7 @@ _renderIdleOnline(data) {
   const users = (data && data.users) || [];
   const hrs = (data && data.thresholdHours) || 4;
   if (users.length === 0) {
-    el.innerHTML = `<p class="muted-text">No accounts have been idle-online for ${hrs}h or more.</p>`;
+    el.innerHTML = `<p class="muted-text">${t('settings.admin.idle_online_empty', { hours: hrs })}</p>`;
     return;
   }
   const fmt = (ms) => {
@@ -6234,8 +6538,8 @@ _renderIdleOnline(data) {
   el.innerHTML = users.map(u => `
     <div class="whitelist-item" style="align-items:flex-start">
       <span class="whitelist-username" style="display:flex;flex-direction:column;gap:2px">
-        <span><strong>${this._escapeHtml(u.username || '(unknown)')}</strong>${u.isAdmin ? ' <span class="muted-text">(admin)</span>' : ''}</span>
-        <span class="muted-text">online ${fmt(u.onlineForMs)}, silent ${fmt(u.idleForMs)}</span>
+        <span><strong>${this._escapeHtml(u.username || t('settings.admin.idle_online_unknown'))}</strong>${u.isAdmin ? ` <span class="muted-text">${t('settings.admin.idle_online_admin')}</span>` : ''}</span>
+        <span class="muted-text">${t('settings.admin.idle_online_status', { online: fmt(u.onlineForMs), silent: fmt(u.idleForMs) })}</span>
       </span>
     </div>
   `).join('');
@@ -6300,16 +6604,16 @@ _renderAutomodDomains(rows) {
   const el = document.getElementById('automod-domain-list');
   if (!el) return;
   if (!rows || rows.length === 0) {
-    el.innerHTML = '<p class="muted-text">No domains configured yet.</p>';
+    el.innerHTML = `<p class="muted-text">${t('settings.admin.automod_no_domains')}</p>`;
     return;
   }
   el.innerHTML = rows.map(r => `
     <div class="whitelist-item">
       <span class="whitelist-username">
         <strong style="color:${r.mode === 'deny' ? 'var(--danger, #e5534b)' : 'var(--accent, #5865f2)'}">
-          ${r.mode === 'deny' ? 'BLOCK' : 'ALLOW'}
+          ${t(r.mode === 'deny' ? 'settings.admin.automod_block_badge' : 'settings.admin.automod_allow_badge')}
         </strong>
-        ${this._escapeHtml(r.domain)}${r.include_subdomains ? ' <span class="muted-text">+ subdomains</span>' : ''}
+        ${this._escapeHtml(r.domain)}${r.include_subdomains ? ` <span class="muted-text">${t('settings.admin.automod_subdomains')}</span>` : ''}
         ${r.note ? `<span class="muted-text"> — ${this._escapeHtml(r.note)}</span>` : ''}
       </span>
       <button class="btn-sm btn-danger-sm automod-domain-remove-btn" data-domain="${this._escapeHtml(r.domain)}">✕</button>
@@ -6333,11 +6637,11 @@ _renderAutomodLog(data) {
   // loop that stops an over-tight allowlist from quietly frustrating people.
   if (hostsEl) {
     hostsEl.innerHTML = hostCounts.length
-      ? `<small class="settings-hint">Most-blocked domains this week — click to allow:</small>
+      ? `<small class="settings-hint">${t('settings.admin.automod_top_domains')}</small>
          <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px">
            ${hostCounts.map(h => `
              <button class="btn-sm automod-allow-host" data-host="${this._escapeHtml(h.host)}"
-                     title="Allow ${this._escapeHtml(h.host)}">
+                      title="${t('settings.admin.automod_allow_host', { host: this._escapeHtml(h.host) })}">
                ${this._escapeHtml(h.host)} <span class="muted-text">${h.hits}</span>
              </button>`).join('')}
          </div>`
@@ -6352,7 +6656,7 @@ _renderAutomodLog(data) {
 
   if (!listEl) return;
   if (entries.length === 0) {
-    listEl.innerHTML = '<p class="muted-text">Nothing blocked yet.</p>';
+    listEl.innerHTML = `<p class="muted-text">${t('settings.admin.automod_nothing_blocked')}</p>`;
     return;
   }
   listEl.innerHTML = entries.map(e => `
@@ -6360,7 +6664,7 @@ _renderAutomodLog(data) {
       <span class="whitelist-username" style="display:flex;flex-direction:column;gap:2px">
         <span><strong>${this._escapeHtml(e.username)}</strong>
           <span class="muted-text">${this._escapeHtml(e.rule)}</span>
-          ${e.channel_name ? `<span class="muted-text">in #${this._escapeHtml(e.channel_name)}</span>` : ''}
+          ${e.channel_name ? `<span class="muted-text">${t('settings.admin.automod_in_channel', { name: this._escapeHtml(e.channel_name) })}</span>` : ''}
         </span>
         ${e.host ? `<span class="muted-text">${this._escapeHtml(e.host)}</span>` : ''}
         <span class="muted-text">${this._formatTimestamp ? this._formatTimestamp(e.created_at) : this._escapeHtml(e.created_at)}</span>

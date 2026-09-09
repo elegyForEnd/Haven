@@ -2,11 +2,12 @@
 
 const bcrypt = require('bcryptjs');
 const { utcStamp, isInt } = require('./helpers');
+const { clearChannelRuntimeState } = require('../channelRotation');
 
 module.exports = function register(socket, ctx) {
   const { io, db, state, userHasPermission, getUserEffectiveLevel,
           emitOnlineUsers, broadcastVoiceUsers, getEnrichedChannels, logAudit,
-          invalidateIpBanCache, getMentionableChannelMembers } = ctx;
+          invalidateIpBanCache, getMentionableChannelMembers, handleVoiceLeave } = ctx;
   const { channelUsers, voiceUsers, clearDrawingChannelState } = state;
   const _audit = (typeof logAudit === 'function') ? logAudit : () => {};
   const _invalidateIpCache = (typeof invalidateIpBanCache === 'function') ? invalidateIpBanCache : () => {};
@@ -19,6 +20,31 @@ module.exports = function register(socket, ctx) {
       _tableExists[table] = !!db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table);
     }
     if (_tableExists[table]) db.prepare(sql).run(...params);
+  }
+
+  function removeUserFromVoice(userId) {
+    for (const [code, users] of Array.from(voiceUsers.entries())) {
+      const entry = users.get(userId);
+      if (!entry) continue;
+      const pendingKey = `${userId}:${code}`;
+      const pending = state.pendingVoiceLeave?.get(pendingKey);
+      if (pending) {
+        clearTimeout(pending.timer);
+        state.pendingVoiceLeave.delete(pendingKey);
+      }
+      const liveSocket = io.sockets.sockets.get(entry.socketId);
+      const voiceSocket = liveSocket || {
+        id: entry.socketId,
+        user: {
+          id: userId,
+          displayName: entry.username,
+          isBot: !!entry.isBot,
+          webhookId: entry.webhookId,
+        },
+        leave() {},
+      };
+      handleVoiceLeave(voiceSocket, code);
+    }
   }
 
   // ── Full account-purge cascade ──────────────────────────
@@ -87,11 +113,18 @@ module.exports = function register(socket, ctx) {
     const code = socket.currentChannel;
     if (!code) return;
 
+    // Kicking is a membership change, so a member who is away can be kicked
+    // the same as one who is here. Only the live parts (the kicked notice,
+    // the socket rooms, the online list) need a connection to exist.
+    const targetUser = db.prepare('SELECT id, username, display_name FROM users WHERE id = ?').get(data.userId);
+    if (!targetUser) return socket.emit('error-msg', 'User not found');
     const channelRoom = channelUsers.get(code);
     const targetInfo = channelRoom ? channelRoom.get(data.userId) : null;
-    if (!targetInfo) {
-      return socket.emit('error-msg', 'User is not currently online in this channel (use ban instead)');
+    const isMember = kickCh ? !!db.prepare('SELECT 1 FROM channel_members WHERE channel_id = ? AND user_id = ?').get(kickCh.id, data.userId) : false;
+    if (!targetInfo && !isMember) {
+      return socket.emit('error-msg', 'User is not in this channel');
     }
+    const targetName = targetInfo ? targetInfo.username : (targetUser.display_name || targetUser.username);
 
     if (kickCh) {
       db.prepare('DELETE FROM channel_members WHERE channel_id = ? AND user_id = ?').run(kickCh.id, data.userId);
@@ -100,10 +133,12 @@ module.exports = function register(socket, ctx) {
       subs.forEach(s => delSub.run(s.id, data.userId));
     }
 
-    io.to(targetInfo.socketId).emit('kicked', {
-      channelCode: code,
-      reason: typeof data.reason === 'string' ? data.reason.trim().slice(0, 200) : ''
-    });
+    if (targetInfo) {
+      io.to(targetInfo.socketId).emit('kicked', {
+        channelCode: code,
+        reason: typeof data.reason === 'string' ? data.reason.trim().slice(0, 200) : ''
+      });
+    }
 
     const targetSockets = [...io.sockets.sockets.values()].filter(s => s.user && s.user.id === data.userId);
     for (const ts of targetSockets) {
@@ -115,20 +150,21 @@ module.exports = function register(socket, ctx) {
       ts.emit('channels-list', getEnrichedChannels(data.userId, false, (room) => ts.join(room)));
     }
 
-    channelRoom.delete(data.userId);
-
-    const online = Array.from(channelRoom.values()).map(u => ({
-      id: u.id, username: u.username
-    }));
-    io.to(`channel:${code}`).emit('online-users', {
-      channelCode: code,
-      users: online
-    });
+    if (channelRoom) {
+      channelRoom.delete(data.userId);
+      const online = Array.from(channelRoom.values()).map(u => ({
+        id: u.id, username: u.username
+      }));
+      io.to(`channel:${code}`).emit('online-users', {
+        channelCode: code,
+        users: online
+      });
+    }
 
     io.to(`channel:${code}`).emit('new-message', {
       channelCode: code,
       message: {
-        id: 0, content: `${targetInfo.username} was kicked`, created_at: new Date().toISOString(),
+        id: 0, content: `${targetName} was kicked`, created_at: new Date().toISOString(),
         username: 'System', user_id: 0, reply_to: null, replyContext: null, reactions: [], edited_at: null, system: true
       }
     });
@@ -144,9 +180,9 @@ module.exports = function register(socket, ctx) {
       }
     }
 
-    socket.emit('error-msg', `Kicked ${targetInfo.username}`);
+    socket.emit('toast', { message: `Kicked ${targetName}`, type: 'success' });
     _audit({ actor: socket.user, action: 'user_kick',
-      target_type: 'user', target_id: data.userId, target_name: targetInfo.username,
+      target_type: 'user', target_id: data.userId, target_name: targetName,
       details: { channelCode: code, reason: data.reason || null,
         scrubMessages: !!data.scrubMessages, scrubScope: data.scrubScope || null } });
   });
@@ -417,12 +453,7 @@ module.exports = function register(socket, ctx) {
         emitOnlineUsers(code);
       }
     }
-    for (const [code, users] of voiceUsers) {
-      if (users.has(data.userId)) {
-        users.delete(data.userId);
-        broadcastVoiceUsers(code);
-      }
-    }
+    removeUserFromVoice(data.userId);
 
     const purge = db.transaction((uid) => {
       purgeUserCascade(uid, targetUser, socket.user.id, data.scrubMessages, reason);
@@ -526,11 +557,7 @@ module.exports = function register(socket, ctx) {
         for (const uid of ids) if (users.delete(uid)) changed = true;
         if (changed) emitOnlineUsers(code);
       }
-      for (const [code, users] of voiceUsers) {
-        let changed = false;
-        for (const uid of ids) if (users.delete(uid)) changed = true;
-        if (changed) broadcastVoiceUsers(code);
-      }
+      for (const uid of ids) removeUserFromVoice(uid);
 
       let removed = 0;
       try {
@@ -628,12 +655,7 @@ module.exports = function register(socket, ctx) {
         emitOnlineUsers(code);
       }
     }
-    for (const [code, users] of voiceUsers) {
-      if (users.has(uid)) {
-        users.delete(uid);
-        broadcastVoiceUsers(code);
-      }
-    }
+    removeUserFromVoice(uid);
 
     // Helper: run a DELETE/UPDATE only when the target table exists.
     // Self-hosted instances upgraded from older versions may be missing
@@ -711,11 +733,12 @@ module.exports = function register(socket, ctx) {
     }
 
     for (const directMessageChannel of deletedDirectMessageChannels) {
-      io.to(`channel:${directMessageChannel.code}`).emit('channel-deleted', {
+      io.to(`channel:${directMessageChannel.code}`).to(`voice:${directMessageChannel.code}`).emit('channel-deleted', {
         code: directMessageChannel.code,
         reason: 'account-deleted',
       });
       clearDrawingChannelState(directMessageChannel.id);
+      clearChannelRuntimeState(state, directMessageChannel.code);
     }
 
     console.log(`🗑️  User self-deleted: "${userRow.username}" (id: ${uid}, scrub: ${scrubMessages})`);

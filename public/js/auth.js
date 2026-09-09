@@ -68,10 +68,17 @@
   // data-theme values, and plugin-loader.js (which knows about them) only runs
   // on the app page. So the login page fetched nothing and showed none of them.
   // /api/themes is unauthenticated, which is what makes this possible here. (#5537)
-  fetch('/api/themes')
-    .then(r => r.ok ? r.json() : [])
-    .then(themes => { injectPublishedThemeBar('auth-theme-bar', themes); })
-    .catch(() => { /* no custom themes is a fine outcome for a login page */ });
+  const publishedThemesPromise = (window.HavenThemeCompat?.fetchThemes?.(fetch) || fetch('/api/themes')
+    .then(r => {
+      if (!r.ok) throw new Error(`Theme metadata request failed (${r.status})`);
+      return r.json();
+    }))
+    .then(themes => {
+      if (!Array.isArray(themes)) throw new Error('Invalid theme metadata response');
+      injectPublishedThemeBar('auth-theme-bar', themes);
+      return themes;
+    })
+    .catch(() => null); // Preserve saved choices when theme metadata is temporarily unavailable.
 
   // ── Language switcher ─────────────────────────────────
   const langSelect = document.getElementById('auth-lang-select');
@@ -90,7 +97,7 @@
   // ── Apply server default theme for first-time visitors ──
   // Only applies when the user has no personal theme preference stored locally.
   // Also fetch server title for login page branding.
-  fetch('/api/public-config').then(r => r.json()).then(d => {
+  fetch('/api/public-config').then(r => r.json()).then(async d => {
     if (d.default_theme && !localStorage.getItem('haven_theme')) {
       // A published theme is stored as "file:whatever.theme.css". Writing that
       // straight into data-theme matched no stylesheet at all, so an admin who
@@ -101,7 +108,10 @@
       // storing it would stop a later change to the default from ever reaching
       // a returning visitor who has not signed in. (#5537, #5536)
       if (d.default_theme.startsWith('file:')) {
-        applyPublishedThemeBase(d.default_theme.slice(5), false);
+        const file = d.default_theme.slice(5);
+        const themes = await publishedThemesPromise;
+        const meta = themes?.find(theme => theme?.file === file);
+        if (meta) applyPublishedThemeBase(file, false, meta);
       } else {
         applyThemeFromServer(d.default_theme, false);
       }
@@ -143,6 +153,7 @@
   const eulaLink = document.getElementById('eula-link');
   const eulaAcceptBtn = document.getElementById('eula-accept-btn');
   const eulaDeclineBtn = document.getElementById('eula-decline-btn');
+  const eulaNotice = document.getElementById('eula-notice');
 
   // Restore EULA acceptance from localStorage (v2.0 requires re-acceptance)
   if (localStorage.getItem('haven_eula_accepted') === '2.0') {
@@ -153,6 +164,16 @@
   eulaLink.addEventListener('click', (e) => {
     e.preventDefault();
     eulaModal.style.display = 'flex';
+  });
+
+  // The login consent note links to the same Terms popup. Its anchor is injected
+  // via data-i18n-html and re-created on every language change, so bind it by
+  // delegation instead of a direct reference a re-render would orphan.
+  document.addEventListener('click', (e) => {
+    if (e.target.closest?.('#login-tos-link')) {
+      e.preventDefault();
+      eulaModal.style.display = 'flex';
+    }
   });
 
   eulaAcceptBtn.addEventListener('click', () => {
@@ -274,6 +295,10 @@
     if (ssoForm) ssoForm.style.display = target === 'sso' ? 'flex' : 'none';
     totpForm.style.display = 'none';
     document.getElementById('recover-form').style.display = 'none';
+    // The age / ToS checkboxes are only for creating an account, so they show on
+    // the register and SSO tabs and stay hidden on login (where the consent note
+    // under the button covers re-affirmation). The guest flow re-shows them.
+    if (eulaNotice) eulaNotice.style.display = (target === 'login') ? 'none' : '';
     hideError();
   }
 
@@ -393,7 +418,10 @@
   loginForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     hideError();
-    if (!checkEula()) return;
+    // No EULA gate on login: an existing account already accepted at
+    // registration (recorded server-side in eula_acceptances). The consent note
+    // under the button covers re-affirmation of the current terms. The account-
+    // creation flows (register / SSO / guest) still call checkEula().
 
     const username = document.getElementById('login-username').value.trim();
     const password = document.getElementById('login-password').value;
@@ -581,8 +609,8 @@
     const useRecall = !!oldPw;
 
     if (!useRecall) {
-      if (!newPw || newPw.length < 8) return showError(t('auth.forced_change.errors.too_short') || 'New password must be at least 8 characters');
-      if (newPw !== confirmPw) return showError(t('auth.forced_change.errors.mismatch') || 'New passwords do not match');
+      if (!newPw || newPw.length < 8) return showError(t('auth.forced_change.errors.too_short'));
+      if (newPw !== confirmPw) return showError(t('auth.forced_change.errors.mismatch'));
     }
 
     try {
@@ -596,7 +624,7 @@
       const data = await res.json();
       if (!res.ok) {
         if (data.code === 'old_password_invalid') {
-          return showError(t('auth.forced_change.errors.old_invalid') || 'Original password did not match');
+          return showError(t('auth.forced_change.errors.old_invalid'));
         }
         return showError(data.error || t('auth.errors.connection_error'));
       }
@@ -673,7 +701,7 @@
       ssoProfileData = profile;
       ssoWaiting = false;
       stopSsoPolling();
-      ssoConnectBtn.textContent = 'Connect';
+      ssoConnectBtn.textContent = t('auth.sso.connect');
       ssoConnectBtn.disabled = false;
 
       const profileUsername = (typeof ssoProfileData.username === 'string' ? ssoProfileData.username.trim() : '');
@@ -703,7 +731,7 @@
         if (!res.ok) {
           if (surfaceError && res.status !== 404) {
             const data = await res.json().catch(() => ({}));
-            showError(data.error || 'SSO failed — please try again');
+            showError(data.error || t('auth.sso.failed'));
           }
           return false;
         }
@@ -711,7 +739,7 @@
         applySsoProfile(data, getSsoOrigin());
         return true;
       } catch {
-        if (surfaceError) showError('Could not reach home server — please try again');
+        if (surfaceError) showError(t('auth.sso.unreachable'));
         return false;
       }
     };
@@ -735,7 +763,7 @@
     ssoConnectBtn.addEventListener('click', () => {
       hideError();
       let raw = ssoServerInput.value.trim();
-      if (!raw) return showError('Enter the address of your Haven server');
+      if (!raw) return showError(t('auth.sso.enter_address'));
 
       // Normalise the URL
       raw = raw.replace(/\/+$/, '');
@@ -756,7 +784,7 @@
       window.open(consentUrl, '_blank');
 
       ssoWaiting = true;
-      ssoConnectBtn.textContent = 'Waiting for approval…';
+      ssoConnectBtn.textContent = t('auth.sso.waiting');
       ssoConnectBtn.disabled = true;
 
       stopSsoPolling();
@@ -767,9 +795,9 @@
         if (!ssoWaiting) return;
         ssoWaiting = false;
         stopSsoPolling();
-        ssoConnectBtn.textContent = 'Connect';
+        ssoConnectBtn.textContent = t('auth.sso.connect');
         ssoConnectBtn.disabled = false;
-        showError('SSO approval timed out — try connecting again');
+        showError(t('auth.sso.timeout'));
       }, 90000);
     });
 
@@ -803,7 +831,7 @@
     ssoRegisterBtn.addEventListener('click', async () => {
       hideError();
       if (!checkEula()) return;
-      if (!ssoProfileData) return showError('Please connect to your home server first');
+      if (!ssoProfileData) return showError(t('auth.sso.connect_first'));
 
       const password = document.getElementById('sso-password').value;
       const confirm  = document.getElementById('sso-confirm').value;
@@ -828,7 +856,7 @@
         registerUsername = normalizeUsername(ssoProfileData.displayName);
       }
       if (registerUsername.length < 3) {
-        return showError('SSO username is invalid. Please use standard registration.');
+        return showError(t('auth.sso.invalid_username'));
       }
 
       // Build the full profile picture URL for the server to download
@@ -1056,6 +1084,9 @@
       const ssoForm = document.getElementById('sso-form');
       if (ssoForm) ssoForm.style.display = 'none';
       guestForm.style.display = '';
+      // Guest creation still requires consent (guest submit calls checkEula), so
+      // the checkboxes hidden on the login tab must reappear here.
+      if (eulaNotice) eulaNotice.style.display = '';
       const u = document.getElementById('guest-username');
       if (u) u.focus();
     });
@@ -1066,6 +1097,7 @@
       hideError();
       if (guestForm) guestForm.style.display = 'none';
       if (loginForm) loginForm.style.display = '';
+      if (eulaNotice) eulaNotice.style.display = 'none';
     });
   }
   if (guestForm) {
@@ -1074,7 +1106,7 @@
       hideError();
       if (!checkEula()) return;
       const username = document.getElementById('guest-username').value.trim();
-      if (!username) return showError('Please enter a username');
+      if (!username) return showError(t('auth.guest.errors.empty'));
       try {
         const res = await fetch('/api/auth/guest-login', {
           method: 'POST',
@@ -1082,7 +1114,7 @@
           body: JSON.stringify({ username, eulaVersion: '2.0', ageVerified: true })
         });
         const data = await res.json();
-        if (!res.ok) return showError(data.error || 'Guest login failed');
+        if (!res.ok) return showError(data.error || t('auth.guest.errors.failed'));
         // Guests have no password, so no E2E wrap key. DM tab is hidden
         // for them on the app side.
         localStorage.setItem('haven_token', data.token);
@@ -1106,14 +1138,14 @@
      the password path uses — so everything downstream is unchanged. */
 
   const OIDC_ERRORS = {
-    cancelled: 'Sign-in was cancelled.',
-    disabled: 'SSO is not enabled on this server.',
-    no_account: 'No Haven account is linked to that sign-in, and this server does not create them automatically.',
-    banned: 'That account is banned from this server.',
-    expired: 'That sign-in took too long. Please try again.',
-    provider_unreachable: 'Could not reach the SSO provider. Ask your admin to check the server settings.',
+    cancelled: 'auth.oidc.errors.cancelled',
+    disabled: 'auth.oidc.errors.disabled',
+    no_account: 'auth.oidc.errors.no_account',
+    banned: 'auth.oidc.errors.banned',
+    expired: 'auth.oidc.errors.expired',
+    provider_unreachable: 'auth.oidc.errors.provider_unreachable',
   };
-  if (_oidcError) showError(OIDC_ERRORS[_oidcError] || 'SSO sign-in failed. Please try again.');
+  if (_oidcError) showError(t(OIDC_ERRORS[_oidcError] || 'auth.oidc.errors.failed'));
 
   const oidcBtn = document.getElementById('oidc-login-btn');
   if (oidcBtn) {
@@ -1148,9 +1180,9 @@
     // Returning on a second device: the key already exists on the server, so
     // this is an unlock, not a setup. No confirm field, different wording.
     if (_oidcHandoff.e2eReady) {
-      titleEl.textContent = 'Enter your encryption passphrase';
-      blurbEl.textContent = 'This device needs the passphrase you set when you first signed in, to unlock your private messages.';
-      hintEl.textContent = 'Wrong passphrase? Your other devices keep working — nothing is overwritten.';
+      titleEl.textContent = t('auth.e2e_pass.unlock_title');
+      blurbEl.textContent = t('auth.e2e_pass.unlock_desc');
+      hintEl.textContent = t('auth.e2e_pass.unlock_hint');
       confirmGroup.style.display = 'none';
       confirmInput.removeAttribute('required');
       passInput.setAttribute('autocomplete', 'current-password');
@@ -1160,9 +1192,9 @@
       e.preventDefault();
       hideError();
       const pass = passInput.value;
-      if (!pass || pass.length < 8) return showError('Passphrase must be at least 8 characters.');
+      if (!pass || pass.length < 8) return showError(t('auth.e2e_pass.errors.too_short'));
       if (!_oidcHandoff.e2eReady && pass !== confirmInput.value) {
-        return showError('The two passphrases do not match.');
+        return showError(t('auth.e2e_pass.errors.mismatch'));
       }
       // Only the derived key is kept. The passphrase itself never leaves this
       // function, and never goes to the server in any form.

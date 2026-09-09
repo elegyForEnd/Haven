@@ -13,6 +13,425 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Haven uses [Sema
 
 ---
 
+## [4.6.0] - 2026-09-09
+
+Forums turn into proper forums, with topic cards, a gallery view, tags and a New
+Post button. Chat images now load only when they come near the screen, which
+cuts the desktop app's memory on a busy channel by a large margin. Channels can
+be marked NSFW and hidden, Settings has a search box, members can be kicked while
+they are offline, and the website has been rebuilt from scratch. No migration
+steps; the new columns are added on first start.
+
+### Added
+- **Forums read like forums (#5595).** A forum channel now opens as a list of
+  topic cards, newest activity on top, each with its title, tags, author, reply
+  count and first image, and a Gallery view of square tiles for art and
+  character sheets. The toolbar sorts by Recently active or Date posted,
+  filters by the channel's tags (match some or all), and a New Post button
+  opens a composer with title, body and tags. Replies still live in the
+  topic's thread and bump it. Admins keep the tag list in Channel Functions
+  (one per line, an emoji first if you like), and the author or a moderator
+  can retitle or retag a topic from its card. Requested by test2 and the RP
+  crowd, built by @Amnibro.
+- **NSFW channels (#5595).** Channel Functions has an NSFW switch, and Settings
+  has "Hide NSFW channels" for a phone in public. Requested by Dispencer2.
+- **Search inside Settings (#5595).** A search box at the top of the Settings
+  nav (or Ctrl+F while Settings is open) hides every section that does not
+  mention the word. Requested by Dispencer2.
+- **One way to create a channel (#5595).** The sidebar's Create Temp Channel
+  opens the same create form with Temporary already ticked instead of its own
+  prompt. Requested by Dispencer2.
+- **& and + in channel names (#5595).** Requested by Dispencer2.
+- **Inline images load on demand (#5587).** Chat images, stickers and link
+  preview pictures used to fetch the moment a message rendered, and every one
+  of the 100 messages kept on screen held its decoded bitmap, which was most of
+  the memory the desktop app used on a busy channel. They now load only when
+  they come near the viewport, closest first and three at a time, and are let
+  go again once they scroll far away or the window has been hidden for a while,
+  in the main chat, threads, DM pop-outs and search alike. A picture keeps its
+  size while unloaded so history never jumps. Measured by @Amnibro on the
+  desktop app: about 430 MB of a 700 MB process was decoded images.
+- **Attachments per message is an admin setting (#5561).** Uploads & Limits has
+  a Max Attachments per Message box (1 to 50, default 10). Dropping, pasting or
+  picking several files at once now queues all of them, in the main composer,
+  threads and DM PiPs alike, instead of keeping the first and dropping the rest.
+  The per-minute upload allowance follows the setting so a full drop is not cut
+  off part way. Requested by @Sheoji.
+- **Relayed screen share viewers get the gentler profile automatically (#5426).**
+  When a viewer can only be reached through a TURN relay, the share to that
+  viewer uses the encoder settings behind the "Gentler screen share for relay
+  connections" toggle, while viewers on a direct route keep the full-quality
+  one. On by default; a switch under Settings, Debug turns the detection off.
+  Suggested by @RCCore after confirming the profile on two setups.
+- **Visual effects follow you between desktop launches (#5589).** The effects
+  pick used to live only in the browser's local storage, so a desktop relaunch
+  that landed on a different storage origin came back with the theme's default
+  effects while the theme itself survived. The pick now syncs through your
+  server preferences the way the theme does. Reported by Dispencer2, fixed by
+  @Amnibro.
+
+### Changed
+- **Settings sections follow the nav order (#5596).** On both the user and
+  admin panels the sections now sit in the same order as the nav, so clicking
+  down the list scrolls one way instead of jumping around. The admin panel gets
+  the same scroll highlight the user panel had, plus a Terms of Service entry.
+  Reported and fixed by @birdcrazy (#5576).
+- **CRT theme text reads the same size as every other theme (#5590).** VT323's
+  glyphs sit small in their box, so the CRT theme always read a size smaller.
+  The face is scaled to match without touching spacing or avatars. Reported by
+  Dispencer2, fixed by @Amnibro.
+
+### Fixed
+- **Members can be kicked while they are offline.** Kick refused anyone who was
+  not connected to the channel at that moment ("use ban instead"), so a member
+  who had gone offline could not be removed. Kicking is a membership change, so
+  it now works on anyone who is a member, online or not; the kicked notice and
+  the online list only update when there is a live connection to tell. The
+  confirmation is a green toast now instead of a red one. Reported by
+  Dispencer2.
+- **Join Voice only shows where you can join (#5598).** The header and sidebar
+  buttons stayed up on the welcome screen and in channels with voice turned
+  off, and came back a few seconds after switching to such a channel because
+  the voice UI check treated a hidden button as a fault and put it back. Both
+  now follow the channel: no channel, voice off, or no voice permission means
+  no button. Reported by @birdcrazy.
+- **The Android banner stays dismissed (#5594).** Closing it, or ticking "Don't
+  show this again" on the Android promo, now keeps it gone on that account,
+  across reloads and devices. Nothing was writing the permanent flag before, so
+  it came back on every page load. Reported by @Nosirus.
+- **DM PiP header stuck on a grey dot and an initial (#5574).** The avatar and
+  status dot in the DM PiP header were drawn once when the panel opened, from
+  whatever the online list held at that moment, and never again. They follow
+  presence updates now. Reported by @birdcrazy.
+- **Layout density buttons work again (#5585).** A picker helper change in 4.5.0
+  left the Compact, Cozy and Spacious buttons unresponsive. Fixed by @birdcrazy.
+- **Channel and DM lists scroll while you drag near the edges (#5591).**
+  Dragging a channel to the top or bottom of a long sidebar used to stop there;
+  the list now scrolls along, faster the closer you hold to the edge. Reported
+  by Dispencer2, fixed by @Amnibro.
+- **Copy token copies the token, or says it could not (#5592).** The Copy
+  button under Require invite token reported success even when the desktop app
+  refused the clipboard write. It now goes through the desktop clipboard first
+  and shows an error with a hint if every route fails. Reported by Dispencer2,
+  fixed by @Amnibro.
+- **Soundboard hotkeys can be set and cleared from every layout (#5593).** The
+  sidebar soundboard showed a hotkey but gave no way to clear it or set one.
+  The grid, the pop-out and the sidebar now share the same controls, with a
+  finger-sized clear button in row layouts. Reported by Dispencer2, fixed by
+  @Amnibro.
+- **Every install path uses Haven's own certificate generator (#5586).**
+  4.5.0 taught the server to make its certificate itself, but `Start Haven.bat`,
+  `Install Haven.ps1` and the web installer still went looking for
+  `openssl.exe` first and reported a skipped certificate as done. They now call
+  the same generator, the certificate carries the CA and server-auth flags that
+  phones expect when you import it, and the guide and support page stop telling
+  people to install OpenSSL. Reported by MutantRabbit767, fixed by @Amnibro.
+
+---
+
+## [4.5.0] - 2026-09-07
+
+Forums finish taking shape, roles can be pinged, and Haven no longer depends on
+OpenSSL for its certificate: a fresh install comes up on HTTPS by itself, so voice
+and the mobile app work out of the box on Windows. Also in: timestamps that render
+in every reader's own timezone with a picker to make them, a Private toggle for
+existing channels, and a batch of fixes from the community. No migration steps;
+the one new column is added on first start. If you were running plain HTTP without
+meaning to, your links become https:// on the next start; set FORCE_HTTP=true if
+plain HTTP is on purpose.
+
+### Added
+- **Haven makes its own certificate.** When none exists at start and FORCE_HTTP
+  is not set, Haven generates a self-signed certificate with Node's own crypto,
+  no OpenSSL needed, so HTTPS works on a clean Windows install and voice, camera
+  and the mobile app work with it. Anyone who was running plain HTTP without
+  meaning to gets HTTPS on their next start; anyone who means it sets
+  FORCE_HTTP=true. The installer no longer reports a skipped certificate as done.
+- **Role mentions (#5579).** `@Moderators`, or any role name, lights up for
+  everyone holding the role and pings them like an @mention. The `@` picker
+  offers roles to anyone with the Mention everyone permission, the server disarms
+  role pings from anyone without it, and a switch under Settings, Sounds turns
+  role pings off for people who would rather not get them. Requested by
+  Raidenphantom and @birdcrazy.
+- **Private can be switched after creation (#5563).** Channel Functions has a
+  Private toggle. Going private keeps the current members; going public opens
+  the channel to the whole server, history included. Requested by @birdcrazy.
+- **Forums read as forums (#144).** The Reply action on a topic opens its thread
+  instead of quoting it as a new topic, every topic carries a Reply to this topic
+  button, the composer says it starts topics, and an empty forum explains how it
+  works.
+- **A timestamp picker (#5580).** The clock button in the input bar, or `/time` on
+  its own, opens a date and time chooser with a 24-hour or AM/PM toggle that
+  follows your own clock and every style previewed live, each with its own Insert
+  button. Thanks to @Bo0sted.
+- **Channel Scrolling setting (#5582).** Settings, Layout now offers separate
+  scrollbars for channels and DMs or one for the whole sidebar. Short windows use
+  the combined layout so the channel controls stay reachable. Thanks to @birdcrazy.
+- **Image Display settings live together (#5584).** Image Display Mode, Animated
+  Profile Pictures and Animated Images in Chat are one section now. Thanks to
+  @birdcrazy.
+- **Timestamps that follow the reader.** A message can carry an instant instead
+  of a wall-clock time, so everyone sees it on their own clock, which is the
+  thing that stops people turning up an hour late when a group is spread across
+  timezones. `/time 8pm` puts a token in your message box, and it accepts
+  `20:00`, `tomorrow 9am`, `2026-09-06 20:30`, `+2h` and a raw unix timestamp.
+  Seven display styles, including a relative one that counts itself down, and
+  hovering any of them spells out the full date. The syntax is Discord's, so
+  tokens survive the Ferry bridge in both directions and existing generators
+  keep working. Requested by test2.
+
+### Changed
+- **Forum feeds run newest first (#144).** The most recently active topic sits at
+  the top of a forum channel, a new topic or a fresh reply moves to the top, and
+  older topics load as you scroll down. Replies inside a topic's thread still read
+  top to bottom.
+
+### Fixed
+- **Invite links grant only the channels that were ticked (#5569, #5583).** An
+  invite made by someone who could not see every public channel used to drop the
+  invitee into all of them anyway, and unticking every box meant the same. Links
+  made before this release keep meaning what they meant. One thing changes for
+  new links: a channel created later is not added to them automatically. Thanks
+  to @birdcrazy.
+- **Deleting an account no longer hands its invite use back (#5562).** Uses are
+  counted on the link itself now, so a single-use link stays used.
+- **A nickname cleared on one device stopped coming back from another (#5560).**
+  Server-stored nicknames are the record; the old per-connect merge re-pushed
+  whatever a device still had cached, ghost self-nicknames included.
+- **Enlarging an image in an encrypted DM showed only the dark backdrop (#5568).**
+  The decrypted preview gives its memory back once painted, so the lightbox
+  decrypts the image again when you open it.
+- **Wide images no longer lose their edges in thumbnails (#5581).** Thanks to
+  @birdcrazy.
+- **A new forum channel showed as a plain # in the creator's sidebar** until the
+  next list refresh.
+- **The startup banner prints your LAN address** instead of a YOUR_IP placeholder
+  that read like a broken config (#5572).
+
+---
+
+## [4.4.1] - 2026-09-05
+
+One fix, for anyone hosting Haven without a certificate. Update if your friends
+see a plain white page with buttons that do nothing.
+
+### Fixed
+- **A Haven running without a certificate served a broken page to everyone but the
+  person who set it up.** With no certificate present, Haven falls back to plain
+  HTTP but still sent the header telling browsers to fetch every stylesheet and
+  script over HTTPS, on a port with nothing answering HTTPS. Visitors got an
+  unstyled page whose buttons did nothing, while the host saw a perfect page,
+  because browsers exempt localhost from that upgrade. The two headers that assume
+  HTTPS are now sent only when Haven is actually serving it. The Windows installer
+  produces this state whenever OpenSSL is missing, so it hit a self-hoster. Note
+  that microphone and camera still require HTTPS on any address other than
+  localhost, so voice needs a certificate or a tunnel.
+
+---
+
+## [4.4.0] - 2026-09-05
+
+A contributor-heavy release. The server side of native screen sharing for Haven
+Desktop lands off by default, invites can be copied as a ready-to-send email card,
+markdown formatting has keyboard shortcuts, and the Cloudflare tunnel finally works
+on a fresh Windows install. Promo popups now remember their dismissal on the account
+rather than in the browser. No migration steps.
+
+### Added
+- **Native screen sharing groundwork for Haven Desktop (#5555).** The server can
+  now negotiate a native, hardware-encoded screen share path with a Desktop build
+  that carries the helper. Off by default, opt-in from Settings, and the switch
+  only appears inside such a build. Browser sharing and per-app audio are
+  untouched. Thanks to @bernardokcosta.
+- **Copy an invite as an email card (#5559).** Each invite link has an envelope
+  button that copies a formatted invitation, in your theme and language and with
+  the server's branding, ready to paste into an email. Thanks to @birdcrazy.
+- **Markdown keyboard shortcuts (#5571).** With text selected, Ctrl/Cmd+I, Ctrl/Cmd+B,
+  Ctrl/Cmd+Shift+C, Ctrl/Cmd+Shift+X and Ctrl/Cmd+Shift+P wrap it in italic, bold,
+  code, strikethrough and spoiler markers. Works in the message box, threads, PiP
+  DMs and the message editor, which also gets the paste-a-link-over-text shortcut.
+  Thanks to @birdcrazy.
+
+### Fixed
+- **Cloudflare Tunnel on Windows never worked out of the box (#5575).** The installer's Cloudflare
+  option says "auto-downloads cloudflared", but nothing downloaded it and the tunnel module
+  only ever ran `cloudflared` from PATH, so a fresh install that picked Cloudflare always
+  ended in "cloudflared binary not found in PATH" (reported by a self-hoster 2026-09-05).
+  The tunnel module now looks on PATH, then in `<data dir>/bin`, and fetches the official
+  release binary into that folder on first start when neither has it (Windows and Linux;
+  macOS gets a `brew install cloudflared` hint). A failed download says exactly which file
+  to drop where. The installer pre-fetches the same file when Cloudflare is chosen.
+- **A refused port on Windows now says why.** `EACCES` on Windows is almost always a port
+  inside a Hyper-V/WSL reserved range rather than a privilege problem; the startup error
+  now points at `netsh interface ipv4 show excludedportrange protocol=tcp` and the
+  `winnat` restart instead of only mentioning ports below 1024.
+- **Replying to a bot showed [Deleted User] as the author (#5564, #5566).** Reply
+  banners now name webhook bots, imported messages and personas the same way the
+  message itself does. Thanks to @delenda-delenda.
+- **Emoji in soundboard names vanished after saving (#5565, #5567).** Upload and
+  rename stripped everything outside ASCII. Names now keep letters in any script,
+  emoji, flags and keycaps. Thanks to @delenda-delenda.
+- **Picking a Messages sound previewed nothing while the Notifications toggle was
+  off,** which is the default, so a new account could not try the sounds out. The
+  settings preview plays regardless of the toggle; the toggle still decides what
+  plays for real messages.
+- **Stream and video announcement bots bridged through Ferry lost their link and
+  thumbnail (#5557).** CouchBot-style promotion bots type the ping line ("X is now live")
+  and put the stream link, title, and thumbnail in a rich embed. Ferry only read
+  the embed when the Discord message had no text, so Haven got the ping line and
+  nothing to click or look at. Rich (bot-composed) embeds are now read alongside
+  the typed text: the Twitch / YouTube / Kick link and the thumbnail come through
+  with it. The promoted link is checked against the link policy on its own, so an
+  allowlist server that has not added a host (kick.com is not in the starter list)
+  drops just that link and still relays the announcement and its picture. Discord's
+  own unfurl of a typed link is still ignored so Haven does not preview it twice.
+  Thanks to @Amnibro.
+
+### Changed
+- **Promo popups and the recovery-codes notice remember Don't show again on your
+  account (#5570),** not in the browser, so privacy-hardened browsers that wipe
+  storage stop re-showing them. Closing a popup without ticking the box brings it
+  back next login. Dismissals recorded by older builds are carried over once, so
+  nobody sees a popup they already closed. Thanks to @Bo0sted.
+- **Login no longer re-asks for the 18+ and Terms checkboxes (#5570).** They are
+  captured when an account is created, which the server already records. The
+  login form carries a note that signing in accepts the current Terms, with a
+  link to read them. Thanks to @Bo0sted.
+- **Admin settings visibility comes from one access table (#5558).** Which
+  sections a moderator sees is now decided in one place instead of a dozen
+  special cases, and Auto-Mod, Guest Access and Stickers have their own entries
+  in the admin navigation. Thanks to @birdcrazy.
+- **Website:** desktop download links point at Desktop 1.4.30.
+
+---
+
+## [4.3.0] - 2026-09-03
+
+Forum channels and self-serve Groups are the big two, the whole interface is
+translatable now, and a large batch of contributor work landed alongside them: a
+Compact theme and layout, listening presence from your music player, the encryption
+groundwork for group DMs, GIPHY back as the GIF provider, and images that phones could
+see but desktops could not. No migration steps: the one new database column is added
+on first start.
+
+### Added
+- **Forum channels (#144).** Any channel can be a forum: tick Forum when creating it,
+  or flip it in Channel Functions. Every message in a forum channel is a topic, replies
+  go in that message's thread with a reply count shown on the topic, and a new reply
+  bumps the topic back to the newest end of the channel, right above the message box,
+  so old topics resurface instead of sinking. Requested by @ArtyDaSmarty and shaped in
+  the community chat.
+- **Groups, roles people join themselves (#5548).** A role at level 0 is a Group.
+  Members pick their own Groups from their profile settings, see which channels each
+  one grants, and can leave again, with no moderator involved. Thanks to @birdcrazy.
+- **The whole interface is translatable (#5551).** Every hardcoded string in the client
+  now goes through the language files, with Portuguese carried along and the other
+  languages falling back to English one string at a time. The tests treat English as
+  the base, so adding an English string no longer requires writing the Portuguese for
+  it. Thanks to @bernardokcosta.
+- **Compact theme and Compact Layout plugin (#5549, #5552).** A dense graphite Theme
+  API v1 theme, and an optional plugin that folds the server rail into the sidebar and
+  docks account and voice controls in its footer, switchable with Ctrl+Alt+C. Both are
+  off by default. Structural plugins now share one layout owner, so Braid and Compact
+  hand the layout back and forth cleanly. Thanks to @bernardokcosta.
+- **Theme safe mode (#5545).** If a theme or plugin makes the page unusable, open
+  `/app.html?haven-safe-mode=1` to load without them and reset your choices.
+  Thanks to @bernardokcosta.
+- **Listening presence (#5523).** Your profile card can show what you are playing. A
+  music player that can run a plugin or a script (Havidrome for Navidrome is the first)
+  posts to a personal webhook URL from Settings, Activity, and the card shows the track
+  with cover art and a live progress bar. The contract is in `docs/listening-api.md`.
+  Thanks to @Bo0sted.
+- **Group DM encryption groundwork (#5499).** The crypto core and key distribution for
+  end to end encrypted group DMs, with a test suite written as attacks rather than happy
+  paths. No interface yet. Thanks to @Amnibro.
+- **Voice connectivity test (#5542).** Admin settings can now test the STUN and TURN
+  servers Haven will use and say which ones answer, and the TURN troubleshooting notes
+  point there first.
+- **Paste a link over selected text to make a markdown link (#5553).** Works in
+  channels, threads and DM windows. Thanks to @birdcrazy.
+- **One right-click menu for people (#5554).** Right-clicking a name in the member list
+  or on a message opens one menu with the profile actions and, for moderators, the
+  role, channel and moderation actions behind a divider. Clicking an avatar on a profile
+  card opens it full size. The hover preview card stays, with a switch under Settings,
+  Chat to turn it off, and the gear buttons stay and open the same menu. Thanks to
+  @Bo0sted.
+- **Braid spacing levels (#5494).** Compact, Cozy and Spacious, plus readable ink on the
+  Android badge. Thanks to @Amnibro.
+
+### Changed
+- **Full image mode uses the whole message width.** The largest image setting was
+  capped at well under half of a desktop chat pane, so it never read as large.
+- **invite_users opens the Admin tab (#5470).** Holders of that permission saw an Admin
+  tab that did nothing when clicked. The three places that gated it now share one check.
+- **GIPHY is the supported GIF provider again (#5546).** Tenor is no longer offered for
+  new setups; an existing Tenor key keeps working if no GIPHY key is set. Thanks to
+  @Amnibro.
+- **`npm test` runs the suite serially,** so a green run means what it says.
+- **Website:** desktop download links point at Desktop 1.4.29.
+
+### Fixed
+- **Images that showed on Haven Mobile were blank on desktop (#5550).** Signed Discord
+  links from Ferry and bots were escaped before the media proxy fetched them, so they
+  404ed. Thanks to @Amnibro.
+- **Screen share and webcam teardown on leaving voice (#5426).** Leaving voice used to
+  fire renegotiations at peers that were about to close, and a stale continuation could
+  wipe out a share started right after rejoining. Per-peer work also runs concurrently
+  now instead of one viewer at a time. For anyone still seeing stutter through a TURN
+  relay there is an opt-in Debug toggle, Gentler screen share for relay connections, to
+  try and report back on.
+- **Braid grouped main channels into the wrong sub-channel card (#5507).** Thanks to
+  @Amnibro.
+- **A direct message with someone you also share a group DM with** always opens the
+  direct message, not the group.
+- **Profile saves no longer clear your Groups, and Group channel lookups no longer leak
+  private channel names (#5548).**
+- **The listening webhook checks its token before reading the upload (#5523),** and the
+  open profile card only redraws when something on it actually changed.
+
+---
+
+## [4.2.0] - 2026-09-01
+
+Voice connectivity is the theme. A server whose admin had set their own STUN server
+could lose calls between browsers entirely from one typo, with nothing anywhere saying
+why, and it took the people who reported it days to work out what was happening. Also
+a written contract for theme authors, a way for bots to clear messages in bulk, and a
+dependency sweep that clears everything npm audit was flagging. No migration steps.
+
+### Added
+- **Themes have a written contract now (#5544).** Custom themes kept breaking on Haven
+  updates because nothing said which parts were safe to build on. Theme API v1 names the
+  variables and hooks that will not change without a major version, with an authoring
+  guide and a test that fails the build if the contract drifts.
+- **Bots can clear messages in bulk (#5541).** One call deletes up to 100 recent messages
+  in the bot's channel instead of a request per message, with attachments and thread
+  replies cleaned up properly. Thanks to @bernardokcosta.
+- **Haven checks the STUN servers an admin configures (#5542).** Only the built-in ones
+  were ever tested, so a list of your own was taken on trust. Dead entries are named in
+  the browser console, and if every one is unreachable with no TURN set, the existing
+  connectivity warning says so.
+
+### Fixed
+- **One wrong STUN server no longer takes out voice between browsers (#5542).** Setting
+  your own STUN servers replaces Haven's built-in ones rather than adding to them, so a
+  single bad entry left browsers unable to find each other across networks while phone
+  clients carried on working. That combination reads as Haven breaking web calls rather
+  than as a wrong address, which is exactly how it was reported. If every configured
+  server is unreachable and there is no TURN relay, Haven now falls back to its own for
+  that session. Your setting is left exactly as you saved it, and the warning still names
+  what to fix. Found by @Vinylwalk3r, @birdcrazy and @dronostyka between them.
+- **eturnal and coturn setup notes,** with the one setting people miss called out in both.
+
+### Security
+- **Cleared 12 dependency advisories, 7 of them high.** Two sit directly under the chat
+  transport rather than off in build tooling: the websocket library could disclose
+  uninitialised memory and be driven to exhaust memory, and the Socket.IO parser could be
+  exhausted through binary attachments. Every Haven message travels through both. Lockfile
+  only, and nothing crossed a major version.
+
+---
+
 ## [4.1.0] - 2026-08-30
 
 Mostly hardening and follow-through on 4.0.0, plus bots can play audio in voice now.

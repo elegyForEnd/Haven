@@ -18,7 +18,7 @@ async _joinVoice() {
   // the multi-toast / multi-join behaviour. The auto-rejoin code in the
   // 'connect' handler will re-join voice automatically once we're back.
   if (this.socket && this.socket.connected === false) {
-    this._showToast('Disconnected — try again once reconnected', 'error');
+    this._showToast(t('voice.disconnected'), 'error');
     return;
   }
   // Block voice join in text-only channels
@@ -28,7 +28,7 @@ async _joinVoice() {
     return;
   }
   if (!this.user?.isAdmin && !this.user?.isGuest && !this._hasPerm('use_voice')) {
-    this._showToast('You do not have permission to use voice', 'error');
+    this._showToast(t('voice.no_permission'), 'error');
     return;
   }
   this._joiningVoice = true;
@@ -227,20 +227,23 @@ _reconcileVoiceUi() {
 
   const joinBtn = document.getElementById('voice-join-btn');
   const joinVisible = !!joinBtn && joinBtn.style.display !== 'none';
+  // Hidden on purpose (welcome screen, voice off, no permission) is not a
+  // desync, so compare against what the channel allows (#5598).
+  const joinExpected = this._voiceJoinAvailable();
   const bar = document.getElementById('voice-bar');
   const barShowsVoice = !!bar && bar.style.display !== 'none' && bar.style.display !== '';
 
   // Already consistent.
   if (!repaired && sessionInVoice && !joinVisible && barShowsVoice) return;
-  if (!repaired && !sessionInVoice && joinVisible && !barShowsVoice) return;
+  if (!repaired && !sessionInVoice && joinVisible === joinExpected && !barShowsVoice) return;
 
   // Only repair UPWARD when media is live. Never tear UI down on a flaky
   // layout read during maximize — that wiped stream tiles.
   if (!sessionInVoice) {
     // Genuinely idle — leave UI alone unless it still shows connected chrome.
-    if (!barShowsVoice && joinVisible) return;
+    if (!barShowsVoice && joinVisible === joinExpected) return;
     // Bar still says connected but media is dead: clear chrome.
-    if (barShowsVoice || !joinVisible) {
+    if (barShowsVoice || joinVisible !== joinExpected) {
       console.warn('[Voice] UI shows voice but media is dead — clearing chrome');
       this._updateVoiceButtons(false);
       this._updateVoiceStatus(false);
@@ -290,20 +293,31 @@ _syncMuteDeafenButtons() {
     const btn = document.getElementById(id);
     if (!btn) return;
     btn.textContent = '🎙️';
-    btn.title = isMuted ? 'Unmute' : 'Mute';
+    btn.title = t(isMuted ? 'voice.unmute' : 'voice.mute');
     btn.classList.toggle('muted', isMuted);
   });
   ['voice-deafen-btn', 'voice-deafen-btn-header'].forEach(id => {
     const btn = document.getElementById(id);
     if (!btn) return;
     btn.textContent = isDeafened ? '🔇' : '🔊';
-    btn.title = isDeafened ? 'Undeafen' : 'Deafen';
+    btn.title = t(isDeafened ? 'voice.undeafen' : 'voice.deafen');
     btn.classList.toggle('muted', isDeafened);
   });
 },
 
+// Whether "Join Voice" makes sense right now: a channel is open, voice is
+// on in it, and this user may use voice. The welcome screen, text-only
+// channels and people without the permission get no button (#5598).
+_voiceJoinAvailable() {
+  if (!this.currentChannel) return false;
+  const ch = this.channels && this.channels.find(c => c.code === this.currentChannel);
+  if (ch && ch.voice_enabled === 0) return false;
+  return !!(this.user?.isAdmin || this.user?.isGuest || this._hasPerm('use_voice'));
+},
+
 _updateVoiceButtons(inVoice) {
-  document.getElementById('voice-join-btn').style.display = inVoice ? 'none' : 'inline-flex';
+  const showJoin = !inVoice && this._voiceJoinAvailable();
+  document.getElementById('voice-join-btn').style.display = showJoin ? 'inline-flex' : 'none';
   // Show/hide the header voice-active indicator (not a button, just a label)
   const indicator = document.getElementById('voice-active-indicator');
   if (indicator) indicator.style.display = inVoice ? 'inline-flex' : 'none';
@@ -332,8 +346,8 @@ _updateVoiceButtons(inVoice) {
   // keep the button visible while already in voice (#5387).
   const mobileJoin = document.getElementById('voice-join-mobile');
   if (mobileJoin) {
-    if (inVoice) mobileJoin.style.setProperty('display', 'none', 'important');
-    else mobileJoin.style.removeProperty('display');
+    if (showJoin) mobileJoin.style.removeProperty('display');
+    else mobileJoin.style.setProperty('display', 'none', 'important');
   }
 
   if (!inVoice) {
@@ -502,8 +516,10 @@ async _doToggleScreenShare() {
           try { this._applyShareAudioModeBadge(ev.detail); } catch (e) { console.warn('share mode badge update failed:', e); }
         });
       }
-      // Show our own screen in the viewer
-      this._handleScreenStream(this.user.id, this.voice.screenStream);
+      // Native desktop capture has no Chromium MediaStream for local preview.
+      if (this.voice.screenStream) {
+        this._handleScreenStream(this.user.id, this.voice.screenStream);
+      }
       // Show audio/no-audio badge
       if (this.voice.screenHasAudio) {
         this._handleScreenAudio(this.user.id);
@@ -583,7 +599,7 @@ _handleWebcamStream(userId, stream) {
       const lbl = document.createElement('div');
       lbl.className = 'webcam-tile-label';
       const peer = this.voice.peers.get(userId);
-      const who = (userId === null || userId === this.user.id) ? 'You' : (peer ? peer.username : 'Someone');
+      const who = (userId === null || userId === this.user.id) ? t('voice_runtime.you') : (peer ? peer.username : t('voice.someone'));
       lbl.textContent = who;
       tile.appendChild(lbl);
 
@@ -744,7 +760,7 @@ _updateWebcamVisibility() {
     container.classList.remove('webcam-focus-mode');
     this._removeWebcamIndicator();
   } else {
-    label.textContent = `📷 ${count} camera${count !== 1 ? 's' : ''}`;
+    label.textContent = `📷 ${t(count === 1 ? 'voice_runtime.camera_one' : 'voice_runtime.camera_other', { count })}`;
   }
 },
 
@@ -775,7 +791,7 @@ _showWebcamIndicator(count) {
     });
     document.querySelector('.channel-header')?.appendChild(ind);
   }
-  ind.textContent = `📷 ${count} camera${count > 1 ? 's' : ''} hidden`;
+  ind.textContent = `📷 ${t(count === 1 ? 'voice_runtime.camera_hidden_one' : 'voice_runtime.camera_hidden_other', { count })}`;
 },
 
 _removeWebcamIndicator() {
@@ -875,7 +891,7 @@ _popOutWebcamOverlay(tile, userId) {
 
   const stream = video.srcObject;
   const peer = this.voice.peers.get(userId);
-  const who = userId === null || userId === this.user.id ? 'You' : (peer ? peer.username : 'Camera');
+  const who = userId === null || userId === this.user.id ? t('voice_runtime.you') : (peer ? peer.username : t('voice_runtime.camera'));
 
   const pipId = `webcam-pip-${userId || 'self'}`;
   if (document.getElementById(pipId)) return;
@@ -891,10 +907,10 @@ _popOutWebcamOverlay(tile, userId) {
     <div class="music-pip-controls">
       <button class="music-pip-btn stream-pip-popin" title="${t('media.pop_back_in')}">⧈</button>
       <span class="music-pip-label">📷 ${who}</span>
-      <span class="music-pip-vol-icon" title="Window opacity">👁</span>
+      <span class="music-pip-vol-icon" title="${t('voice_runtime.window_opacity')}">👁</span>
       <input type="range" class="music-pip-vol pip-opacity-slider" min="20" max="100" value="${savedOpacity}">
       <button class="music-pip-btn stream-pip-fullscreen" title="${t('media.fullscreen')}">⤢</button>
-      <button class="music-pip-btn stream-pip-close" title="Close">✕</button>
+      <button class="music-pip-btn stream-pip-close" title="${t('modals.common.close')}">✕</button>
     </div>
   `;
 
@@ -967,9 +983,9 @@ _handleScreenStream(userId, stream, { force = false } = {}) {
     const autoAccept = force || localStorage.getItem('haven_auto_accept_streams') !== 'false';
     if (!autoAccept && userId !== null && userId !== this.user.id) {
       const peer = this.voice.peers.get(userId);
-      const who = peer ? peer.username : 'Someone';
+      const who = peer ? peer.username : t('voice.someone');
       this._showToast(t('voice.sharing_started', { who: this._escapeHtml(who) }), 'info', {
-        label: 'Join',
+        label: t('voice_runtime.join'),
         onClick: () => this._handleScreenStream(userId, stream, { force: true })
       }, 8000);
       return;
@@ -992,7 +1008,7 @@ _handleScreenStream(userId, stream, { force = false } = {}) {
       const lbl = document.createElement('div');
       lbl.className = 'screen-share-tile-label';
       const peer = this.voice.peers.get(userId);
-      const who = userId === null || userId === this.user.id ? 'You' : (peer ? peer.username : 'Someone');
+      const who = userId === null || userId === this.user.id ? t('voice_runtime.you') : (peer ? peer.username : t('voice.someone'));
       lbl.textContent = who;
       tile.appendChild(lbl);
 
@@ -1424,14 +1440,14 @@ async _populateAudioDevices() {
     && typeof HTMLAudioElement.prototype.setSinkId === 'function';
   if (!_supportsSinkId) {
     outputSelect.disabled = true;
-    outputSelect.title = 'Your browser does not support switching audio output devices. Pick the output in your OS sound settings.';
+    outputSelect.title = t('voice_settings.output_unsupported_title');
     const _hintId = 'voice-output-unsupported-hint';
     if (!document.getElementById(_hintId) && outputSelect.parentElement) {
       const hint = document.createElement('small');
       hint.id = _hintId;
       hint.className = 'settings-hint';
       hint.style.cssText = 'display:block;margin-top:4px;opacity:0.85';
-      hint.textContent = 'Your browser can\u2019t switch audio output devices. Use your OS sound settings instead.';
+      hint.textContent = t('voice_settings.output_unsupported_hint');
       outputSelect.parentElement.appendChild(hint);
     }
   }
@@ -1559,8 +1575,8 @@ _updateScreenShareVisibility() {
     this._showScreenShareIndicator(totalCount);
   } else {
     container.style.display = 'flex';
-    const labelParts = [`🖥️ ${visibleCount} stream${visibleCount !== 1 ? 's' : ''}`];
-    if (hiddenCount > 0) labelParts.push(`(${hiddenCount} hidden)`);
+    const labelParts = [`🖥️ ${t(visibleCount === 1 ? 'voice_runtime.stream_one' : 'voice_runtime.stream_other', { count: visibleCount })}`];
+    if (hiddenCount > 0) labelParts.push(t('voice_runtime.hidden_count', { count: hiddenCount }));
     label.textContent = labelParts.join(' ');
   }
 },
@@ -1608,7 +1624,7 @@ _showScreenShareIndicator(count) {
     });
     document.querySelector('.channel-header')?.appendChild(ind);
   }
-  ind.textContent = `🖥️ ${count} stream${count > 1 ? 's' : ''} hidden`;
+  ind.textContent = `🖥️ ${t(count === 1 ? 'media.hidden_streams_one' : 'media.hidden_streams_other', { count })}`;
 },
 
 _removeScreenShareIndicator() {
@@ -1775,7 +1791,7 @@ _handleScreenAudio(userId) {
     if (!tile.querySelector('.stream-audio-badge')) {
       const badge = document.createElement('div');
       badge.className = 'stream-audio-badge';
-      badge.innerHTML = '🔊 Audio';
+      badge.innerHTML = `🔊 ${t('voice_runtime.audio')}`;
       tile.appendChild(badge);
     }
     // If the desktop app already reported a specific audio mode for this
@@ -1808,24 +1824,30 @@ _applyShareAudioModeBadge(modeInfo) {
   let label, cls, tip;
   switch (modeInfo.applied) {
     case 'app':
-      label = `🔊 App Audio${modeInfo.detail ? ` (${modeInfo.detail})` : ''}`;
+      label = modeInfo.detail
+        ? t('voice_runtime.app_audio_detail', { detail: modeInfo.detail })
+        : t('voice_runtime.app_audio');
       cls   = 'mode-app';
-      tip   = `Capturing audio only from "${modeInfo.detail || 'selected app'}". No system or voice audio is included.`;
+      tip   = t('voice_runtime.app_audio_tip', { app: modeInfo.detail || t('voice_runtime.selected_app') });
       break;
     case 'system-clean':
-      label = '🔊 System Audio';
+      label = t('voice_runtime.system_audio');
       cls   = 'mode-system-clean';
-      tip   = 'Capturing all system audio except Haven. Your voice is not looped back.';
+      tip   = t('voice_runtime.system_audio_tip');
       break;
     case 'fallback-system-clean':
-      label = '🔊 System Audio (fallback)';
+      label = t('voice_runtime.system_audio_fallback');
       cls   = 'mode-fallback';
-      tip   = `Per-app capture failed, so the share is using system audio minus Haven.${modeInfo.detail ? ` Reason: ${modeInfo.detail}.` : ''}`;
+      tip   = modeInfo.detail
+        ? t('voice_runtime.system_audio_fallback_tip_reason', { reason: modeInfo.detail })
+        : t('voice_runtime.system_audio_fallback_tip');
       break;
     case 'system-loopback':
-      label = '🔊 All Audio ⚠';
+      label = t('voice_runtime.all_audio');
       cls   = 'mode-loopback';
-      tip   = `Using raw system loopback. This may include Haven\u2019s own voice output (voice loop possible).${modeInfo.detail ? ` Reason: ${modeInfo.detail}.` : ''}`;
+      tip   = modeInfo.detail
+        ? t('voice_runtime.all_audio_tip_reason', { reason: modeInfo.detail })
+        : t('voice_runtime.all_audio_tip');
       break;
     default:
       return;
@@ -1894,7 +1916,7 @@ _applyNoAudioBadge(tile, userId) {
   // Add the no-audio badge
   const badge = document.createElement('div');
   badge.className = 'stream-no-audio-badge';
-  badge.innerHTML = '🔇 No Audio';
+  badge.innerHTML = `🔇 ${t('voice_runtime.no_audio')}`;
   tile.appendChild(badge);
   // Hide audio controls since there's no audio to control
   const controls = document.getElementById(`stream-controls-${userId || 'self'}`);
@@ -1924,7 +1946,7 @@ _updateStreamViewerBadges() {
     const names = viewers.map(v => v.username).join(', ');
     const eyeCount = viewers.length;
     badge.innerHTML = `<span class="viewer-eye">👁</span> ${eyeCount}`;
-    badge.title = `Watching: ${names}`;
+  badge.title = t('users.watching_stream_title', { names });
     tile.appendChild(badge);
   });
 },
@@ -2010,7 +2032,7 @@ _popOutStreamWindow(tile, userId) {
 
   const stream = video.srcObject;
   const peer = this.voice.peers.get(userId);
-  const who = userId === null || userId === this.user.id ? 'You' : (peer ? peer.username : 'Stream');
+  const who = userId === null || userId === this.user.id ? t('voice_runtime.you') : (peer ? peer.username : t('voice_runtime.stream'));
 
   // Create floating in-page overlay (like music PiP) instead of window.open
   const pipId = `stream-pip-${userId || 'self'}`;
@@ -2029,11 +2051,11 @@ _popOutStreamWindow(tile, userId) {
     <div class="music-pip-controls">
       <button class="music-pip-btn stream-pip-popin" title="${t('media.pop_back_in')}">⧈</button>
       <span class="music-pip-label">🖥️ ${who}</span>
-      <span class="music-pip-vol-icon stream-pip-opacity-icon" title="Window opacity">👁</span>
+      <span class="music-pip-vol-icon stream-pip-opacity-icon" title="${t('voice_runtime.window_opacity')}">👁</span>
       <input type="range" class="music-pip-vol pip-opacity-slider stream-pip-opacity" min="20" max="100" value="${savedOpacity}">
-      <button class="music-pip-btn stream-pip-maximize" title="Maximize">⛶</button>
+      <button class="music-pip-btn stream-pip-maximize" title="${t('voice_runtime.maximize')}">⛶</button>
       <button class="music-pip-btn stream-pip-fullscreen" title="${t('media.fullscreen')}">⤢</button>
-      <button class="music-pip-btn stream-pip-close" title="Close">✕</button>
+      <button class="music-pip-btn stream-pip-close" title="${t('modals.common.close')}">✕</button>
     </div>
   `;
 
@@ -2070,7 +2092,7 @@ _popOutStreamWindow(tile, userId) {
     this._updateStreamContainerCollapse();
     // Also hide the stream tile — user wants to close the stream, not just pop back in
     const peer = this.voice.peers.get(userId);
-    const who2 = userId === null || userId === this.user.id ? 'You' : (peer ? peer.username : 'Stream');
+    const who2 = userId === null || userId === this.user.id ? t('voice_runtime.you') : (peer ? peer.username : t('voice_runtime.stream'));
     this._hideStreamTile(tile, userId, who2, true);
   };
 
@@ -2094,7 +2116,7 @@ _popOutStreamWindow(tile, userId) {
     e.stopPropagation();
     const maximized = pip.classList.toggle('stream-pip-maximized');
     maxBtn.classList.toggle('active', maximized);
-    maxBtn.title = maximized ? 'Restore' : 'Maximize';
+    maxBtn.title = t(maximized ? 'voice_runtime.restore' : 'voice_runtime.maximize');
   });
 
   pip.querySelector('.stream-pip-opacity').addEventListener('input', (e) => {
@@ -2207,8 +2229,8 @@ _previewMusicLink(url) {
   if (playlistInfo) { //Conditional display of playlist parsing
     preview.classList.add('active');
     preview.innerHTML = playlistInfo.isPlaylistOnly
-      ? '🔴 <strong>YouTube Playlist</strong> - Ready to share'
-      : '🔴 <strong>YouTube</strong> - Video in a playlist';
+      ? t('voice_runtime.youtube_playlist_ready')
+      : t('voice_runtime.youtube_playlist_video');
     this._updateMusicModalButtons(url);
     return;
   }
@@ -2216,7 +2238,7 @@ _previewMusicLink(url) {
   const embedUrl = this._getMusicEmbed(url);
   if (platform && embedUrl) {
     preview.classList.add('active');
-    preview.innerHTML = `${platform.icon} <strong>${platform.name}</strong> — Ready to share`;
+    preview.innerHTML = `${platform.icon} <strong>${platform.name}</strong> — ${t('voice.music_ready')}`;
   } else {
     preview.classList.remove('active');
     preview.innerHTML = '';
@@ -2246,17 +2268,17 @@ _shareMusic() {
 //Playlist queue addition
 _shareMusicPlaylist() {
   const url = document.getElementById('music-link-input').value.trim();
-  if (!url) { this._showToast('Please paste a music link', 'error'); return; }
+  if (!url) { this._showToast(t('toasts.paste_music_link'), 'error'); return; }
   const info = this._getYouTubePlaylistInfo(url);
-  if (!info?.playlistId) { this._showToast('No playlist found in this link', 'error'); return; }
-  if (!this.voice || !this.voice.inVoice) { this._showToast('Join voice first', 'error'); return; }
+  if (!info?.playlistId) { this._showToast(t('toasts.playlist_not_found'), 'error'); return; }
+  if (!this.voice || !this.voice.inVoice) { this._showToast(t('toasts.join_voice_required'), 'error'); return; }
   this.socket.emit('music-share-playlist', { code: this.voice.currentChannel, playlistId: info.playlistId });
   this._closeMusicModal();
 },
 
 _stopMusic() { //Check for music management role to halt playback
   if (!this._canControlMusic()) {
-    this._showToast('Only the requestor or a moderator can stop playback', 'error');
+    this._showToast(t('toasts.music_stop_forbidden'), 'error');
     return;
   }
   if (this.voice && this.voice.inVoice) {
@@ -2280,26 +2302,26 @@ _showMusicSearchResults(data) {
   picker.className = 'music-search-picker';
   picker.innerHTML = `
     <div class="music-search-picker-header">
-      <span>🔍 Results for "<strong>${this._escapeHtml(query)}</strong>"</span>
-      <button class="music-search-picker-close" title="Cancel">✕</button>
+      <span>${t('voice_runtime.results_for', { query: `<strong>${this._escapeHtml(query)}</strong>` })}</span>
+      <button class="music-search-picker-close" title="${t('modals.common.cancel')}">✕</button>
     </div>
     <div class="music-search-picker-list">
       ${results.map((r, i) => `
-        <div class="music-search-picker-item" data-video-id="${r.videoId}" data-title="${this._escapeHtml(r.title || `Result ${offset + i + 1}`)}">
+        <div class="music-search-picker-item" data-video-id="${r.videoId}" data-title="${this._escapeHtml(r.title || t('voice_runtime.result', { number: offset + i + 1 }))}">
           <div class="music-search-picker-thumb">
             ${r.thumbnail ? `<img src="${this._escapeHtml(r.thumbnail)}" alt="" loading="lazy">` : '<span>🎵</span>'}
           </div>
           <div class="music-search-picker-info">
-            <div class="music-search-picker-title">${this._escapeHtml(r.title || `Result ${offset + i + 1}`)}</div>
+            <div class="music-search-picker-title">${this._escapeHtml(r.title || t('voice_runtime.result', { number: offset + i + 1 }))}</div>
             <div class="music-search-picker-meta">${this._escapeHtml(r.channel)}</div>
           </div>
-          <button class="music-search-picker-play" data-video-id="${r.videoId}" data-title="${this._escapeHtml(r.title || `Result ${offset + i + 1}`)}" title="Play this">▶</button>
+          <button class="music-search-picker-play" data-video-id="${r.videoId}" data-title="${this._escapeHtml(r.title || t('voice_runtime.result', { number: offset + i + 1 }))}" title="${t('voice_runtime.play_this')}">▶</button>
         </div>
       `).join('')}
     </div>
     <div class="music-search-picker-footer">
-      <button class="music-search-picker-more">More results</button>
-      <button class="music-search-picker-cancel">Cancel</button>
+      <button class="music-search-picker-more">${t('voice_runtime.more_results')}</button>
+      <button class="music-search-picker-cancel">${t('modals.common.cancel')}</button>
     </div>
   `;
 
@@ -2426,9 +2448,12 @@ _handleMusicShared(data) {
     container.innerHTML = `<div class="music-embed-wrapper"><iframe id="music-iframe" src="${embedUrl}" width="100%" height="${iframeH}" frameborder="0" referrerpolicy="strict-origin-when-cross-origin" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture" loading="lazy"></iframe>${needsOverlay ? '<div class="music-embed-overlay"></div>' : ''}</div>`;
   }
   if (data.resolvedFrom === 'spotify') {
-    label.textContent = `🎵 🟢 Spotify (via YouTube) — shared by ${data.username || 'someone'}`;
+    label.textContent = t('voice.music_shared_spotify', { user: data.username || t('voice.someone') });
   } else {
-    label.textContent = `🎵 ${platform ? platform.name : 'Music'} — shared by ${data.username || 'someone'}`;
+    label.textContent = t('voice.music_shared', {
+      platform: platform ? platform.name : t('voice.music'),
+      user: data.username || t('voice.someone')
+    });
   }
   panel.style.display = 'flex';
 
@@ -2526,11 +2551,13 @@ _handleMusicShared(data) {
     }
   }
 
-  const who = data.userId === this.user?.id ? 'You shared' : `${data.username} shared`;
+  const who = data.userId === this.user?.id
+    ? t('voice_runtime.you_shared')
+    : t('voice_runtime.user_shared', { user: data.username });
   this._applyMusicControlPermissions();
 
-  const platformLabel = data.resolvedFrom === 'spotify' ? 'Spotify (via YouTube)' : (platform ? platform.name : 'music');
-  this._showToast(`${who} ${platformLabel}`, 'info');
+  const platformLabel = data.resolvedFrom === 'spotify' ? 'Spotify (via YouTube)' : (platform ? platform.name : t('voice.music'));
+  this._showToast(t('voice_runtime.shared_platform', { who, platform: platformLabel }), 'info');
 },
 //Check for perms to adjust music stuff, like queue and removals
 _canControlMusic() {
@@ -2584,7 +2611,7 @@ _setBilibiliRoomQuality(videoHeight) {
 //Music control permission validation
 _applyMusicControlPermissions() {
   const allowed = this._canControlMusic();
-  const restricted = 'Only the requestor or a moderator can do this';
+  const restricted = t('toasts.music_stop_forbidden');
   const ppBtn = document.getElementById('music-play-pause-btn');
   const seekSlider = document.getElementById('music-seek-slider');
   const nextBtn = document.getElementById('music-next-btn');
@@ -2595,19 +2622,19 @@ _applyMusicControlPermissions() {
   const pipStopBtn = document.getElementById('music-pip-close');
   if (ppBtn) {
     ppBtn.disabled = !allowed;
-    ppBtn.title = allowed ? 'Play/Pause' : restricted;
+    ppBtn.title = allowed ? t('media.music_play_pause') : restricted;
   }
   if (seekSlider) {
     seekSlider.disabled = !allowed;
-    seekSlider.title = allowed ? 'Seek' : restricted;
+    seekSlider.title = allowed ? t('media.music_seek') : restricted;
   }
   if (nextBtn) {
     nextBtn.disabled = !allowed;
-    nextBtn.title = allowed ? 'Next track' : restricted;
+    nextBtn.title = allowed ? t('media.music_next') : restricted;
   }
   if (stopBtn) {
     stopBtn.disabled = !allowed;
-    stopBtn.title = allowed ? 'Close / stop music' : restricted;
+    stopBtn.title = allowed ? t('media.music_stop') : restricted;
   }
   if (qualitySelect) {
     const hasMultipleQualities = (this._musicBilibiliAvailableHeights?.length || 0) > 1;
@@ -2618,7 +2645,7 @@ _applyMusicControlPermissions() {
   }
   if (pipPpBtn) {
     pipPpBtn.disabled = !allowed;
-    pipPpBtn.title = allowed ? 'Play/Pause' : restricted;
+    pipPpBtn.title = allowed ? t('media.music_play_pause') : restricted;
   }
   if (bilibiliModeSelect) {
     bilibiliModeSelect.disabled = !allowed;
@@ -2628,7 +2655,7 @@ _applyMusicControlPermissions() {
   }
   if (pipStopBtn) {
     pipStopBtn.disabled = !allowed;
-    pipStopBtn.title = allowed ? 'Close / stop music' : restricted;
+    pipStopBtn.title = allowed ? t('media.music_stop') : restricted;
   }
 },
 
@@ -2650,9 +2677,9 @@ _updateMusicQueueState(payload) {
 
 _syncMusicQueueUi() {
   const text = this._musicUpNext?.title
-    ? `Up next: ${this._truncateMusicQueueTitle(this._musicUpNext.title, 54)}`
-    : 'Up next: Nothing queued';
-  const title = this._musicUpNext?.title || 'Nothing queued';
+    ? t('voice_runtime.up_next', { title: this._truncateMusicQueueTitle(this._musicUpNext.title, 54) })
+    : t('media.music_up_next_empty');
+  const title = this._musicUpNext?.title || t('voice_runtime.nothing_queued');
   const targets = ['music-up-next', 'music-pip-up-next'];
   targets.forEach((id) => {
     const el = document.getElementById(id);
@@ -2695,23 +2722,23 @@ _renderMusicQueueModal() {
   const shuffleBtn = document.getElementById('shuffle-music-queue-btn');
   if (shuffleBtn) shuffleBtn.style.display = (canManage && queue.length >= 2) ? '' : 'none';
   summary.textContent = queue.length
-    ? `${queue.length} queued track${queue.length === 1 ? '' : 's'}`
-    : 'No queued tracks';
+    ? t(queue.length === 1 ? 'voice_runtime.queued_one' : 'voice_runtime.queued_other', { count: queue.length })
+    : t('media.music_queue_empty_summary');
   if (!queue.length) {
-    body.innerHTML = '<tr><td colspan="5" class="music-queue-empty">Queue is empty</td></tr>';
+    body.innerHTML = `<tr><td colspan="5" class="music-queue-empty">${t('media.music_queue_is_empty')}</td></tr>`;
     return;
   }
   body.innerHTML = queue.map((item, idx) => `
     <tr class="music-queue-row" data-entry-id="${this._escapeHtml(item.id)}" draggable="${canManage ? 'true' : 'false'}">
-      <td class="music-queue-col-handle">${canManage ? '<span class="music-queue-drag-handle" title="Drag to reorder">⋮⋮</span>' : ''}</td>
+      <td class="music-queue-col-handle">${canManage ? `<span class="music-queue-drag-handle" title="${t('voice_runtime.drag_reorder')}">⋮⋮</span>` : ''}</td>
       <td class="music-queue-col-pos"><span class="music-queue-pos">${idx + 1}</span></td>
       <td class="music-queue-col-requested-by">
-        <span class="music-queue-requestor" title="${this._escapeHtml(item.username || 'Unknown')}">${this._escapeHtml(this._truncateMusicQueueTitle(item.username || 'Unknown', 24))}</span>
+        <span class="music-queue-requestor" title="${this._escapeHtml(item.username || t('app.messages.unknown_user'))}">${this._escapeHtml(this._truncateMusicQueueTitle(item.username || t('app.messages.unknown_user'), 24))}</span>
       </td>
       <td class="music-queue-title-cell">
-        <div class="music-queue-title" title="${this._escapeHtml(item.title || 'Untitled track')}">${this._escapeHtml(this._truncateMusicQueueTitle(item.title || 'Untitled track', 80))}</div>
+        <div class="music-queue-title" title="${this._escapeHtml(item.title || t('voice_runtime.untitled_track'))}">${this._escapeHtml(this._truncateMusicQueueTitle(item.title || t('voice_runtime.untitled_track'), 80))}</div>
       </td>
-      <td class="music-queue-col-actions">${canManage ? '<button class="music-queue-remove-btn" title="Remove from queue">✕</button>' : ''}</td>
+      <td class="music-queue-col-actions">${canManage ? `<button class="music-queue-remove-btn" title="${t('voice_runtime.remove_queue')}">✕</button>` : ''}</td>
     </tr>
   `).join('');
 
@@ -3113,7 +3140,7 @@ _handleMusicStopped(data) {
   this._musicPlaying = false;
   this._hideMusicPanel();
   this._updateMusicQueueState({ queue: [], upNext: null });
-  const who = data.userId === this.user?.id ? 'You' : (data.username || 'Someone');
+  const who = data.userId === this.user?.id ? t('voice_runtime.you') : (data.username || t('voice.someone'));
   this._showToast(t('voice.music_stopped', { who }), 'info');
 },
 
@@ -3122,12 +3149,12 @@ _handleMusicControl(data) {
     this._suppressMusicBroadcasts();
     this._pauseMusicEmbed();
     this._setMusicPlayingUi(false);
-    this._setMusicActivityHint(`${data.username || 'Someone'} paused playback.`);
+    this._setMusicActivityHint(t('voice_runtime.user_paused', { user: data.username || t('voice.someone') }));
   } else if (data.action === 'play') {
     this._suppressMusicBroadcasts();
     this._playMusicEmbed();
     this._setMusicPlayingUi(true);
-    this._setMusicActivityHint(`${data.username || 'Someone'} resumed playback.`);
+    this._setMusicActivityHint(t('voice_runtime.user_resumed', { user: data.username || t('voice.someone') }));
   } else if (data.action === 'next') {
     this._suppressMusicBroadcasts();
     this._musicNextTrack();
@@ -3146,7 +3173,7 @@ _handleMusicSeek(data) {
   if (data.syncState) this._applyMusicSyncState(data.syncState);
   else if (typeof data.positionSeconds === 'number') this._applyMusicSyncState({ positionSeconds: data.positionSeconds });
   else if (typeof data.position === 'number') this._seekMusic(data.position);
-  if (data.username) this._setMusicActivityHint(`${data.username} seeked.`);
+  if (data.username) this._setMusicActivityHint(t('voice_runtime.user_seeked', { user: data.username }));
 },
 
 _toggleMusicPlayPause() {
@@ -3154,11 +3181,11 @@ _toggleMusicPlayPause() {
   if (this._musicPlaying) {
     this._pauseMusicEmbed();
     this._setMusicPlayingUi(false);
-    this._setMusicActivityHint('You paused playback.');
+    this._setMusicActivityHint(t('voice_runtime.you_paused'));
   } else {
     this._playMusicEmbed();
     this._setMusicPlayingUi(true);
-    this._setMusicActivityHint('You resumed playback.');
+    this._setMusicActivityHint(t('voice_runtime.you_resumed'));
   }
   this._emitMusicControl(this._musicPlaying ? 'play' : 'pause');
 },
@@ -3313,7 +3340,7 @@ _popOutMusicPlayer() {
     pip.className = 'music-pip-overlay';
 
     const volume = parseInt(document.getElementById('music-volume-slider')?.value ?? '80');
-    const platform = this._musicPlatform || 'Music';
+    const platform = this._musicPlatform || t('voice.music');
     const playing = this._musicPlaying;
     const isBilibili = platform === 'Bilibili';
     const usesOfficialBilibiliPlayer = isBilibili && this._musicBilibiliPlaybackMode === 'official';
@@ -3323,23 +3350,23 @@ _popOutMusicPlayer() {
 
     pip.innerHTML = `
       <div class="music-pip-header" id="music-pip-drag">
-        <button class="music-pip-btn" id="music-pip-popin" title="Minimize (back to panel)">─</button>
+        <button class="music-pip-btn" id="music-pip-popin" title="${t('media.music_pip_minimize')}">─</button>
         <div class="music-pip-copy">
           <span class="music-pip-label">🎵 ${platform}</span>
-          <span class="music-up-next music-pip-up-next" id="music-pip-up-next">Up next: Nothing queued</span>
+          <span class="music-up-next music-pip-up-next" id="music-pip-up-next">${t('media.music_up_next_empty')}</span>
         </div>
         <span class="music-activity-hint" id="music-pip-activity-hint"></span>
-        <button class="music-pip-btn" id="music-pip-queue-btn" title="Queue">☰</button>
-        <button class="music-pip-btn" id="music-pip-fullscreen" title="Fullscreen">⤢</button>
-        <button class="music-pip-btn" id="music-pip-close" title="Close / stop music">✕</button>
+        <button class="music-pip-btn" id="music-pip-queue-btn" title="${t('media.music_queue')}">☰</button>
+        <button class="music-pip-btn" id="music-pip-fullscreen" title="${t('media.fullscreen')}">⤢</button>
+        <button class="music-pip-btn" id="music-pip-close" title="${t('media.music_stop')}">✕</button>
       </div>
       <div class="music-pip-embed" id="music-pip-embed"></div>
       <div class="music-pip-controls">
-        <button class="music-pip-btn" id="music-pip-pp" title="Play/Pause">${playing ? '⏸' : '▶'}</button>
-        <span class="music-pip-vol-icon" id="music-pip-mute" title="Mute">🔊</span>
+        <button class="music-pip-btn" id="music-pip-pp" title="${t('media.music_play_pause')}">${playing ? '⏸' : '▶'}</button>
+        <span class="music-pip-vol-icon" id="music-pip-mute" title="${t('media.music_mute')}">🔊</span>
         <input type="range" class="music-pip-vol" id="music-pip-vol" min="0" max="100" value="${volume}">
         <span class="pip-opacity-divider"></span>
-        <span class="music-pip-vol-icon" id="music-pip-opacity-icon" title="Window opacity">👁</span>
+        <span class="music-pip-vol-icon" id="music-pip-opacity-icon" title="${t('voice_runtime.window_opacity')}">👁</span>
         <input type="range" class="music-pip-vol pip-opacity-slider" id="music-pip-opacity" min="20" max="100" value="${savedOpacity}">
       </div>
     `;
@@ -3373,7 +3400,7 @@ _popOutMusicPlayer() {
 
     // Update popout button icon to show "pop-in"
     const popBtn = document.getElementById('music-popout-btn');
-    if (popBtn) { popBtn.textContent = '⧈'; popBtn.title = 'Pop back in'; }
+    if (popBtn) { popBtn.textContent = '⧈'; popBtn.title = t('media.pop_back_in'); }
 
     // ── PiP controls ──
     document.getElementById('music-pip-popin').addEventListener('click', () => this._popInMusicPlayer());
@@ -3416,9 +3443,9 @@ _popOutMusicPlayer() {
       const fsBtn = document.getElementById('music-pip-fullscreen');
       if (!fsBtn) return;
       if (document.fullscreenElement === pip) {
-        fsBtn.textContent = '⤡'; fsBtn.title = 'Exit fullscreen';
+        fsBtn.textContent = '⤡'; fsBtn.title = t('media.exit_fullscreen');
       } else {
-        fsBtn.textContent = '⤢'; fsBtn.title = 'Fullscreen';
+        fsBtn.textContent = '⤢'; fsBtn.title = t('media.fullscreen');
       }
     });
 

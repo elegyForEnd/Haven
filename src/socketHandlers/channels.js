@@ -32,6 +32,7 @@ function moveUploadToDeleted(relPath) {
   } catch { /* file locked or already moved */ }
 }
 const { isString, isInt } = require('./helpers');
+const { clearChannelRuntimeState } = require('../channelRotation');
 
 module.exports = function register(socket, ctx) {
   const {
@@ -173,7 +174,7 @@ module.exports = function register(socket, ctx) {
     if (name.length > 50) {
       return socket.emit('error-msg', 'Channel name too long (max 50)');
     }
-    if (!/^[\w\s\-!?.,'\p{L}\p{M}\p{Emoji_Presentation}\p{Extended_Pictographic}\p{Emoji}\uFE0F\u200D]+$/u.test(name)) {
+    if (!/^[\w\s\-!?.,'&+\p{L}\p{M}\p{Emoji_Presentation}\p{Extended_Pictographic}\p{Emoji}\uFE0F\u200D]+$/u.test(name)) {
       return socket.emit('error-msg', 'Channel name contains invalid characters');
     }
 
@@ -190,8 +191,8 @@ module.exports = function register(socket, ctx) {
 
     try {
       const result = db.prepare(
-        'INSERT INTO channels (name, code, created_by, is_private, expires_at) VALUES (?, ?, ?, ?, ?)'
-      ).run(name.trim(), code, socket.user.id, isPrivate, expiresAt);
+        'INSERT INTO channels (name, code, created_by, is_private, expires_at, is_forum) VALUES (?, ?, ?, ?, ?, ?)'
+      ).run(name.trim(), code, socket.user.id, isPrivate, expiresAt, data.isForum ? 1 : 0);
 
       db.prepare(
         'INSERT INTO channel_members (channel_id, user_id) VALUES (?, ?)'
@@ -236,7 +237,10 @@ module.exports = function register(socket, ctx) {
         topic: '',
         is_dm: 0,
         is_private: isPrivate,
-        expires_at: expiresAt
+        expires_at: expiresAt,
+        // The creator's sidebar renders from this stub until the enriched
+        // list lands, so a forum has to say so here or it shows up as #.
+        is_forum: data.isForum ? 1 : 0
       };
 
       socket.join(`channel:${code}`);
@@ -278,7 +282,7 @@ module.exports = function register(socket, ctx) {
     const name = typeof data.name === 'string' ? data.name.trim() : '';
     if (!name || name.length === 0) return socket.emit('error-msg', 'Channel name required');
     if (name.length > 50) return socket.emit('error-msg', 'Channel name too long (max 50)');
-    if (!/^[\w\s\-!?.,'\p{L}\p{M}\p{Emoji_Presentation}\p{Extended_Pictographic}\p{Emoji}\uFE0F\u200D]+$/u.test(name)) {
+    if (!/^[\w\s\-!?.,'&+\p{L}\p{M}\p{Emoji_Presentation}\p{Extended_Pictographic}\p{Emoji}\uFE0F\u200D]+$/u.test(name)) {
       return socket.emit('error-msg', 'Channel name contains invalid characters');
     }
 
@@ -347,21 +351,23 @@ module.exports = function register(socket, ctx) {
       ).all();
       let allowSet = null;
       if (Array.isArray(explicitChannelIds)) {
-        if (explicitChannelIds.length > 0) {
-          allowSet = new Set(explicitChannelIds.map(n => parseInt(n)).filter(n => Number.isFinite(n)));
-        }
-        // empty array → allowSet stays null → "all public"
+        // Managed invite: the invite's channel list is authoritative.
+        // An empty array means no channels.
+        allowSet = new Set(explicitChannelIds.map(n => parseInt(n, 10)).filter(n => Number.isFinite(n)));
       } else {
+        // Legacy server/vanity code: use the global default join-channel
+        // setting when configured. Empty/unset means all public.
         try {
           const djc = db.prepare("SELECT value FROM server_settings WHERE key = 'default_join_channels'").get();
           if (djc && djc.value) {
             const parsed = JSON.parse(djc.value);
             if (Array.isArray(parsed) && parsed.length > 0) {
-              allowSet = new Set(parsed.map(n => parseInt(n)).filter(n => Number.isFinite(n)));
+              allowSet = new Set(parsed.map(n => parseInt(n, 10)).filter(n => Number.isFinite(n)));
             }
           }
         } catch { /* malformed JSON falls through to "all public" */ }
       }
+
       const parents = allowSet ? allParents.filter(p => allowSet.has(p.id)) : allParents;
       return { parents, allowSet };
     };
@@ -416,21 +422,28 @@ module.exports = function register(socket, ctx) {
       ).get(inviteRow.id, socket.user.id);
       if (!alreadyUsed && inviteRow.max_uses > 0) {
         const used = db.prepare(
-          'SELECT COUNT(*) AS n FROM invite_code_uses WHERE invite_code_id = ?'
+          'SELECT spent AS n FROM invite_codes WHERE id = ?'
         ).get(inviteRow.id).n;
         if (used >= inviteRow.max_uses) {
           return socket.emit('error-msg', 'This invite link has reached its use limit.');
         }
       }
-      let chList = [];
-      try {
-        const parsed = JSON.parse(inviteRow.channels || '[]');
-        if (Array.isArray(parsed)) chList = parsed;
-      } catch { /* malformed → empty array → all public */ }
+      // Links saved before 4.4.2 stored '' for "every public channel". Since
+      // #5583 a list is authoritative, an empty one included, so only a real
+      // list is passed along and the old blank keeps meaning what it meant.
+      let chList = null;
+      if (inviteRow.channels) {
+        try {
+          const parsed = JSON.parse(inviteRow.channels);
+          if (Array.isArray(parsed)) chList = parsed;
+        } catch { /* malformed: fall back to the legacy meaning */ }
+      }
       const joinedCount = _doAutoJoin(chList);
-      db.prepare(
+      const use = db.prepare(
         'INSERT OR IGNORE INTO invite_code_uses (invite_code_id, user_id) VALUES (?, ?)'
       ).run(inviteRow.id, socket.user.id);
+      // A redemption counts on the link itself, so it survives the user (#5562).
+      if (use.changes) db.prepare('UPDATE invite_codes SET spent = spent + 1 WHERE id = ?').run(inviteRow.id);
       socket.emit('channels-list', getEnrichedChannels(socket.user.id, socket.user.isAdmin, (room) => socket.join(room)));
       socket.emit('error-msg', `Invite accepted — joined ${joinedCount} channel${joinedCount !== 1 ? 's' : ''}`);
       return;
@@ -721,12 +734,9 @@ module.exports = function register(socket, ctx) {
 
     io.to(`channel:${code}`).to(`voice:${code}`).emit('channel-deleted', { code });
 
-    channelUsers.delete(code);
-    voiceUsers.delete(code);
     clearDrawingChannelState(channel.id);
     clearMusicMedia(activeMusic.get(code));
-    activeMusic.delete(code);
-    musicQueues.delete(code);
+    clearChannelRuntimeState(state, code);
 
     _audit({ actor: socket.user, action: 'channel_delete',
       target_type: 'channel', target_id: channel.id, target_name: channel.name,
@@ -743,7 +753,7 @@ module.exports = function register(socket, ctx) {
     if (!name || name.length === 0 || name.length > 50) {
       return socket.emit('error-msg', 'Channel name must be 1-50 characters');
     }
-    if (!/^[\w\s\-!?.,'\p{L}\p{M}\p{Emoji_Presentation}\p{Extended_Pictographic}\p{Emoji}\uFE0F\u200D]+$/u.test(name)) {
+    if (!/^[\w\s\-!?.,'&+\p{L}\p{M}\p{Emoji_Presentation}\p{Extended_Pictographic}\p{Emoji}\uFE0F\u200D]+$/u.test(name)) {
       return socket.emit('error-msg', 'Channel name contains invalid characters');
     }
 
@@ -791,7 +801,7 @@ module.exports = function register(socket, ctx) {
     if (!name || name.length === 0 || name.length > 50) {
       return socket.emit('error-msg', 'Sub-channel name must be 1-50 characters');
     }
-    if (!/^[\w\s\-!?.,'\p{L}\p{M}\p{Emoji_Presentation}\p{Extended_Pictographic}\p{Emoji}\uFE0F\u200D]+$/u.test(name)) {
+    if (!/^[\w\s\-!?.,'&+\p{L}\p{M}\p{Emoji_Presentation}\p{Extended_Pictographic}\p{Emoji}\uFE0F\u200D]+$/u.test(name)) {
       return socket.emit('error-msg', 'Sub-channel name contains invalid characters');
     }
 
@@ -886,6 +896,8 @@ module.exports = function register(socket, ctx) {
       db.prepare('DELETE FROM channel_members WHERE channel_id = ?').run(channel.id);
       db.prepare('DELETE FROM channels WHERE id = ?').run(channel.id);
       botAudioManager?.stopChannel(code, 'channel-deleted');
+      io.to(`channel:${code}`).to(`voice:${code}`).emit('channel-deleted', { code });
+      clearChannelRuntimeState(state, code);
       broadcastChannelLists();
       socket.emit('error-msg', 'Sub-channel deleted');
     } catch (err) {
@@ -895,20 +907,50 @@ module.exports = function register(socket, ctx) {
   });
 
   // ── Channel feature toggles ─────────────────────────────
+  // Forum tags: the list a forum's topics pick from. JSON array of
+  // { name, emoji } kept on the channel row; topics store the names they use.
+  socket.on('set-forum-tags', (data) => {
+    if (!data || typeof data !== 'object') return;
+    const code = typeof data.code === 'string' ? data.code.trim() : '';
+    if (!code || !/^[a-f0-9]{8}$/i.test(code)) return;
+    const channel = db.prepare('SELECT id, is_dm FROM channels WHERE code = ?').get(code);
+    if (!channel || channel.is_dm) return socket.emit('error-msg', 'Channel not found');
+    if (!_canManageSettingsOf(channel.id)) return socket.emit('error-msg', 'You don\'t have permission to edit forum tags');
+    const raw = Array.isArray(data.tags) ? data.tags : [];
+    const seen = new Set();
+    const tags = [];
+    for (const t of raw) {
+      const name = String(typeof t === 'string' ? t : (t && t.name) || '').trim().slice(0, 30);
+      const emoji = typeof t === 'object' && t && typeof t.emoji === 'string' ? t.emoji.trim().slice(0, 8) : '';
+      if (!name || seen.has(name.toLowerCase())) continue;
+      seen.add(name.toLowerCase());
+      tags.push(emoji ? { name, emoji } : { name });
+      if (tags.length >= 20) break;
+    }
+    try {
+      db.prepare('UPDATE channels SET forum_tags = ? WHERE id = ?').run(tags.length ? JSON.stringify(tags) : null, channel.id);
+      broadcastChannelLists();
+      io.to(`channel:${code}`).emit('forum-tags-updated', { code, tags });
+    } catch (err) {
+      console.error('set-forum-tags error:', err);
+      socket.emit('error-msg', 'Failed to save forum tags');
+    }
+  });
+
   socket.on('toggle-channel-permission', (data) => {
     if (!data || typeof data !== 'object') return;
     const code = typeof data.code === 'string' ? data.code.trim() : '';
     if (!code || !/^[a-f0-9]{8}$/i.test(code)) return;
 
     const permission = typeof data.permission === 'string' ? data.permission.trim() : '';
-    const validPerms = ['streams', 'music', 'media', 'voice', 'text', 'read_only', 'soundboard'];
+    const validPerms = ['streams', 'music', 'media', 'voice', 'text', 'read_only', 'soundboard', 'forum', 'private', 'nsfw'];
     if (!validPerms.includes(permission)) return socket.emit('error-msg', 'Invalid permission');
 
     const channel = db.prepare('SELECT * FROM channels WHERE code = ? AND is_dm = 0').get(code);
     if (!channel) return socket.emit('error-msg', 'Channel not found');
     if (!_canManageSettingsOf(channel.id)) return socket.emit('error-msg', 'You don\'t have permission to toggle channel permissions');
 
-    const colMap = { streams: 'streams_enabled', music: 'music_enabled', media: 'media_enabled', voice: 'voice_enabled', text: 'text_enabled', read_only: 'read_only', soundboard: 'soundboard_enabled' };
+    const colMap = { streams: 'streams_enabled', music: 'music_enabled', media: 'media_enabled', voice: 'voice_enabled', text: 'text_enabled', read_only: 'read_only', soundboard: 'soundboard_enabled', forum: 'is_forum', private: 'is_private', nsfw: 'is_nsfw' };
     const colName = colMap[permission];
     const current = channel[colName];
     const newVal = current ? 0 : 1;
@@ -919,6 +961,16 @@ module.exports = function register(socket, ctx) {
 
     try {
       db.prepare(`UPDATE channels SET ${colName} = ? WHERE id = ?`).run(newVal, channel.id);
+      // Going private keeps everyone who is already in (#5563), but anyone
+      // else who still has the room open on a socket is shown the door now
+      // rather than on their next reconnect.
+      if (permission === 'private' && newVal === 1) {
+        const isMember = db.prepare('SELECT 1 FROM channel_members WHERE channel_id = ? AND user_id = ?');
+        for (const [, s] of io.sockets.sockets) {
+          if (!s.user || s.user.isAdmin) continue;
+          if (!isMember.get(channel.id, s.user.id)) s.leave(`channel:${channel.code}`);
+        }
+      }
       if (permission === 'voice' && newVal === 0) {
         botAudioManager?.stopChannel(code, 'voice-disabled');
         db.prepare('UPDATE channels SET streams_enabled = 0, music_enabled = 0 WHERE id = ?').run(channel.id);
@@ -936,7 +988,7 @@ module.exports = function register(socket, ctx) {
         }
       }
 
-      const labelMap = { streams: 'Screen sharing', music: 'Music sharing', media: 'Media uploads', voice: 'Voice chat', text: 'Text chat', read_only: 'Read-only mode', soundboard: 'Soundboard' };
+      const labelMap = { streams: 'Screen sharing', music: 'Music sharing', media: 'Media uploads', voice: 'Voice chat', text: 'Text chat', read_only: 'Read-only mode', soundboard: 'Soundboard', forum: 'Forum mode', private: 'Private', nsfw: 'NSFW' };
       broadcastChannelLists();
       io.to(`channel:${code}`).emit('channel-permission-updated', { code, permission, enabled: !!newVal });
       socket.emit('toast', { message: `${labelMap[permission]} ${newVal ? 'enabled' : 'disabled'} for this channel`, type: 'success' });
@@ -1574,7 +1626,7 @@ module.exports = function register(socket, ctx) {
       WHERE c.is_dm = 1
       AND EXISTS (SELECT 1 FROM channel_members WHERE channel_id = c.id AND user_id = ?)
       AND EXISTS (SELECT 1 FROM channel_members WHERE channel_id = c.id AND user_id = ?)
-      ${isSelfDm ? 'AND (SELECT COUNT(*) FROM channel_members WHERE channel_id = c.id) = 1' : ''}
+      AND (SELECT COUNT(*) FROM channel_members WHERE channel_id = c.id) = ${isSelfDm ? 1 : 2}
     `).get(socket.user.id, targetId);
     if (existingDm) {
       socket.emit('dm-opened', {
@@ -1655,6 +1707,7 @@ module.exports = function register(socket, ctx) {
 
     for (const name of filenames) moveUploadToDeleted(name);
 
-    io.to(`channel:${code}`).emit('channel-deleted', { code });
+    io.to(`channel:${code}`).to(`voice:${code}`).emit('channel-deleted', { code });
+    clearChannelRuntimeState(state, code);
   });
 };

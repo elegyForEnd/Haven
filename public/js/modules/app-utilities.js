@@ -203,7 +203,7 @@ _wireBurnMessages(root) {
     if (!el.querySelector('.burn-pending-label')) {
       const label = document.createElement('span');
       label.className = 'burn-pending-label';
-      label.title = `Self-destructs ${burnSeconds}s after the recipient views it`;
+      label.title = t('messages.burn_pending_tooltip', { seconds: burnSeconds });
       label.textContent = '🔥';
       // Attach burn status to the message's own inline status slot so the
       // flame stays visually attached to that row instead of forming a
@@ -233,9 +233,8 @@ _wireBurnMessages(root) {
     if (!content) return;
     const real = content.innerHTML;
     el.dataset.burnRealContent = real;
-    const revealLabel = t('messages.burn_reveal');
-    const revealText = (revealLabel && revealLabel !== 'messages.burn_reveal') ? revealLabel : 'Tap to view';
-    content.innerHTML = `<button type="button" class="burn-reveal-btn">🔥 ${this._escapeHtml(revealText)} <span class="muted-text">(${burnSeconds}s after viewing)</span></button>`;
+    const revealText = t('messages.burn_reveal');
+    content.innerHTML = `<button type="button" class="burn-reveal-btn">🔥 ${this._escapeHtml(revealText)} <span class="muted-text">${t('messages.burn_reveal_hint', { seconds: burnSeconds })}</span></button>`;
     const btn = content.querySelector('.burn-reveal-btn');
     btn.addEventListener('click', () => {
       content.innerHTML = el.dataset.burnRealContent || '';
@@ -277,8 +276,7 @@ _replaceBurnedMessage(el) {
   if (el._burnTimer) { clearInterval(el._burnTimer); el._burnTimer = null; }
   const content = el.querySelector('.message-content');
   if (!content) return;
-  const doneLabel = t('messages.burn_done');
-  const doneText = (doneLabel && doneLabel !== 'messages.burn_done') ? doneLabel : 'Message burned';
+  const doneText = t('messages.burn_done');
   content.innerHTML = `<span class="muted-text" style="font-style:italic">🔥 ${this._escapeHtml(doneText)}</span>`;
   el.classList.remove('message-burn-pending');
   el.classList.add('message-burned');
@@ -291,12 +289,33 @@ _isImageUrl(str) {
   // the payload so the message still gets image layout treatment.
   if (trimmed.startsWith('spoiler-img:')) return this._isImageUrl(trimmed.slice(12));
   if (trimmed.startsWith('e2e-img:')) return true;
-  if (/^\/uploads\/(stickers\/)?[\w\-.]+\.(jpg|jpeg|png|gif|webp|svg)$/i.test(trimmed)) return true;
+  // Optional extra path segment (stickers/, images/, …) and dots in the
+  // basename. Must stay in lockstep with the early-return regex in
+  // `_formatContent` or classified-as-image messages render as empty.
+  if (/^\/uploads\/(?:[\w\-]+\/)?[\w\-.]+\.(jpg|jpeg|png|gif|webp|svg)$/i.test(trimmed)) return true;
   if (/^https?:\/\/.+\.(jpg|jpeg|png|gif|webp|svg)(\?[^"'<>]*)?$/i.test(trimmed)) return true;
   // GIPHY / Tenor GIF URLs (may not have file extensions)
   if (/^https:\/\/media\d*\.giphy\.com\/.+/i.test(trimmed)) return true;
   if (/^https:\/\/(media|c)\.tenor\.com\/.+/i.test(trimmed)) return true;
   return false;
+},
+
+// Auto-link and markdown image handlers run after `_escapeHtml`, so query
+// strings arrive as `?ex=…&amp;is=…`. Feed those straight to the media proxy
+// and Discord (Ferry attachments) 404s — the phone client never HTML-escapes
+// the URL, which is why the same photo shows on mobile and vanishes on desktop.
+_rawHttpUrl(escapedOrRaw) {
+  if (typeof escapedOrRaw !== 'string' || !escapedOrRaw) return null;
+  const decoded = this._decodeHtmlEntities(escapedOrRaw).replace(/['"<>]/g, '');
+  try { new URL(decoded); } catch { return null; }
+  return decoded;
+},
+
+_isRemoteImageUrl(url) {
+  if (typeof url !== 'string' || !url) return false;
+  return /\.(jpg|jpeg|png|gif|webp)(\?[^"'<>]*)?$/i.test(url) ||
+    /^https:\/\/media\d*\.giphy\.com\//i.test(url) ||
+    /^https:\/\/(media|c)\.tenor\.com\//i.test(url);
 },
 
 // Extract /uploads/<file> attachment paths from a (decrypted) message's
@@ -434,6 +453,184 @@ _emojiSearchMatch(emoji, keywords, rawQuery) {
   return false;
 },
 
+// ── Role mentions (#5579) ──
+// "@Moderators" lights up for everyone holding the role and pings them,
+// unless they have turned role pings off. Sending one needs the same
+// permission as @everyone, which the server enforces.
+
+/** Fetch the server's roles for rendering and the @ picker. Re-run whenever
+ *  the server says its roles changed. */
+_refreshMentionableRoles() {
+  if (!this.socket) return;
+  try {
+    this.socket.emit('get-roles', null, (res) => {
+      const roles = res && Array.isArray(res.roles) ? res.roles : [];
+      this._mentionableRoles = roles
+        .filter(r => r && r.name)
+        .map(r => ({ id: r.id, name: String(r.name), color: r.color || null, level: r.level }));
+    });
+  } catch { /* offline: keep whatever we had */ }
+},
+
+/** True when `content` pings a role the viewer holds and role pings are on. */
+_mentionsMyRole(content) {
+  if (!content || (this.notifications && this.notifications.roleMentionsEnabled === false)) return false;
+  const mine = (this.user && Array.isArray(this.user.roles)) ? this.user.roles : [];
+  if (!mine.length) return false;
+  const esc = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return mine.some(r => r && r.name && new RegExp(`(?<![\\w@])@${esc(r.name)}(?!\\w)`, 'i').test(content));
+},
+
+// ── Timestamps that follow the reader (<t:1780853820:R>) ──
+// One instant in the message, rendered in whatever timezone and locale the
+// person reading it is in, which is the whole point for scheduling across a
+// group. The syntax is deliberately Discord's: tokens survive a round trip
+// through Ferry in both directions, and the generators people already use
+// keep working.
+
+/** Locale for date formatting: the reader's own regional locale when it speaks
+ *  the language Haven is set to (so en-GB keeps day/month order), else the
+ *  Haven language, else whatever the browser prefers. */
+_timeLocale() {
+  const ui = String((typeof document !== 'undefined' && document.documentElement && document.documentElement.lang) || '').toLowerCase();
+  const browser = (typeof navigator !== 'undefined' && Array.isArray(navigator.languages)) ? navigator.languages : [];
+  if (!ui) return browser[0] || undefined;
+  const base = ui.split('-')[0];
+  return browser.find(l => String(l).toLowerCase().split('-')[0] === base) || ui;
+},
+
+/** "in 5 minutes" / "3 hours ago", in the largest unit that still reads well. */
+_relativeTimestamp(ms, locale) {
+  const diff = ms - Date.now();
+  const abs = Math.abs(diff);
+  const MIN = 60000, HOUR = 3600000, DAY = 86400000;
+  const rtf = new Intl.RelativeTimeFormat(locale, { numeric: 'auto' });
+  if (abs < MIN)       return rtf.format(Math.round(diff / 1000), 'second');
+  if (abs < HOUR)      return rtf.format(Math.round(diff / MIN), 'minute');
+  if (abs < DAY)       return rtf.format(Math.round(diff / HOUR), 'hour');
+  if (abs < 30 * DAY)  return rtf.format(Math.round(diff / DAY), 'day');
+  if (abs < 365 * DAY) return rtf.format(Math.round(diff / (30 * DAY)), 'month');
+  return rtf.format(Math.round(diff / (365 * DAY)), 'year');
+},
+
+/** Render one <t:...> token to HTML, or null when it is not a usable instant
+ *  (in which case the caller leaves the raw text alone). */
+_formatTimestampToken(seconds, style = 'f') {
+  if (!Number.isFinite(seconds)) return null;
+  const date = new Date(seconds * 1000);
+  if (Number.isNaN(date.getTime())) return null;
+  const locale = this._timeLocale();
+  let text;
+  try {
+    switch (style) {
+      case 't': text = date.toLocaleTimeString(locale, { timeStyle: 'short' }); break;
+      case 'T': text = date.toLocaleTimeString(locale, { timeStyle: 'medium' }); break;
+      case 'd': text = date.toLocaleDateString(locale, { dateStyle: 'short' }); break;
+      case 'D': text = date.toLocaleDateString(locale, { dateStyle: 'long' }); break;
+      case 'F': text = date.toLocaleString(locale, { dateStyle: 'full', timeStyle: 'short' }); break;
+      case 'R': text = this._relativeTimestamp(date.getTime(), locale); break;
+      default:  text = date.toLocaleString(locale, { dateStyle: 'long', timeStyle: 'short' }); break;
+    }
+  } catch { return null; }
+  // The hover title always spells the instant out in full, so a relative or
+  // time-only token can still be pinned down without asking the sender.
+  let title = text;
+  try { title = date.toLocaleString(locale, { dateStyle: 'full', timeStyle: 'long' }); } catch { /* keep the visible text */ }
+  if (style === 'R') this._startTimestampTicker();
+  return `<time class="chat-timestamp" datetime="${this._escapeHtml(date.toISOString())}" data-ts="${Math.trunc(seconds)}" data-tstyle="${this._escapeHtml(style)}" title="${this._escapeHtml(title)}">${this._escapeHtml(text)}</time>`;
+},
+
+/** Keep rendered relative timestamps honest without re-rendering messages.
+ *  Started on first use, so a server whose chat has none never runs a timer. */
+_startTimestampTicker() {
+  if (this._timestampTicker || typeof document === 'undefined') return;
+  this._timestampTicker = setInterval(() => {
+    const nodes = document.querySelectorAll('time.chat-timestamp[data-tstyle="R"]');
+    if (!nodes.length) return;
+    const locale = this._timeLocale();
+    nodes.forEach(el => {
+      const secs = Number(el.dataset.ts);
+      if (!Number.isFinite(secs)) return;
+      const next = this._relativeTimestamp(secs * 1000, locale);
+      if (next && el.textContent !== next) el.textContent = next;
+    });
+  }, 30000);
+},
+
+/** Turn what someone typed after /time into a token, or null if it makes no
+ *  sense. Everything is read in the sender's own timezone, which is the
+ *  natural thing: you type your time, everyone else sees theirs. */
+_parseTimeExpression(input, now = new Date()) {
+  let text = String(input == null ? '' : input).trim();
+  if (!text) return null;
+
+  // Optional trailing style letter: "8pm R".
+  let style = null;
+  const styled = text.match(/\s+([tTdDfFR])$/);
+  if (styled) { style = styled[1]; text = text.slice(0, styled.index).trim(); }
+  if (!text) return null;
+
+  // Raw unix seconds pass straight through.
+  if (/^\d{9,12}$/.test(text)) return { seconds: Number(text), style: style || 'f' };
+
+  // An offset from now: +90m, 2h, +3d, 1w.
+  const offset = text.match(/^\+?(\d{1,5})\s*(m|min|mins|minute|minutes|h|hr|hrs|hour|hours|d|day|days|w|week|weeks)$/i);
+  if (offset) {
+    const unit = offset[2].toLowerCase();
+    const ms = unit.startsWith('w') ? 604800000 : unit.startsWith('d') ? 86400000 : unit.startsWith('h') ? 3600000 : 60000;
+    return { seconds: Math.round((now.getTime() + Number(offset[1]) * ms) / 1000), style: style || 'f' };
+  }
+
+  // Optional leading day word, then an optional explicit date.
+  let dayShift = null;
+  const dayWord = text.match(/^(today|tomorrow)\b\s*/i);
+  if (dayWord) { dayShift = dayWord[1].toLowerCase() === 'tomorrow' ? 1 : 0; text = text.slice(dayWord[0].length).trim(); }
+  let ymd = null;
+  const dateMatch = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})\b\s*/);
+  if (dateMatch) { ymd = dateMatch; text = text.slice(dateMatch[0].length).trim(); }
+
+  // The remainder, if any, is a clock time: 8, 8:30, 8pm, 8:30 pm, 20:30.
+  let hh = null, mi = 0;
+  if (text) {
+    const tm = text.match(/^(\d{1,2})(?::([0-5]\d))?\s*(?:([ap])\.?m\.?)?$/i);
+    if (!tm) return null;
+    hh = Number(tm[1]);
+    mi = tm[2] ? Number(tm[2]) : 0;
+    const meridiem = tm[3] ? tm[3].toLowerCase() : null;
+    if (meridiem) {
+      if (hh < 1 || hh > 12) return null;
+      hh = (hh % 12) + (meridiem === 'p' ? 12 : 0);
+    } else if (hh > 23) return null;
+  } else if (ymd === null && dayShift === null) {
+    return null;
+  }
+
+  // A date with no clock time is a date, so show it as one unless told otherwise.
+  const resolved = style || (hh === null ? 'D' : 'f');
+  const hour = hh === null ? 0 : hh;
+
+  let when;
+  if (ymd) {
+    const y = Number(ymd[1]), mo = Number(ymd[2]) - 1, d = Number(ymd[3]);
+    when = new Date(y, mo, d, hour, mi, 0, 0);
+    // Reject dates that do not exist (JS rolls 2026-02-31 into March).
+    if (when.getFullYear() !== y || when.getMonth() !== mo || when.getDate() !== d) return null;
+  } else {
+    when = new Date(now.getFullYear(), now.getMonth(), now.getDate() + (dayShift || 0), hour, mi, 0, 0);
+    // A bare time that already went by today means the next one. Someone
+    // saying "8pm" at nine in the evening is scheduling, not reminiscing.
+    if (dayShift === null && when.getTime() <= now.getTime()) when = new Date(when.getTime() + 86400000);
+  }
+  if (Number.isNaN(when.getTime())) return null;
+  return { seconds: Math.round(when.getTime() / 1000), style: resolved };
+},
+
+/** `/time 8pm` → `<t:1780853820:f>` */
+_buildTimeToken(arg, now = new Date()) {
+  const parsed = this._parseTimeExpression(arg, now);
+  return parsed ? `<t:${parsed.seconds}:${parsed.style}>` : null;
+},
+
 _formatContent(str) {
   // Spoiler image: spoiler-img:<payload> where payload is an /uploads URL or
   // an e2e-img: marker. The sender marked this image as a spoiler, so render
@@ -445,7 +642,7 @@ _formatContent(str) {
     const rest = str.slice('spoiler-img:'.length);
     if (this._isImageUrl(rest) || /^\/uploads\//i.test(rest) || rest.startsWith('e2e-img:')) {
       const inner = this._formatContent(rest);
-      const label = this._escapeHtml((typeof t === 'function' && t('app.messages.spoiler')) || 'Spoiler');
+      const label = this._escapeHtml(t('app.messages.spoiler'));
       return `<div class="spoiler-media" role="button" tabindex="0" title="${label}"><span class="spoiler-media-tag">\u{1F441}️ ${label}</span>${inner}</div>`;
     }
   }
@@ -455,7 +652,7 @@ _formatContent(str) {
   if (e2eImgMatch) {
     const mime = this._escapeHtml(e2eImgMatch[1]);
     const url = this._escapeHtml(e2eImgMatch[2]);
-    return `<img data-e2e-src="${url}" data-e2e-mime="${mime}" class="chat-image e2e-img-pending" alt="Encrypted image" title="🔒 End-to-end encrypted image">`;
+    return `<img data-e2e-src="${url}" data-e2e-mime="${mime}" class="chat-image e2e-img-pending" alt="${t('app.messages.e2e_image_alt')}" title="${t('app.messages.e2e_image_title')}">`;
   }
 
   // E2E encrypted file: e2e-file:{"mime":...,"size":N,"url":"/uploads/...","name":"..."}
@@ -465,12 +662,12 @@ _formatContent(str) {
     try {
       const meta = JSON.parse(str.slice(9));
       if (meta && typeof meta.url === 'string' && meta.url.startsWith('/uploads/')) {
-        const name = this._escapeHtml(typeof meta.name === 'string' ? meta.name : 'file');
+        const name = this._escapeHtml(typeof meta.name === 'string' ? meta.name : t('app.messages.file'));
         const url = this._escapeHtml(meta.url);
         const mime = this._escapeHtml(typeof meta.mime === 'string' ? meta.mime : 'application/octet-stream');
         const size = Number(meta.size) || 0;
         const sizeStr = this._escapeHtml(this._formatFileSize ? this._formatFileSize(size) : (size + ' B'));
-        return `<div class="file-attachment e2e-file-pending" data-e2e-url="${url}" data-e2e-mime="${mime}" data-e2e-name="${name}" title="🔒 End-to-end encrypted file — click to download">
+        return `<div class="file-attachment e2e-file-pending" data-e2e-url="${url}" data-e2e-mime="${mime}" data-e2e-name="${name}" title="${t('app.messages.e2e_file_title')}">
           <button type="button" class="file-download-link e2e-file-download">
             <span class="file-icon">🔒</span>
             <span class="file-name">${name}</span>
@@ -480,7 +677,7 @@ _formatContent(str) {
         </div>`;
       }
     } catch {}
-    return `<span class="muted-text">[Encrypted file — unable to parse]</span>`;
+    return `<span class="muted-text">${t('app.messages.e2e_file_parse_error')}</span>`;
   }
 
   // Decode legacy HTML entities from old server-side sanitization.
@@ -544,17 +741,31 @@ _formatContent(str) {
 
   // Render server-hosted stickers inline at sticker dimensions (CSS-controlled)
   if (/^\/uploads\/stickers\/[\w\-.]+\.(jpg|jpeg|png|gif|webp|svg)$/i.test(str.trim())) {
-    return `<img src="${this._escapeHtml(str.trim())}" class="sticker-img" alt="sticker">`;
+    return `<img ${this._lazySrcAttr(`src="${this._escapeHtml(str.trim())}"`)} class="sticker-img" alt="sticker">`;
   }
 
   // Render server-hosted images inline (early return)
-  // No loading="lazy" — content-visibility:auto on .message already skips off-screen
-  // rendering; lazy loading on top creates 0→real-height jumps when scrolling history.
+  // Inline images go through the lazy media queue (app-media.js): the loader
+  // fetches them near the viewport, closest first, and pins their box so
+  // scrolling history never jumps.
   // SVG is included — browsers render SVGs in <img> tags safely (no script execution). (#5309)
-  if (/^\/uploads\/[\w\-]+\.(jpg|jpeg|png|gif|webp|svg)$/i.test(str.trim())) {
+  // Basename allows dots (`photo.edit.jpg`) and one extra path segment so this
+  // matches `_isImageUrl` / Haven Mobile. The previous `[\w\-]+` pattern
+  // classified those as images then emitted no <img>, so the bubble was blank.
+  if (/^\/uploads\/(?:[\w\-]+\/)?[\w\-.]+\.(jpg|jpeg|png|gif|webp|svg)$/i.test(str.trim())) {
     const u = str.trim();
     if (this._isImageHidden && this._isImageHidden(u)) return this._hiddenImagePlaceholder(u);
-    return `<img src="${this._escapeHtml(u)}" class="chat-image" alt="image">`;
+    return `<img ${this._lazySrcAttr(`src="${this._escapeHtml(u)}"`)} class="chat-image" alt="image">`;
+  }
+
+  // Remote image-only messages (Ferry Discord attachments, pasted CDN URLs).
+  // Must run on the unescaped string so signed query params keep their `&`.
+  {
+    const u = str.trim();
+    if (this._isImageUrl(u) && /^https?:\/\//i.test(u)) {
+      if (this._isImageHidden && this._isImageHidden(u)) return this._hiddenImagePlaceholder(u);
+      return `<img ${this._lazySrcAttr(this._imgSrcAttr(u))} class="chat-image" alt="image">`;
+    }
   }
 
   // ── Extract fenced code blocks before escaping ──
@@ -565,14 +776,26 @@ _formatContent(str) {
     return `\x00CODEBLOCK_${idx}\x00`;
   });
 
-  let html = this._escapeHtml(withPlaceholders);
+  // ── Timestamps: <t:1780853820> / <t:1780853820:R> ──
+  // Extracted before escaping (the token has angle brackets) and after the
+  // code fences above, so a token inside ``` stays literal.
+  const timestamps = [];
+  const withTimestamps = withPlaceholders.replace(/<t:(-?\d{1,15})(?::([tTdDfFR]))?>/g, (full, secs, style) => {
+    const rendered = this._formatTimestampToken(Number(secs), style || 'f');
+    if (!rendered) return full;
+    const idx = timestamps.length;
+    timestamps.push(rendered);
+    return `\x00TIMESTAMP_${idx}\x00`;
+  });
+
+  let html = this._escapeHtml(withTimestamps);
 
   // ── Markdown images & links (extract before auto-linking) ──
   const mdLinks = [];
   // ![alt](url)
   html = html.replace(/!\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/g, (full, alt, url) => {
-    try { new URL(url); } catch { return full; }
-    const safeUrl = url.replace(/['"<>]/g, '');
+    const safeUrl = this._rawHttpUrl(url);
+    if (!safeUrl) return full;
     const idx = mdLinks.length;
     mdLinks.push((this._isImageHidden && this._isImageHidden(safeUrl))
       ? this._hiddenImagePlaceholder(safeUrl)
@@ -581,10 +804,10 @@ _formatContent(str) {
   });
   // [text](url)
   html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (full, text, url) => {
-    try { new URL(url); } catch { return full; }
-    const safeUrl = url.replace(/['"<>]/g, '');
+    const safeUrl = this._rawHttpUrl(url);
+    if (!safeUrl) return full;
     const idx = mdLinks.length;
-    mdLinks.push(`<a href="${safeUrl}" target="_blank" rel="noopener noreferrer nofollow" title="${safeUrl}" data-masked-link="true">${text}</a>`);
+    mdLinks.push(`<a href="${this._escapeHtml(safeUrl)}" target="_blank" rel="noopener noreferrer nofollow" title="${this._escapeHtml(safeUrl)}" data-masked-link="true">${text}</a>`);
     return `\x00MDLINK_${idx}\x00`;
   });
 
@@ -594,17 +817,15 @@ _formatContent(str) {
   html = html.replace(
     /\bhttps?:\/\/[a-zA-Z0-9\-._~:/?#\[\]@!$&()*+,;=%]+/g,
     (url) => {
-      try { new URL(url); } catch { return url; }
-      const safeUrl = url.replace(/['"<>]/g, '');
+      const safeUrl = this._rawHttpUrl(url);
+      if (!safeUrl) return url;
       const idx = autoLinks.length;
-      if (/\.(jpg|jpeg|png|gif|webp)(\?[^"'<>]*)?$/i.test(safeUrl) ||
-          /^https:\/\/media\d*\.giphy\.com\//i.test(safeUrl) ||
-          /^https:\/\/(media|c)\.tenor\.com\//i.test(safeUrl)) {
+      if (this._isRemoteImageUrl(safeUrl)) {
         autoLinks.push((this._isImageHidden && this._isImageHidden(safeUrl))
           ? this._hiddenImagePlaceholder(safeUrl)
           : `<img ${this._imgSrcAttr(safeUrl)} class="chat-image" alt="image" loading="lazy">`);
       } else {
-        autoLinks.push(`<a href="${safeUrl}" target="_blank" rel="noopener noreferrer nofollow">${safeUrl}</a>`);
+        autoLinks.push(`<a href="${this._escapeHtml(safeUrl)}" target="_blank" rel="noopener noreferrer nofollow">${this._escapeHtml(safeUrl)}</a>`);
       }
       return `\x00AUTOLINK_${idx}\x00`;
     }
@@ -665,6 +886,16 @@ _formatContent(str) {
       if (this.user && this.user.id) nameToUserId.set(low, this.user.id);
     }
   }
+  // Role mentions (#5579): every role name is a valid @target, styled as a
+  // role and lit up for a viewer who holds it.
+  const roleByName = new Map();
+  const myRoleIds = new Set(((this.user && this.user.roles) || []).map(r => r && r.id));
+  for (const r of (this._mentionableRoles || [])) {
+    if (!r || !r.name) continue;
+    const low = r.name.toLowerCase();
+    roleByName.set(low, { name: r.name, color: r.color, mine: myRoleIds.has(r.id) });
+    validNames.add(low);
+  }
   const allNames = [...validNames].sort((a, b) => b.length - a.length);
   const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   // Build alt list of known names; also keep a generic fallback for any
@@ -678,6 +909,12 @@ _formatContent(str) {
     const isKnown = validNames.has(lower);
     const isSelf  = lower === selfLogin;
     if (!isKnown && !isSelf) return match;
+    // A role, unless a member shares the name, in which case the person wins.
+    const role = roleByName.get(lower);
+    if (role && !nameToUserId.has(lower) && !isSelf) {
+      const style = role.color ? ` style="--role-color:${this._escapeHtml(role.color)}"` : '';
+      return `<span class="mention mention-role${role.mine ? ' mention-self' : ''}"${style}>@${this._escapeHtml(role.name)}</span>`;
+    }
     // Prefer the viewer's personal nickname for that user, then the
     // server-side display name, then the raw token. (#5290)
     const uid = nameToUserId.get(lower);
@@ -903,6 +1140,13 @@ _formatContent(str) {
     html = html.replace(`\x00AUTOLINK_${idx}\x00`, link);
   });
 
+  // ── Restore timestamps ──
+  // Function replacement, so a formatted date containing $& or $1 cannot
+  // be read as a replacement pattern.
+  timestamps.forEach((el, idx) => {
+    html = html.replace(`\x00TIMESTAMP_${idx}\x00`, () => el);
+  });
+
   if (emojiOnly) html = `<span class="emoji-only-msg">${html}</span>`;
 
   return html;
@@ -1020,10 +1264,13 @@ _showToast(message, type = 'info', action = null, duration = 4000) {
   setTimeout(() => toast.remove(), duration);
 },
 
-/** Show a one-time notice about the Account Recovery feature */
+/** Show a one-time notice about the Account Recovery feature.
+ *  Whether to show it at all is decided server-side (no recovery codes yet AND
+ *  not previously dismissed) — see get-recovery-notice-state. This only guards
+ *  against showing twice within a single session (e.g. socket reconnects). */
 _showRecoveryNotice() {
-  // Guard: only show once
-  if (localStorage.getItem('haven_recovery_notice_v1')) return;
+  if (this._recoveryNoticeShown) return;
+  this._recoveryNoticeShown = true;
 
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay recovery-notice-overlay';
@@ -1048,18 +1295,24 @@ _showRecoveryNotice() {
 
   document.body.appendChild(overlay);
 
-  const dismiss = () => {
+  // Persist "never show again" per-account (not localStorage), same as the
+  // promo modals. A plain close is session-only; the notice returns next login
+  // unless the user generates recovery codes (which the server check suppresses
+  // it on) or ticks the box here.
+  const persistIfChecked = () => {
     if (document.getElementById('recovery-notice-dsa')?.checked) {
-      localStorage.setItem('haven_recovery_notice_v1', '1');
+      this.socket.emit('set-preference', { key: 'recovery_notice_seen', value: 'true' });
     }
+  };
+
+  const dismiss = () => {
+    persistIfChecked();
     overlay.remove();
   };
 
   document.getElementById('recovery-notice-close').addEventListener('click', dismiss);
   document.getElementById('recovery-notice-go').addEventListener('click', () => {
-    if (document.getElementById('recovery-notice-dsa')?.checked) {
-      localStorage.setItem('haven_recovery_notice_v1', '1');
-    }
+    persistIfChecked();
     overlay.remove();
     // Open settings modal and navigate to recovery section
     document.getElementById('open-settings-btn')?.click();
@@ -1080,13 +1333,13 @@ _showExternalLinkWarning(displayText, url) {
   overlay.innerHTML = `
     <div class="risky-download-modal">
       <div class="risky-download-icon">🔗</div>
-      <h3 style="color:var(--text-primary,#dbdee1)">External Link</h3>
-      <p>You're about to visit:</p>
+      <h3 style="color:var(--text-primary,#dbdee1)">${t('modals.external_link.title')}</h3>
+      <p>${t('modals.external_link.about_to_visit')}</p>
       <p style="background:var(--bg-tertiary,#232428);padding:8px 12px;border-radius:6px;font-size:0.8125rem;word-break:break-all;color:var(--accent,#5865f2)">${this._escapeHtml(url)}</p>
-      <p class="risky-download-desc">Make sure you trust this link before continuing.</p>
+      <p class="risky-download-desc">${t('modals.external_link.trust_warning')}</p>
       <div class="risky-download-actions">
-        <button class="risky-download-cancel">Cancel</button>
-        <button class="risky-download-confirm" style="background:var(--accent,#5865f2)">Open Link</button>
+        <button class="risky-download-cancel">${t('modals.common.cancel')}</button>
+        <button class="risky-download-confirm" style="background:var(--accent,#5865f2)">${t('modals.external_link.open')}</button>
       </div>
     </div>
   `;
@@ -1111,16 +1364,12 @@ _showRiskyDownloadWarning(fileName, ext, url) {
   overlay.innerHTML = `
     <div class="risky-download-modal">
       <div class="risky-download-icon">⚠️</div>
-      <h3>Potentially Harmful File</h3>
+      <h3>${t('modals.risky_download.title')}</h3>
       <p><strong>${this._escapeHtml(fileName)}</strong></p>
-      <p class="risky-download-desc">
-        <strong>.${this._escapeHtml(ext)}</strong> files can be dangerous and may harm your
-        device if they come from an untrusted source. Only download this if
-        you trust the sender.
-      </p>
+      <p class="risky-download-desc">${t('modals.risky_download.warning_html', { ext: this._escapeHtml(ext) })}</p>
       <div class="risky-download-actions">
-        <button class="risky-download-cancel">Cancel</button>
-        <button class="risky-download-confirm">Download Anyway</button>
+        <button class="risky-download-cancel">${t('modals.common.cancel')}</button>
+        <button class="risky-download-confirm">${t('modals.risky_download.download_anyway')}</button>
       </div>
     </div>
   `;
@@ -1226,8 +1475,8 @@ _toggleEmojiPicker(anchorEl) {
     });
     return b;
   };
-  sectionRow.appendChild(mkSectionBtn('emoji', t('emoji.section_emoji') || 'Emoji'));
-  sectionRow.appendChild(mkSectionBtn('sticker', t('emoji.section_sticker') || 'Stickers'));
+  sectionRow.appendChild(mkSectionBtn('emoji', t('emoji.section_emoji')));
+  sectionRow.appendChild(mkSectionBtn('sticker', t('emoji.section_sticker')));
   picker.appendChild(sectionRow);
 
   // ── Sticker section ──
@@ -1237,7 +1486,7 @@ _toggleEmojiPicker(anchorEl) {
     const stickerSearch = document.createElement('input');
     stickerSearch.type = 'text';
     stickerSearch.className = 'emoji-search-input';
-    stickerSearch.placeholder = t('emoji.sticker_search_placeholder') || 'Search stickers';
+    stickerSearch.placeholder = t('emoji.sticker_search_placeholder');
     stickerSearch.maxLength = 30;
     stickerSearchRow.appendChild(stickerSearch);
     picker.appendChild(stickerSearchRow);
@@ -1288,8 +1537,8 @@ _toggleEmojiPicker(anchorEl) {
       if (list.length === 0) {
         grid.innerHTML = `<p class="muted-text" style="padding:12px;font-size:0.75rem;width:100%;text-align:center">${
           stickers.length === 0
-            ? (t('emoji.no_stickers') || 'No stickers yet — an admin can upload some from the Manage Stickers panel')
-            : (t('emoji.no_results') || 'No results')
+            ? t('emoji.no_stickers')
+            : t('emoji.no_results')
         }</p>`;
         return;
       }
@@ -1757,12 +2006,12 @@ _switchGifTab(tab) {
 _setGifFooter(provider) {
   if (!provider) return;
   const footer = document.querySelector('.gif-picker-footer');
-  if (footer) footer.textContent = provider === 'tenor' ? 'Powered by Tenor' : 'Powered by GIPHY';
+  if (footer) footer.textContent = t('gifs.powered_by', { provider: provider === 'tenor' ? 'Tenor' : 'GIPHY' });
 },
 
 _loadTrendingGifs() {
   const grid = document.getElementById('gif-grid');
-  grid.innerHTML = '<div class="gif-picker-empty">Loading...</div>';
+  grid.innerHTML = `<div class="gif-picker-empty">${t('thread_list.loading')}</div>`;
   fetch('/api/gif/trending?limit=20', {
     headers: { 'Authorization': `Bearer ${this.token}` }
   })
@@ -1782,7 +2031,7 @@ _loadTrendingGifs() {
     })
     .catch(() => {
       if (this._gifTab === 'favorites') return;
-      grid.innerHTML = '<div class="gif-picker-empty">Failed to load GIFs</div>';
+      grid.innerHTML = `<div class="gif-picker-empty">${t('gifs.load_failed')}</div>`;
     });
 },
 
@@ -1820,34 +2069,20 @@ _searchGifs(query) {
 _showGifSetupGuide(grid) {
   const isAdmin = this.user && this.user.isAdmin;
   if (isAdmin) {
-    // Tenor steps render by default — GIPHY stopped issuing API keys to
-    // new applications, so it is kept only as the legacy choice for
-    // admins who already hold a working key.
-    const guides = {
-      tenor: `<p>${t('gifs.setup.tenor_powered_by')}</p>
-        <ol>
-          <li>${t('gifs.setup.tenor_step_1')}</li>
-          <li>${t('gifs.setup.tenor_step_2')}</li>
-          <li>${t('gifs.setup.tenor_step_3')}</li>
-        </ol>`,
-      giphy: `<p>${t('gifs.setup.powered_by')}</p>
+    // GIPHY is the supported provider. Tenor is no longer offered here;
+    // an existing tenor_api_key still works on the server if no GIPHY key is set.
+    grid.innerHTML = `
+      <div class="gif-setup-guide">
+        <h3>🎞️ ${t('gifs.setup.title')}</h3>
+        <p>${t('gifs.setup.powered_by')}</p>
         <ol>
           <li>${t('gifs.setup.step_1')}</li>
           <li>${t('gifs.setup.step_2')}</li>
           <li>${t('gifs.setup.step_3')}</li>
           <li>${t('gifs.setup.step_4')}</li>
           <li>${t('gifs.setup.step_5')}</li>
-        </ol>`,
-    };
-    grid.innerHTML = `
-      <div class="gif-setup-guide">
-        <h3>🎞️ ${t('gifs.setup.title')}</h3>
-        <div id="gif-setup-steps">${guides.tenor}</div>
+        </ol>
         <div class="gif-setup-input-row">
-          <select id="gif-provider-select" title="${t('gifs.setup.provider')}">
-            <option value="tenor">Tenor</option>
-            <option value="giphy">GIPHY</option>
-          </select>
           <input type="text" id="gif-provider-key-input" placeholder="${t('gifs.setup.key_placeholder')}" spellcheck="false" autocomplete="off" />
           <button id="gif-provider-key-save">${t('gifs.setup.save_btn')}</button>
         </div>
@@ -1855,15 +2090,10 @@ _showGifSetupGuide(grid) {
       </div>`;
     const saveBtn = document.getElementById('gif-provider-key-save');
     const input = document.getElementById('gif-provider-key-input');
-    const select = document.getElementById('gif-provider-select');
-    select.addEventListener('change', () => {
-      document.getElementById('gif-setup-steps').innerHTML = guides[select.value] || guides.tenor;
-    });
     saveBtn.addEventListener('click', () => {
       const key = input.value.trim();
       if (!key) return;
-      const settingKey = select.value === 'giphy' ? 'giphy_api_key' : 'tenor_api_key';
-      this.socket.emit('update-server-setting', { key: settingKey, value: key });
+      this.socket.emit('update-server-setting', { key: 'giphy_api_key', value: key });
       grid.innerHTML = `<div class="gif-picker-empty">${t('gifs.setup.saved')}</div>`;
       setTimeout(() => this._loadTrendingGifs(), 500);
     });
@@ -2021,7 +2251,7 @@ _showGifSlashResults(query) {
   const picker = document.createElement('div');
   picker.id = 'gif-slash-picker';
   picker.className = 'gif-slash-picker';
-  picker.innerHTML = '<div class="gif-slash-loading">Searching GIFs...</div>';
+  picker.innerHTML = `<div class="gif-slash-loading">${t('gifs.searching')}</div>`;
 
   // Position above the message input
   const inputArea = document.querySelector('.message-input-area');
@@ -2045,12 +2275,12 @@ _showGifSlashResults(query) {
     .then(r => r.json())
     .then(data => {
       if (data.error === 'gif_not_configured') {
-        picker.innerHTML = '<div class="gif-slash-loading">GIF search not configured — an admin needs to set up a Tenor (or GIPHY) API key (use the GIF button 🎞️)</div>';
+        picker.innerHTML = `<div class="gif-slash-loading">${t('gifs.setup.unavailable_desc')}</div>`;
         return;
       }
       if (data.error) { picker.innerHTML = `<div class="gif-slash-loading">${this._escapeHtml(data.error)}</div>`; return; }
       const results = data.results || [];
-      if (results.length === 0) { picker.innerHTML = '<div class="gif-slash-loading">No GIFs found</div>'; return; }
+      if (results.length === 0) { picker.innerHTML = `<div class="gif-slash-loading">${t('gifs.no_results')}</div>`; return; }
 
       picker.innerHTML = `<div class="gif-slash-header"><span>/gif ${this._escapeHtml(query)}</span><button class="icon-btn small gif-slash-close">&times;</button></div><div class="gif-slash-grid"></div>`;
       const grid = picker.querySelector('.gif-slash-grid');
@@ -2073,7 +2303,7 @@ _showGifSlashResults(query) {
       });
     })
     .catch(() => {
-      picker.innerHTML = '<div class="gif-slash-loading">GIF search failed</div>';
+      picker.innerHTML = `<div class="gif-slash-loading">${t('gifs.search_failed')}</div>`;
     });
 },
 
@@ -2101,14 +2331,14 @@ _renderPollWidget(msgId, poll) {
   }).join('');
 
   const settings = [];
-  if (poll.multiVote) settings.push('Multiple votes');
-  if (poll.anonymous) settings.push('Anonymous');
+  if (poll.multiVote) settings.push(t('poll.multiple_votes'));
+  if (poll.anonymous) settings.push(t('poll.anonymous'));
   const settingsHtml = settings.length ? `<div class="poll-settings-info">${settings.join(' · ')}</div>` : '';
 
   return `<div class="poll-widget" data-msg-id="${msgId}">
     <div class="poll-question">${this._escapeHtml(poll.question)}</div>
     <div class="poll-options">${optionsHtml}</div>
-    <div class="poll-footer">${totalVotes} vote${totalVotes !== 1 ? 's' : ''}${settingsHtml ? ' · ' : ''}${settingsHtml}</div>
+    <div class="poll-footer">${t(totalVotes === 1 ? 'poll.votes_one' : 'poll.votes_other', { count: totalVotes })}${settingsHtml ? ' · ' : ''}${settingsHtml}</div>
   </div>`;
 },
 
@@ -2142,7 +2372,7 @@ _updatePollVotes(messageId, votes, totalVotes) {
   if (footer) {
     const settingsInfo = footer.querySelector('.poll-settings-info');
     const settingsHtml = settingsInfo ? ' · ' + settingsInfo.outerHTML : '';
-    footer.innerHTML = `${totalVotes} vote${totalVotes !== 1 ? 's' : ''}${settingsHtml}`;
+    footer.innerHTML = `${t(totalVotes === 1 ? 'poll.votes_one' : 'poll.votes_other', { count: totalVotes })}${settingsHtml}`;
   }
 
   if (wasAtBottom) this._scrollToBottom(true);
@@ -2697,8 +2927,19 @@ _showFullReactionPicker(msgEl, msgId, quickPicker) {
 // THREADS
 // ═══════════════════════════════════════════════════════
 
-_renderThreadPreview(parentId, thread) {
-  if (!thread || !thread.count) return '';
+_renderThreadPreview(parentId, thread, opts = {}) {
+  if (!thread) return '';
+  if (!thread.count) {
+    // A forum topic with no replies yet gets the same button as an
+    // invitation, so a fresh topic reads as a topic rather than a message.
+    if (!opts.forum) return '';
+    return `
+    <button class="thread-preview thread-preview-empty" data-thread-parent="${parentId}">
+      <span class="thread-preview-count">${t('thread_runtime.reply_to_topic')}</span>
+      <span class="thread-preview-arrow">›</span>
+    </button>
+  `;
+  }
   const participantAvatars = (thread.participants || []).map(p => {
     if (p.avatar) {
       return `<img class="thread-participant-avatar" src="${this._escapeHtml(p.avatar)}" alt="${this._escapeHtml(p.username)}" title="${this._escapeHtml(p.username)}">`;
@@ -2712,7 +2953,7 @@ _renderThreadPreview(parentId, thread) {
   return `
     <button class="thread-preview" data-thread-parent="${parentId}">
       ${participantAvatars}
-      <span class="thread-preview-count">${thread.count} ${thread.count === 1 ? 'Reply' : 'Replies'}</span>
+      <span class="thread-preview-count">${t(thread.count === 1 ? 'thread_runtime.reply_one' : 'thread_runtime.reply_other', { count: thread.count })}</span>
       <span class="thread-preview-time">${timeAgo}</span>
       <span class="thread-preview-arrow">›</span>
     </button>
@@ -2723,12 +2964,12 @@ _relativeTime(isoStr) {
   if (!isoStr) return '';
   const diff = Date.now() - new Date(isoStr).getTime();
   const mins = Math.floor(diff / 60000);
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins}m ago`;
+  if (mins < 1) return t('thread_runtime.just_now');
+  if (mins < 60) return t('thread_runtime.minutes_ago', { count: mins });
   const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
+  if (hours < 24) return t('thread_runtime.hours_ago', { count: hours });
   const days = Math.floor(hours / 24);
-  return `${days}d ago`;
+  return t('thread_runtime.days_ago', { count: days });
 },
 
 _setThreadParentHeader(meta = {}) {
@@ -2736,7 +2977,7 @@ _setThreadParentHeader(meta = {}) {
   const nameEl = document.getElementById('thread-parent-name');
   if (!wrap || !nameEl) return;
 
-  const baseUsername = (meta.username || '').trim() || 'Thread starter';
+  const baseUsername = (meta.username || '').trim() || t('thread_runtime.starter');
   // Apply the local user's nickname assignment so threads match the rest of
   // the UI (members list, message author, mentions). Falls back to the
   // server-provided display name when no nickname is set. (#5291)
@@ -2761,7 +3002,7 @@ _setThreadParentHeader(meta = {}) {
 _setThreadReply(msgEl, msgId) {
   const author = msgEl.querySelector('.thread-msg-author')?.textContent
     || this._getNickname?.(parseInt(msgEl.dataset.userId, 10), msgEl.dataset.username)
-    || msgEl.dataset.username || 'someone';
+    || msgEl.dataset.username || t('voice.someone');
   const rawContent = msgEl.dataset.rawContent || msgEl.querySelector('.thread-msg-content')?.textContent || '';
   const preview = rawContent.length > 70 ? rawContent.substring(0, 70) + '…' : rawContent;
   this._threadReplyingTo = { id: msgId, username: author, content: rawContent };
@@ -2770,7 +3011,7 @@ _setThreadReply(msgEl, msgId) {
   const text = document.getElementById('thread-reply-preview-text');
   if (!bar || !text) return;
   bar.style.display = 'flex';
-  text.innerHTML = `Replying to <strong>${this._escapeHtml(author)}</strong>: ${this._escapeHtml(preview)}`;
+  text.innerHTML = t('thread_runtime.replying_to', { author: this._escapeHtml(author), preview: this._escapeHtml(preview) });
 
   const input = document.getElementById('thread-input');
   if (input) input.focus();
@@ -2786,9 +3027,9 @@ _quoteThreadMessage(msgEl) {
   const rawContent = msgEl.dataset.rawContent || msgEl.querySelector('.thread-msg-content')?.textContent || '';
   const author = msgEl.querySelector('.thread-msg-author')?.textContent
     || this._getNickname?.(parseInt(msgEl.dataset.userId, 10), msgEl.dataset.username)
-    || msgEl.dataset.username || 'someone';
+    || msgEl.dataset.username || t('voice.someone');
   const quotedLines = rawContent.split('\n').map(l => `> ${l}`).join('\n');
-  const quoteText = `> @${author} wrote:\n${quotedLines}\n`;
+  const quoteText = `${t('thread_runtime.wrote', { author })}\n${quotedLines}\n`;
 
   const input = document.getElementById('thread-input');
   if (!input) return;
@@ -2854,9 +3095,7 @@ _updateThreadMentionsPill() {
   }
   pill.style.display = '';
   cnt.textContent = String(list.length);
-  pill.title = list.length === 1
-    ? `1 mention in a thread — click to open`
-    : `${list.length} mentions in threads — click to open the most recent`;
+  pill.title = t(list.length === 1 ? 'thread_runtime.mention_one' : 'thread_runtime.mention_other', { count: list.length });
 },
 _openMostRecentThreadMention() {
   if (!this._threadMentions) return;
@@ -2916,9 +3155,37 @@ _openDMPiP(code) {
   // Title: partner name
   const partnerName = ch.dm_target ? this._getNickname(ch.dm_target.id, ch.dm_target.username) : 'DM';
   const titleEl = document.getElementById('dm-pip-title');
-  if (titleEl) titleEl.textContent = ch.is_self_dm ? `📝 ${partnerName} (you)` : `@ ${partnerName}`;
+  if (titleEl) titleEl.textContent = ch.is_self_dm ? `📝 ${t('dm_runtime.self_title', { name: partnerName })}` : `@ ${partnerName}`;
 
-  // Header avatar — pulled from the partner's online presence (best effort)
+  this._refreshDMPipHeader(ch, partnerName);
+
+  // Banner background: use server banner as a subtle backdrop
+  const bannerEl = document.getElementById('dm-pip-banner');
+  const bannerUrl = this.serverSettings && this.serverSettings.server_banner;
+  if (bannerEl) {
+    if (bannerUrl) {
+      bannerEl.style.backgroundImage = `url("${bannerUrl.replace(/"/g, '\\"')}")`;
+      panel.classList.remove('no-banner');
+    } else {
+      bannerEl.style.backgroundImage = '';
+      panel.classList.add('no-banner');
+    }
+  }
+  this._openDMPiPBody(ch, code, panel);
+},
+
+// Header avatar and status dot for the open DM PiP. Runs when the panel opens
+// and again on every presence broadcast (#5574): it used to render once, from
+// whatever the online list held at that moment, so a PiP opened before the
+// list arrived, or whose partner came online later, kept the grey dot and the
+// initial for as long as the panel stayed open.
+_refreshDMPipHeader(ch, partnerName) {
+  if (!ch) {
+    const code = this._activeDMPip;
+    ch = code ? (this.channels || []).find(c => c.code === code) : null;
+    if (!ch) return;
+  }
+  if (!partnerName) partnerName = ch.dm_target ? this._getNickname(ch.dm_target.id, ch.dm_target.username) : 'DM';
   const avatarWrap = document.getElementById('dm-pip-avatar-wrap');
   if (avatarWrap) {
     const partnerId = ch.dm_target && ch.dm_target.id;
@@ -2947,10 +3214,10 @@ _openDMPiP(code) {
     } else {
       statusClass = 'away'; // partner not in online list → treat as offline/away
     }
-    const statusLabel = statusClass === 'dnd' ? 'Do Not Disturb'
-      : statusClass === 'away' ? 'Offline / Away'
-      : statusClass === 'invisible' ? 'Invisible'
-      : 'Online';
+    const statusLabel = statusClass === 'dnd' ? t('app.profile.dnd')
+      : statusClass === 'away' ? t('dm_runtime.offline_away')
+      : statusClass === 'invisible' ? t('app.profile.invisible')
+      : t('app.profile.online');
     const statusDot = `<span class="dm-pip-status-dot${statusClass ? ' ' + statusClass : ''}" title="${this._escapeHtml(statusLabel)}"></span>`;
     if (avatarUrl) {
       avatarWrap.style.backgroundColor = '';
@@ -2962,19 +3229,10 @@ _openDMPiP(code) {
       avatarWrap.innerHTML = `<span class="dm-pip-avatar-initial">${this._escapeHtml(initial)}</span>${statusDot}`;
     }
   }
+},
 
-  // Banner background — use server banner as a subtle backdrop
-  const bannerEl = document.getElementById('dm-pip-banner');
-  const bannerUrl = this.serverSettings && this.serverSettings.server_banner;
-  if (bannerEl) {
-    if (bannerUrl) {
-      bannerEl.style.backgroundImage = `url("${bannerUrl.replace(/"/g, '\\"')}")`;
-      panel.classList.remove('no-banner');
-    } else {
-      bannerEl.style.backgroundImage = '';
-      panel.classList.add('no-banner');
-    }
-  }
+// The rest of opening a DM PiP: everything after the header and banner.
+_openDMPiPBody(ch, code, panel) {
 
   // Restore geometry from localStorage
   this._applyDMPiPGeometry(panel);
@@ -2983,7 +3241,7 @@ _openDMPiP(code) {
 
   // Clear messages and request fresh
   const msgsEl = document.getElementById('dm-pip-messages');
-  if (msgsEl) msgsEl.innerHTML = '<div class="dm-pip-loading">Loading…</div>';
+  if (msgsEl) msgsEl.innerHTML = `<div class="dm-pip-loading">${t('thread_list.loading')}</div>`;
   // E2E: ensure partner key is loaded before history arrives so messages decrypt.
   // For self-DMs the "partner" is the user themselves, so seed our own public
   // key directly instead of round-tripping through the server. Avoids any
@@ -3004,7 +3262,7 @@ _openDMPiP(code) {
   this._dmPipLoadingTimer = setTimeout(() => {
     const stillLoading = document.querySelector('#dm-pip-messages .dm-pip-loading');
     if (stillLoading && this._activeDMPip === code) {
-      stillLoading.textContent = 'No messages yet.';
+      stillLoading.textContent = t('dm_runtime.no_messages');
     }
   }, 6000);
 
@@ -3168,7 +3426,7 @@ _setDMPiPReply(msgEl, msgId) {
       prev = prev.previousElementSibling;
     }
   }
-  author = author || 'someone';
+  author = author || t('voice.someone');
   const content = msgEl.querySelector('.message-content')?.textContent || '';
   const preview = content.length > 60 ? content.substring(0, 60) + '…' : content;
   this._dmPipReplyingTo = { id: msgId, username: author, content };
@@ -3176,7 +3434,7 @@ _setDMPiPReply(msgEl, msgId) {
   if (bar) {
     bar.style.display = 'flex';
     const txt = document.getElementById('dm-pip-reply-preview-text');
-    if (txt) txt.innerHTML = `Replying to <strong>${this._escapeHtml(author)}</strong>: ${this._escapeHtml(preview)}`;
+    if (txt) txt.innerHTML = t('thread_runtime.replying_to', { author: this._escapeHtml(author), preview: this._escapeHtml(preview) });
   }
   document.getElementById('dm-pip-input')?.focus();
 },
@@ -3198,9 +3456,9 @@ _quoteDMPiPMessage(msgEl) {
       prev = prev.previousElementSibling;
     }
   }
-  author = author || 'someone';
+  author = author || t('voice.someone');
   const quotedLines = rawContent.split('\n').map(l => `> ${l}`).join('\n');
-  const quoteText = `> @${author} wrote:\n${quotedLines}\n`;
+  const quoteText = `${t('thread_runtime.wrote', { author })}\n${quotedLines}\n`;
   const input = document.getElementById('dm-pip-input');
   if (!input) return;
   input.value = input.value ? `${input.value}\n${quoteText}` : quoteText;
@@ -3252,24 +3510,36 @@ _sendDMPiPMessage() {
           unflip:     () => `${arg ? arg + ' ' : ''}┬─┬ ノ( ゜-゜ノ)`,
           lenny:      () => `${arg ? arg + ' ' : ''}( ͡° ͜ʖ ͡°)`,
           disapprove: () => `${arg ? arg + ' ' : ''}ಠ_ಠ`,
-          bbs:        () => `🕐 ${displayName} will be back soon`,
+          bbs:        () => t('commands.output.bbs', { name: displayName }),
           boobs:      () => `( . Y . )`,
           butt:       () => `( . )( . )`,
-          brb:        () => `⏳ ${displayName} will be right back`,
-          afk:        () => `💤 ${displayName} is away from keyboard`,
+          brb:        () => t('commands.output.brb', { name: displayName }),
+          afk:        () => t('commands.output.afk', { name: displayName }),
           me:         () => arg ? `_${displayName} ${arg}_` : null,
-          flip:       () => `🪙 ${displayName} flipped a coin: **${Math.random() < 0.5 ? 'Heads' : 'Tails'}**!`,
+          flip:       () => t('commands.output.flip', {
+            name: displayName,
+            side: t(Math.random() < 0.5 ? 'commands.output.heads' : 'commands.output.tails'),
+          }),
           roll:       () => {
             const m = (arg || '1d6').match(/^(\d{1,2})?d(\d{1,4})$/i);
-            if (!m) return `🎲 ${displayName} rolled: **${Math.floor(Math.random() * 6) + 1}**`;
+            if (!m) return t('commands.output.roll_simple', {
+              name: displayName,
+              result: Math.floor(Math.random() * 6) + 1,
+            });
             const count = Math.min(parseInt(m[1] || '1'), 20);
             const sides = Math.min(parseInt(m[2]), 1000);
             const rolls = Array.from({ length: count }, () => Math.floor(Math.random() * sides) + 1);
             const total = rolls.reduce((a, b) => a + b, 0);
-            return `🎲 ${displayName} rolled ${count}d${sides}: [${rolls.join(', ')}] = **${total}**`;
+            return t('commands.output.roll', {
+              name: displayName,
+              count,
+              sides,
+              rolls: rolls.join(', '),
+              total,
+            });
           },
-          hug:        () => arg ? `🤗 ${displayName} hugs ${arg}` : null,
-          wave:       () => `👋 ${displayName} waves${arg ? ' ' + arg : ''}`,
+          hug:        () => arg ? t('commands.output.hug', { name: displayName, target: arg }) : null,
+          wave:       () => t('commands.output.wave', { name: displayName, text: arg ? ` ${arg}` : '' }),
         };
         if (clientSlash[cmd]) {
           const transformed = clientSlash[cmd]();
@@ -3317,8 +3587,8 @@ _openThread(parentId) {
 
   // Update header
   const msgEl = document.querySelector(`[data-msg-id="${parentId}"]`);
-  const author = msgEl?.querySelector('.message-author')?.textContent || 'Thread starter';
-  document.getElementById('thread-panel-title').textContent = 'Thread';
+  const author = msgEl?.querySelector('.message-author')?.textContent || t('thread_runtime.starter');
+  document.getElementById('thread-panel-title').textContent = t('msg_toolbar.thread');
   const parentPreview = msgEl?.querySelector('.message-content')?.textContent || '';
   document.getElementById('thread-parent-preview').textContent = parentPreview.length > 120 ? parentPreview.substring(0, 120) + '…' : parentPreview;
 
@@ -3343,7 +3613,7 @@ _setThreadPiPEnabled(enabled) {
   const isOn = !!enabled;
   panel.classList.toggle('pip', isOn);
   pipBtn.textContent = isOn ? '▣' : '⧉';
-  pipBtn.title = isOn ? 'Dock thread panel' : 'Pop out thread (PiP)';
+  pipBtn.title = t(isOn ? 'thread_runtime.dock_panel' : 'thread_runtime.pop_out');
   pipBtn.setAttribute('aria-pressed', isOn ? 'true' : 'false');
   localStorage.setItem('haven_thread_panel_pip', isOn ? '1' : '0');
 
@@ -3455,12 +3725,12 @@ _appendThreadMessage(msg) {
   const iEdit = iconPair('✏️', '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20l4.5-1 9-9-3.5-3.5-9 9L4 20z" stroke-width="1.8" stroke-linejoin="round"></path><path d="M13.5 6.5l3.5 3.5" stroke-width="1.8" stroke-linecap="round"></path></svg>');
   const iDelete = iconPair('🗑️', '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14" stroke-width="1.8" stroke-linecap="round"></path><path d="M9 7V5h6v2" stroke-width="1.8" stroke-linecap="round"></path><path d="M7 7l1 12h8l1-12" stroke-width="1.8" stroke-linejoin="round"></path></svg>');
   const iMore = iconPair('⋯', '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="12" r="1.6" fill="currentColor" stroke="none"></circle><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"></circle><circle cx="18" cy="12" r="1.6" fill="currentColor" stroke="none"></circle></svg>');
-  const threadCoreToolbarBtns = `<button data-thread-action="react" title="React" aria-label="React">${iReact}</button><button data-thread-action="reply" title="Reply">${iReply}</button><button data-thread-action="quote" title="Quote">${iQuote}</button>`;
+  const threadCoreToolbarBtns = `<button data-thread-action="react" title="${t('msg_toolbar.react')}" aria-label="${t('msg_toolbar.react')}">${iReact}</button><button data-thread-action="reply" title="${t('msg_toolbar.reply')}">${iReply}</button><button data-thread-action="quote" title="${t('msg_toolbar.quote')}">${iQuote}</button>`;
   let threadOverflowToolbarBtns = '';
-  if (canEdit) threadOverflowToolbarBtns += `<button data-thread-action="edit" title="Edit">${iEdit}</button>`;
-  if (canDelete) threadOverflowToolbarBtns += `<button data-thread-action="delete" title="Delete">${iDelete}</button>`;
+  if (canEdit) threadOverflowToolbarBtns += `<button data-thread-action="edit" title="${t('msg_toolbar.edit')}">${iEdit}</button>`;
+  if (canDelete) threadOverflowToolbarBtns += `<button data-thread-action="delete" title="${t('msg_toolbar.delete')}">${iDelete}</button>`;
   const threadOverflowHtml = threadOverflowToolbarBtns
-    ? `<div class="thread-msg-more"><button class="thread-msg-more-btn" type="button" aria-label="More actions">${iMore}</button><div class="thread-msg-overflow">${threadOverflowToolbarBtns}</div></div>`
+    ? `<div class="thread-msg-more"><button class="thread-msg-more-btn" type="button" aria-label="${t('app.actions.message_actions')}">${iMore}</button><div class="thread-msg-overflow">${threadOverflowToolbarBtns}</div></div>`
     : '';
 
   // Group consecutive replies from the same author (within 5 min, no reply
@@ -3582,8 +3852,10 @@ _promoteThreadCompactToFull(compactEl) {
 _updateThreadPreview(parentId, thread) {
   const msgEl = document.querySelector(`[data-msg-id="${parentId}"]`);
   if (!msgEl) return;
+  if (msgEl.classList.contains('forum-topic')) { this._forumBump && this._forumBump(parentId, thread); return; }
   const oldPreview = msgEl.querySelector('.thread-preview');
-  const newHtml = this._renderThreadPreview(parentId, thread);
+  const ch = this.channels && this.channels.find(c => c.code === this.currentChannel);
+  const newHtml = this._renderThreadPreview(parentId, thread, { forum: !!(ch && ch.is_forum) });
   if (oldPreview) {
     oldPreview.outerHTML = newHtml;
   } else if (newHtml) {
@@ -3614,6 +3886,15 @@ _renderReplyBanner(replyCtx) {
 },
 
 _setReply(msgEl, msgId) {
+  // In a forum a reply to a topic belongs in the topic's thread: that is what
+  // bumps it, and it keeps the answer under the question instead of posting
+  // a second topic that quotes the first. (#144)
+  const forumCh = this.channels && this.channels.find(c => c.code === this.currentChannel);
+  if (forumCh && forumCh.is_forum && msgEl && msgEl.closest && msgEl.closest('#messages')) {
+    this._clearReply();
+    this._openThread(msgId);
+    return;
+  }
   // Get message info — works for both full messages and compact messages
   let author = msgEl.querySelector('.message-author')?.textContent;
   if (!author) {
@@ -3625,7 +3906,7 @@ _setReply(msgEl, msgId) {
       prev = prev.previousElementSibling;
     }
   }
-  author = author || 'someone';
+  author = author || t('voice.someone');
   const content = msgEl.querySelector('.message-content')?.textContent || '';
   const preview = content.length > 60 ? content.substring(0, 60) + '…' : content;
 
@@ -3634,7 +3915,7 @@ _setReply(msgEl, msgId) {
   const bar = document.getElementById('reply-bar');
   bar.style.display = 'flex';
   document.getElementById('reply-preview-text').innerHTML =
-    `Replying to <strong>${this._escapeHtml(author)}</strong>: ${this._escapeHtml(preview)}`;
+    t('thread_runtime.replying_to', { author: this._escapeHtml(author), preview: this._escapeHtml(preview) });
   document.getElementById('message-input').focus();
 },
 
@@ -3657,11 +3938,11 @@ _quoteMessage(msgEl) {
       prev = prev.previousElementSibling;
     }
   }
-  author = author || 'someone';
+  author = author || t('voice.someone');
 
   // Build the blockquote text — each line prefixed with >
   const quotedLines = rawContent.split('\n').map(l => `> ${l}`).join('\n');
-  const quoteText = `> @${author} wrote:\n${quotedLines}\n`;
+  const quoteText = `${t('thread_runtime.wrote', { author })}\n${quotedLines}\n`;
 
   const input = document.getElementById('message-input');
   // If there's already text, add a newline before the quote
@@ -3711,7 +3992,7 @@ _startEditMessage(msgEl, msgId) {
 
   const btnRow = document.createElement('div');
   btnRow.className = 'edit-actions';
-  btnRow.innerHTML = `<button class="edit-emoji-btn" title="${t('app.input_bar.emoji_btn') || 'Emoji'}">😀</button><button class="edit-save-btn">${t('modals.common.save')}</button><button class="edit-cancel-btn">${t('modals.common.cancel')}</button>`;
+  btnRow.innerHTML = `<button class="edit-emoji-btn" title="${t('app.input_bar.emoji_btn')}">😀</button><button class="edit-save-btn">${t('modals.common.save')}</button><button class="edit-cancel-btn">${t('modals.common.cancel')}</button>`;
   contentEl.appendChild(btnRow);
 
   // Emoji button in edit bar opens the picker
@@ -3812,6 +4093,12 @@ _startEditMessage(msgEl, msgId) {
       if (e.key === 'Escape') { this._hideEmojiDropdown(); return; }
     }
 
+    // Markdown formatting shortcuts
+    if (this._handleMarkdownShortcuts(textarea, e)) {
+      e.preventDefault();
+      return;
+    }
+
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       btnRow.querySelector('.edit-save-btn').click();
@@ -3819,6 +4106,13 @@ _startEditMessage(msgEl, msgId) {
     if (e.key === 'Escape') {
       e.preventDefault();
       cancel();
+    }
+  });
+
+  textarea.addEventListener('paste', (e) => {
+    if (this._handleMarkdownLinkPaste(textarea, e)) {
+      e.preventDefault();
+      return;
     }
   });
 
@@ -3909,8 +4203,8 @@ _maybeShowDmSafetyNotice(container) {
   notice.className = 'dm-safety-notice';
   notice.innerHTML =
     '<span class="dm-safety-icon" aria-hidden="true">🛡️</span>' +
-    '<span class="dm-safety-text">Haven can\'t verify anyone\'s identity. Names aren\'t unique, so make sure you actually know who you\'re talking to before sharing anything.</span>' +
-    '<button type="button" class="dm-safety-dismiss">Got it, don\'t show again</button>';
+    `<span class="dm-safety-text">${t('dm_runtime.safety_notice')}</span>` +
+    `<button type="button" class="dm-safety-dismiss">${t('dm_runtime.safety_dismiss')}</button>`;
 
   notice.querySelector('.dm-safety-dismiss').addEventListener('click', () => {
     try { localStorage.setItem('haven_dm_safety_dismissed', '1'); } catch {}
@@ -3955,11 +4249,11 @@ _enforceDmLinkPolicy(containerEl) {
     try { host = new URL(a.href).hostname; } catch {}
     const span = document.createElement('span');
     span.className = 'blocked-link';
-    span.title = `Links to ${host} are not allowed on this server, so this was not made clickable.`;
+    span.title = t('dm_runtime.blocked_link_tooltip', { host });
     span.textContent = a.textContent;
     const badge = document.createElement('span');
     badge.className = 'blocked-link-badge';
-    badge.textContent = ' ⚠ blocked link';
+    badge.textContent = ` ⚠ ${t('dm_runtime.blocked_link_badge')}`;
     span.appendChild(badge);
     a.replaceWith(span);
   });
@@ -3974,7 +4268,7 @@ _enforceDmLinkPolicy(containerEl) {
     ph.setAttribute('role', 'button');
     ph.tabIndex = 0;
     ph.dataset.hiddenSrc = origin;
-    ph.textContent = '⚠ Image from a blocked domain — click to load anyway';
+    ph.textContent = t('dm_runtime.blocked_image');
     img.replaceWith(ph);
   });
 },
@@ -4246,7 +4540,7 @@ _showAdminActionModal(action, userId, username) {
 // gates on the target user having 2FA enabled, (3) reveal modal that
 // shows the temp password once for the admin to transmit out-of-band.
 _confirmAdminResetPassword(userId, username) {
-  this._closeUserGearMenu();
+  this._hideUserContextMenu();
   this._closeProfilePopup();
   const safeName = this._escapeHtml(username);
   const overlay = document.createElement('div');
@@ -4256,24 +4550,24 @@ _confirmAdminResetPassword(userId, username) {
   overlay.innerHTML = `
     <div class="modal admin-reset-pw-modal">
       <div class="modal-header">
-        <h4>🔑 ${t('modals.admin_reset_pw.title') || 'Reset Password'}</h4>
+        <h4>🔑 ${t('modals.admin_reset_pw.title')}</h4>
         <button class="modal-close-btn admin-reset-pw-close">&times;</button>
       </div>
       <div class="modal-body">
-        <p>${(t('modals.admin_reset_pw.confirm_prompt') || 'Generate a one-time temporary password for <b>{username}</b>?').replace('{username}', safeName)}</p>
+        <p>${t('modals.admin_reset_pw.confirm_prompt').replace('{username}', safeName)}</p>
         <div style="background:rgba(231,76,60,0.12);border:1px solid rgba(231,76,60,0.4);border-radius:8px;padding:8px 12px;margin:10px 0;font-size:0.85rem;">
-          <strong>⚠️ ${t('modals.admin_reset_pw.dm_warning_title') || 'Encrypted DM history will be lost'}</strong>
-          <p style="margin:6px 0 0 0;">${t('modals.admin_reset_pw.dm_warning_body') || "The user's E2E wrap key is derived from their password. Once they finish the forced change-password flow with a new password, their encrypted DM history becomes permanently unreadable on their side. The user can avoid this by signing in with their <em>original</em> password (which we keep on file as an escape hatch) instead of the temp one, which silently cancels this reset."}</p>
+          <strong>⚠️ ${t('modals.admin_reset_pw.dm_warning_title')}</strong>
+          <p style="margin:6px 0 0 0;">${t('modals.admin_reset_pw.dm_warning_body')}</p>
         </div>
         <div style="background:rgba(241,196,15,0.12);border:1px solid rgba(241,196,15,0.4);border-radius:8px;padding:8px 12px;margin:10px 0;font-size:0.85rem;">
-          <strong>🔐 ${t('modals.admin_reset_pw.mfa_required_title') || 'Two-factor authentication required'}</strong>
-          <p style="margin:6px 0 0 0;">${t('modals.admin_reset_pw.mfa_required_body') || 'The target user must have 2FA enabled before an admin can reset their password. Otherwise the temp password alone would be enough to take over the account. If they have not enabled 2FA, this will fail with a clear error.'}</p>
+          <strong>🔐 ${t('modals.admin_reset_pw.mfa_required_title')}</strong>
+          <p style="margin:6px 0 0 0;">${t('modals.admin_reset_pw.mfa_required_body')}</p>
         </div>
-        <p style="font-size:0.8rem;color:var(--text-muted);margin-top:8px;">${t('modals.admin_reset_pw.transmit_hint') || 'You will be shown the temp password once. Deliver it to the user out-of-band (in person, on a phone call, etc.). It is never shown again.'}</p>
+        <p style="font-size:0.8rem;color:var(--text-muted);margin-top:8px;">${t('modals.admin_reset_pw.transmit_hint')}</p>
       </div>
       <div class="modal-actions">
-        <button class="btn-sm admin-reset-pw-cancel">${t('modals.common.cancel') || 'Cancel'}</button>
-        <button class="btn-sm btn-accent btn-danger-fill admin-reset-pw-confirm">${t('modals.admin_reset_pw.confirm_btn') || 'Generate Temp Password'}</button>
+        <button class="btn-sm admin-reset-pw-cancel">${t('modals.common.cancel')}</button>
+        <button class="btn-sm btn-accent btn-danger-fill admin-reset-pw-confirm">${t('modals.admin_reset_pw.confirm_btn')}</button>
       </div>
     </div>
   `;
@@ -4285,7 +4579,7 @@ _confirmAdminResetPassword(userId, username) {
   overlay.querySelector('.admin-reset-pw-confirm').addEventListener('click', () => {
     const confirmBtn = overlay.querySelector('.admin-reset-pw-confirm');
     confirmBtn.disabled = true;
-    confirmBtn.textContent = t('modals.admin_reset_pw.working') || 'Working...';
+    confirmBtn.textContent = t('modals.admin_reset_pw.working');
     this.socket.emit('admin-reset-user-password', { userId }, (resp) => {
       close();
       if (!resp || resp.error) {
@@ -4296,7 +4590,7 @@ _confirmAdminResetPassword(userId, username) {
           this._showAdminResetMfaRequired(username);
           return;
         }
-        const msg = resp?.error || t('modals.admin_reset_pw.errors.generic') || 'Failed to reset password';
+        const msg = resp?.error || t('modals.admin_reset_pw.errors.generic');
         if (this._showToast) this._showToast(msg, 'error', 8000);
         else alert(msg);
         return;
@@ -4319,19 +4613,19 @@ _showAdminResetMfaRequired(username) {
   overlay.innerHTML = `
     <div class="modal admin-reset-mfa-modal">
       <div class="modal-header">
-        <h4>🔐 ${t('modals.admin_reset_pw.mfa_required_title') || 'Two-factor authentication required'}</h4>
+        <h4>🔐 ${t('modals.admin_reset_pw.mfa_required_title')}</h4>
         <button class="modal-close-btn admin-reset-mfa-close">&times;</button>
       </div>
       <div class="modal-body">
-        <p>${(t('modals.admin_reset_pw.mfa_blocked_prompt') || "This isn't a bug. Before you can reset <b>{username}</b>'s password, that user needs to turn on two-factor authentication (2FA) on their own account first, under Settings → Account.").replace('{username}', safeName)}</p>
+        <p>${t('modals.admin_reset_pw.mfa_blocked_prompt').replace('{username}', safeName)}</p>
         <div style="background:rgba(52,152,219,0.12);border:1px solid rgba(52,152,219,0.4);border-radius:8px;padding:8px 12px;margin:10px 0;font-size:0.85rem;">
-          <strong>💡 ${t('modals.admin_reset_pw.mfa_blocked_why_title') || 'Why this is required'}</strong>
-          <p style="margin:6px 0 0 0;">${t('modals.admin_reset_pw.mfa_blocked_why_body') || 'An admin reset hands out a temporary password. If the user has no 2FA, that temp password alone would be enough for anyone who sees it (including a rogue admin) to take over the account. Requiring 2FA means the temp password is useless without their authenticator device.'}</p>
+          <strong>💡 ${t('modals.admin_reset_pw.mfa_blocked_why_title')}</strong>
+          <p style="margin:6px 0 0 0;">${t('modals.admin_reset_pw.mfa_blocked_why_body')}</p>
         </div>
-        <p style="font-size:0.85rem;color:var(--text-muted);margin-top:8px;">${(t('modals.admin_reset_pw.mfa_blocked_action') || 'Ask {username} to enable 2FA, then run the reset again.').replace('{username}', safeName)}</p>
+        <p style="font-size:0.85rem;color:var(--text-muted);margin-top:8px;">${t('modals.admin_reset_pw.mfa_blocked_action').replace('{username}', safeName)}</p>
       </div>
       <div class="modal-actions">
-        <button class="btn-sm btn-accent admin-reset-mfa-ok" type="button">${t('modals.common.got_it') || 'Got it'}</button>
+        <button class="btn-sm btn-accent admin-reset-mfa-ok" type="button">${t('modals.common.got_it')}</button>
       </div>
     </div>
   `;
@@ -4352,21 +4646,21 @@ _showAdminResetPwReveal(username, tempPassword) {
   overlay.innerHTML = `
     <div class="modal admin-reset-pw-reveal-modal">
       <div class="modal-header">
-        <h4>🔑 ${t('modals.admin_reset_pw.reveal_title') || 'Temp Password Generated'}</h4>
+        <h4>🔑 ${t('modals.admin_reset_pw.reveal_title')}</h4>
       </div>
       <div class="modal-body">
-        <p>${(t('modals.admin_reset_pw.reveal_prompt') || 'One-time temp password for <b>{username}</b>:').replace('{username}', safeName)}</p>
+        <p>${t('modals.admin_reset_pw.reveal_prompt').replace('{username}', safeName)}</p>
         <div style="display:flex;gap:8px;align-items:center;margin:12px 0;">
           <code id="admin-reset-pw-value" style="flex:1;font-family:monospace;font-size:1.2rem;letter-spacing:0.05em;padding:10px 12px;background:var(--bg-secondary,#222);border:1px solid var(--border-color,#444);border-radius:6px;user-select:all;">${safePw}</code>
-          <button class="btn-sm admin-reset-pw-copy" type="button">📋 ${t('modals.common.copy') || 'Copy'}</button>
+          <button class="btn-sm admin-reset-pw-copy" type="button">📋 ${t('modals.common.copy')}</button>
         </div>
         <div style="background:rgba(231,76,60,0.12);border:1px solid rgba(231,76,60,0.4);border-radius:8px;padding:8px 12px;font-size:0.85rem;">
-          <strong>⚠️ ${t('modals.admin_reset_pw.reveal_warning_title') || 'Save this now'}</strong>
-          <p style="margin:6px 0 0 0;">${t('modals.admin_reset_pw.reveal_warning_body') || 'This password is never shown again. Deliver it to the user out-of-band. The user will be forced to change it on next login (or sign in with their original password to cancel the reset and keep their DM history).'}</p>
+          <strong>⚠️ ${t('modals.admin_reset_pw.reveal_warning_title')}</strong>
+          <p style="margin:6px 0 0 0;">${t('modals.admin_reset_pw.reveal_warning_body')}</p>
         </div>
       </div>
       <div class="modal-actions">
-        <button class="btn-sm btn-accent admin-reset-pw-reveal-close" type="button">${t('modals.common.done') || 'Done'}</button>
+        <button class="btn-sm btn-accent admin-reset-pw-reveal-close" type="button">${t('modals.common.done')}</button>
       </div>
     </div>
   `;
@@ -4378,10 +4672,10 @@ _showAdminResetPwReveal(username, tempPassword) {
       await navigator.clipboard.writeText(tempPassword);
       const btn = overlay.querySelector('.admin-reset-pw-copy');
       const orig = btn.textContent;
-      btn.textContent = '✓ ' + (t('modals.common.copied') || 'Copied');
+      btn.textContent = '✓ ' + t('modals.common.copied');
       setTimeout(() => { btn.textContent = orig; }, 1500);
     } catch {
-      if (this._showToast) this._showToast(t('modals.common.copy_failed') || 'Copy failed', 'error');
+      if (this._showToast) this._showToast(t('modals.common.copy_failed'), 'error');
     }
   });
 },
@@ -4391,7 +4685,7 @@ _confirmTransferAdmin(userId, username) {
   // An SSO admin has no Haven password, so they confirm with an authenticator
   // code instead. The server decides which it will accept and rejects the
   // wrong one, this only picks which field to put in front of you. (#5539)
-  this._closeUserGearMenu();
+  this._hideUserContextMenu();
   const ssoConfirm = !!this.user?.isSso;
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay transfer-admin-overlay';
@@ -4459,7 +4753,7 @@ _confirmTransferAdmin(userId, username) {
         pwInput.focus();
       } else if (res && res.success) {
         close();
-        this._showToast(res.message || 'Admin transferred', 'info');
+        this._showToast(t('modals.transfer_admin.success'), 'info');
       }
     });
   });

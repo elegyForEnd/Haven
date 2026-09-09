@@ -160,7 +160,7 @@
 
 .drawing-tool-btn.active,
 .drawing-mode-btn[data-mode="draw"] {
-  color: #fff;
+  color: var(--accent-text);
   background: var(--accent);
   border-color: var(--accent-hover);
   box-shadow: 0 0 14px var(--accent-glow);

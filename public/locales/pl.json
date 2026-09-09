@@ -572,6 +572,7 @@
     "bio_placeholder": "Opowiedz coś o sobie…",
     "gear_menu": {
       "assign_role": "Przypisz rolę",
+      "role_management": "Zarządzanie rolami",
       "kick": "Wyrzuć",
       "mute": "Wycisz",
       "ban": "Zablokuj",
@@ -635,6 +636,8 @@
     "resolution": "Rozdzielczość",
     "resolution_source": "Źródło",
     "frame_rate": "Liczba klatek",
+    "native_screen_share": "Natywne udostępnianie przez GPU",
+    "native_screen_share_hint": "Używa eksperymentalnego natywnego potoku multimediów aplikacji Desktop. Chromium pozostaje trybem domyślnym i zapasowym.",
     "camera_fallback": "Kamera {{n}}"
   },
   "status_bar": {
@@ -666,6 +669,7 @@
       "admin_group": "Administrator",
       "server_updates": "Aktualizacje serwera",
       "branding": "Identyfikacja wizualna",
+      "tos": "Warunki korzystania z usługi",
       "members": "Członkowie",
       "whitelist": "Lista dozwolonych",
       "invite": "Kod zaproszenia",
@@ -673,11 +677,14 @@
       "limits": "Limity",
       "admin_sounds": "Dźwięki",
       "emojis": "Emoji",
+      "stickers": "Naklejki",
       "roles": "Role",
       "tunnel": "Tunel",
       "bots": "Boty",
       "import": "Import",
-      "mod_mode": "Tryb moderatora"
+      "mod_mode": "Tryb moderatora",
+      "automod": "Automoderacja",
+      "guests": "Dostęp dla gości"
     },
     "language_section": {
       "title": "Język",
@@ -685,14 +692,24 @@
       "auto": "Automatycznie",
       "hint": "Zmiany są stosowane natychmiast"
     },
-    "layout_density": {
-      "title": "Gęstość układu",
-      "compact": "Kompaktowy",
-      "compact_hint": "Kompaktowy — ściślejszy odstęp, mniejsze awatary",
-      "cozy": "Przytulny",
-      "cozy_hint": "Przytulny — domyślny zrównoważony układ",
-      "spacious": "Przestronny",
-      "spacious_hint": "Przestronny — więcej wolnego miejsca"
+    "layout": {
+      "title": "Układ",
+      "density": {
+        "title": "Gęstość układu",
+        "compact": "Kompaktowy",
+        "compact_hint": "Kompaktowy — ściślejszy odstęp, mniejsze awatary",
+        "cozy": "Przytulny",
+        "cozy_hint": "Przytulny — domyślny zrównoważony układ",
+        "spacious": "Przestronny",
+        "spacious_hint": "Przestronny — więcej wolnego miejsca"
+      },
+      "channel_scrolling": {
+        "title": "Przewijanie kanałów",
+        "separate": "Oddzielne",
+        "separate_hint": "Oddzielne — osobne paski przewijania dla kanałów i wiadomości prywatnych",
+        "combined": "Połączone",
+        "combined_hint": "Połączone — jeden pasek przewijania dla kanałów i wiadomości prywatnych"
+      }
     },
     "font_size": {
       "title": "Rozmiar czcionki",
@@ -707,10 +724,13 @@
     },
     "image_display": {
       "title": "Wyświetlanie obrazów",
-      "thumbnail": "Miniatura",
-      "thumbnail_hint": "Miniatura — mały podgląd, kliknij, aby powiększyć",
-      "full": "Pełny rozmiar",
-      "full_hint": "Pełny rozmiar — duże obrazy inline jak w Discord"
+      "image_mode": {
+        "title": "Tryb wyświetlania obrazów",
+        "thumbnail": "Miniatura",
+        "thumbnail_hint": "Miniatura — mały podgląd, kliknij, aby powiększyć",
+        "full": "Pełny rozmiar",
+        "full_hint": "Pełny rozmiar — duże obrazy inline jak w Discord"
+      }
     },
     "sounds_section": {
       "title": "Dźwięki",
@@ -982,12 +1002,22 @@
       "import_skipped": "Pominięto {{count}} duplikat(ów).",
       "import_reused": "Zaktualizowano {{count}} istniejący(-ch) kanał(ów).",
       "import_failed_alert": "Import nie powiódł się: {{error}}",
+      "invite_links": {
+        "copy_email_card": "Kopiuj kartę zaproszenia do e-maila",
+        "email_card_copied": "Karta e-mail skopiowana!",
+        "email_card_copy_failed": "Kopiowanie karty nie powiodło się!",
+        "card_invited": "Zaproszono Cię do dołączenia do {{server}}!",
+        "card_register": "Kliknij przycisk poniżej, aby się zarejestrować!",
+        "card_join": "Dołącz do {{server}}",
+        "card_copy_link": "Lub skopiuj ten link:",
+        "card_expires": "To zaproszenie jest ważne do {{date}}."
+      },
       "roles_no_custom": "Brak niestandardowych ról",
-      "roles_level_invalid": "Poziom musi wynosić 1–99",
+      "roles_level_invalid": "Poziom musi wynosić 0–99",
       "roles_create_title": "Utwórz rolę",
       "roles_create_hint": "Wprowadź nazwę roli:",
       "roles_level_title": "Poziom roli",
-      "roles_level_hint": "Poziom roli (1-99, wyższy = więcej uprawnień):\nDomyślny moderator serwera = 50, Domyślny moderator kanału = 25",
+      "roles_level_hint": "Poziom roli (0–99, wyższy = większe uprawnienia):\nDomyślny moderator serwera = 50\nDomyślny moderator kanału = 25\nSamodzielne zarządzanie (brak uprawnień) = 0",
       "roles_created": "Rola utworzona",
       "roles_saved": "Rola zapisana",
       "roles_updated": "Rola zaktualizowana",
@@ -1035,7 +1065,7 @@
       "roles_changes_saved_other": "Zapisano {{count}} zmian ról",
       "role_form": {
         "name": "Nazwa",
-        "level": "Poziom (1-99)",
+        "level": "Poziom (0-99)",
         "color": "Kolor",
         "auto_assign": "Automatyczne przypisywanie nowym członkom",
         "auto_assign_hint": "Nowi użytkownicy automatycznie otrzymają tę rolę po rejestracji lub dołączeniu do kanału.",
@@ -1044,6 +1074,8 @@
         "link_channel_access_hint": "Po włączeniu, przypisanie/odebranie tej roli automatycznie przyzna/odbierze przynależność do kanałów.",
         "reapply_access": "Ponownie zastosuj dostęp dla wszystkich użytkowników",
         "permissions": "Uprawnienia",
+        "admin_only_note": "Wyróżnione uprawnienia są dostępne tylko dla administratorów — tylko właściciel serwera może je nadawać.",
+        "level_0_role_note": "Role poziomu 0 nazywane są „Grupami”. Grupy nie nadają żadnych uprawnień. Użytkownicy mogą dołączać do tych grup według własnego uznania, bez potrzeby posiadania podwyższonych uprawnień. Potencjalne zastosowania obejmują: przypisywanie do kanałów, grupowanie i odgrywanie ról.",
         "delete": "Usuń",
         "reapply_access_tooltip": "Ponownie uruchamia powyższe reguły dostępu do kanałów dla wszystkich użytkowników posiadających tę rolę. Przydatne po edycji pól wyboru Nadaj/Odbierz — dopasowuje istniejących członków do aktualnej konfiguracji bez konieczności ponownego przypisywania roli."
       },
@@ -1187,7 +1219,14 @@
       "display_name_placeholder": "Nowa wyświetlana nazwa...",
       "bio_label": "O mnie",
       "bio_max": "(maks. 190 znaków)",
-      "bio_placeholder": "Opowiedz coś o sobie…"
+      "bio_placeholder": "Opowiedz coś o sobie…",
+      "groups_title": "Grupy",
+      "manage_groups_btn": "Zarządzaj grupami",
+      "save_groups_btn": "Zapisz grupy",
+      "groups_hint": "Grupy są wyświetlane jako role na karcie profilu. Nie nadają uprawnień, ale mogą przyznawać dostęp do kanałów!",
+      "no_groups": "Nie należysz jeszcze do żadnej grupy. Kliknij „Zarządzaj grupami”, aby dołączyć do jednej z nich.",
+      "groups_saved": "Grupy zapisane!",
+      "group_channels_granted": "Przyznany dostęp do kanałów"
     },
     "admin_action": {
       "title": "Moderuj użytkownika",
@@ -1435,7 +1474,8 @@
     "role_management": {
       "title": "Zarządzanie rolami",
       "new_role_btn": "+ Nowa rola",
-      "select_to_edit": "Wybierz rolę do edycji"
+      "select_to_edit": "Wybierz rolę do edycji",
+      "groups_label": "Grupy"
     },
     "assign_role": {
       "title": "Przypisz rolę",

@@ -580,6 +580,7 @@
     "bio_placeholder": "向大家介绍一下自己…",
     "gear_menu": {
       "assign_role": "分配角色",
+      "role_management": "角色管理",
       "kick": "踢出",
       "mute": "禁言",
       "ban": "封禁",
@@ -647,6 +648,8 @@
     "resolution": "分辨率",
     "resolution_source": "源",
     "frame_rate": "帧率",
+    "native_screen_share": "原生 GPU 屏幕共享",
+    "native_screen_share_hint": "使用实验性的桌面原生媒体管线。Chromium 仍是默认和回退模式。",
     "camera_fallback": "摄像头 {{n}}"
   },
   "status_bar": {
@@ -677,6 +680,7 @@
       "desktop_app": "桌面应用",
       "admin_group": "管理员",
       "branding": "品牌",
+      "tos": "服务条款",
       "members": "成员",
       "whitelist": "白名单",
       "invite": "邀请码",
@@ -684,11 +688,14 @@
       "limits": "限制",
       "admin_sounds": "声音",
       "emojis": "表情",
+      "stickers": "贴纸",
       "roles": "角色",
       "tunnel": "隧道",
       "bots": "机器人",
       "import": "导入",
-      "mod_mode": "管理模式"
+      "mod_mode": "管理模式",
+      "automod": "自动审核",
+      "guests": "访客访问"
     },
     "language_section": {
       "title": "语言",
@@ -696,14 +703,24 @@
       "auto": "自动",
       "hint": "更改立即生效"
     },
-    "layout_density": {
-      "title": "布局密度",
-      "compact": "紧凑",
-      "compact_hint": "紧凑 — 更紧密的间距，更小的头像",
-      "cozy": "舒适",
-      "cozy_hint": "舒适 — 默认均衡布局",
-      "spacious": "宽松",
-      "spacious_hint": "宽松 — 更多留白空间"
+    "layout": {
+      "title": "布局",
+      "density": {
+        "title": "布局密度",
+        "compact": "紧凑",
+        "compact_hint": "紧凑 — 更紧密的间距，更小的头像",
+        "cozy": "舒适",
+        "cozy_hint": "舒适 — 默认均衡布局",
+        "spacious": "宽松",
+        "spacious_hint": "宽松 — 更多留白空间"
+      },
+      "channel_scrolling": {
+        "title": "频道滚动",
+        "separate": "分开",
+        "separate_hint": "分开 — 频道和私信使用独立的滚动条",
+        "combined": "合并",
+        "combined_hint": "合并 — 频道和私信共用一个滚动条"
+      }
     },
     "font_size": {
       "title": "字体大小",
@@ -718,10 +735,13 @@
     },
     "image_display": {
       "title": "图片显示",
-      "thumbnail": "缩略图",
-      "thumbnail_hint": "缩略图 — 小预览，点击放大",
-      "full": "完整",
-      "full_hint": "完整 — 类似 Discord 的大型内嵌图片"
+      "image_mode": {
+        "title": "图片显示模式",
+        "thumbnail": "缩略图",
+        "thumbnail_hint": "缩略图 — 小预览，点击放大",
+        "full": "完整",
+        "full_hint": "完整 — 类似 Discord 的大型内嵌图片"
+      }
     },
     "sounds_section": {
       "title": "声音",
@@ -988,12 +1008,22 @@
       "import_skipped": "已跳过 {{count}} 条重复消息。",
       "import_reused": "已更新 {{count}} 个现有频道。",
       "import_failed_alert": "导入失败：{{error}}",
+      "invite_links": {
+        "copy_email_card": "复制电子邮件邀请卡片",
+        "email_card_copied": "电子邮件卡片已复制！",
+        "email_card_copy_failed": "卡片复制失败！",
+        "card_invited": "邀请你加入 {{server}}！",
+        "card_register": "点击下方按钮进行注册！",
+        "card_join": "加入 {{server}}",
+        "card_copy_link": "或者复制此链接：",
+        "card_expires": "此邀请有效期至 {{date}}。"
+      },
       "roles_no_custom": "没有自定义角色",
-      "roles_level_invalid": "级别必须在1–99之间",
+      "roles_level_invalid": "级别必须在0–99之间",
       "roles_create_title": "创建角色",
       "roles_create_hint": "输入角色名称：",
       "roles_level_title": "角色级别",
-      "roles_level_hint": "角色级别（1-99，数字越大权限越高）：\n服务器管理员默认 = 50，频道管理员默认 = 25",
+      "roles_level_hint": "角色等级（0–99，越高 = 权限越高）：\n默认服务器版主 = 50\n默认频道版主 = 25\n自助管理（无权限） = 0",
       "roles_created": "角色已创建",
       "roles_saved": "角色已保存",
       "roles_updated": "角色已更新",
@@ -1041,7 +1071,7 @@
       "roles_changes_saved_other": "已保存 {{count}} 项角色更改",
       "role_form": {
         "name": "名称",
-        "level": "级别（1-99）",
+        "level": "级别（0-99）",
         "color": "颜色",
         "auto_assign": "自动分配给新成员",
         "auto_assign_hint": "新用户注册或加入频道时将自动获得此角色。",
@@ -1050,6 +1080,8 @@
         "link_channel_access_hint": "启用后，分配/撤销此角色将自动授予/撤销频道成员资格。",
         "reapply_access": "为所有用户重新应用访问权限",
         "permissions": "权限",
+        "admin_only_note": "突出显示的权限仅限管理员使用，只有服务器所有者可以授予。",
+        "level_0_role_note": "0 级角色称为“群组”。群组不授予任何权限。用户无需拥有更高权限即可自由加入这些群组。可能的用途包括：频道授予、分组和角色扮演。",
         "delete": "删除"
       }
     }
@@ -1175,7 +1207,14 @@
       "display_name_placeholder": "新显示名称...",
       "bio_label": "简介",
       "bio_max": "（最多190个字符）",
-      "bio_placeholder": "向大家介绍一下自己…"
+      "bio_placeholder": "向大家介绍一下自己…",
+      "groups_title": "群组",
+      "manage_groups_btn": "管理群组",
+      "save_groups_btn": "保存群组",
+      "groups_hint": "群组会以角色的形式显示在你的个人资料卡上。它们不会授予任何权限，但可以授予频道访问权限！",
+      "no_groups": "你还没有加入任何群组，点击“管理群组”即可加入群组。",
+      "groups_saved": "群组已保存！",
+      "group_channels_granted": "已授予的频道访问权限"
     },
     "admin_action": {
       "title": "管理用户",
@@ -1426,7 +1465,8 @@
     "role_management": {
       "title": "角色管理",
       "new_role_btn": "+ 新角色",
-      "select_to_edit": "选择角色以编辑"
+      "select_to_edit": "选择角色以编辑",
+      "groups_label": "群组"
     },
     "assign_role": {
       "title": "分配角色",

@@ -1,16 +1,64 @@
 export default {
 
+// How many files one message may carry, images and other files together. An
+// admin setting since #5561 (Uploads & Limits); the fixed five it replaces was
+// too few for people dumping a folder of tools into a channel in one go.
+_maxAttachments() {
+  const n = parseInt(this.serverSettings?.max_attachments);
+  return Number.isFinite(n) ? Math.max(1, Math.min(50, n)) : 10;
+},
+
+_composerAttachmentCount() {
+  return (this._imageQueue?.length || 0) + (this._fileQueue?.length || 0);
+},
+
+// Route a batch of dropped, pasted or picked files into the main composer
+// queues: images preview as thumbnails, anything else as a chip. Stops at the
+// cap with one toast rather than one per leftover file. (#5561)
+_queueComposerFiles(files) {
+  const list = Array.from(files || []).filter(Boolean);
+  if (!list.length) return;
+  // One toast for the whole batch when there is nowhere to send it, rather
+  // than one per file from the queue functions below.
+  if (!this.currentChannel) return this._showToast(t('media.select_channel_first'), 'error');
+  const ch = this.channels.find(c => c.code === this.currentChannel);
+  if (ch && ch.media_enabled === 0) return this._showToast(t('media.uploads_disabled'), 'error');
+  const max = this._maxAttachments();
+  for (const file of list) {
+    if (this._composerAttachmentCount() >= max) {
+      this._showToast(t('media.max_attachments_n', { n: max }), 'error');
+      break;
+    }
+    if (file.type && file.type.startsWith('image/')) this._queueImage(file);
+    else this._queueGeneralFile(file);
+  }
+},
+
+// Same for the thread composer, which keeps one mixed queue.
+_queueThreadFiles(files) {
+  const list = Array.from(files || []).filter(Boolean);
+  if (!list.length) return;
+  const max = this._maxAttachments();
+  for (const file of list) {
+    if ((this._threadPending?.length || 0) >= max) {
+      this._showToast(t('media.max_attachments_n', { n: max }), 'error');
+      break;
+    }
+    this._queueThreadFile(file);
+  }
+},
+
 // ── Image Queue (paste/drop → preview → send on Enter) ──
 
 _queueImage(file) {
   if (!file || !file.type.startsWith('image/')) return;
   const _maxMb = parseInt(this.serverSettings?.max_upload_mb) || 25;
   if (file.size > _maxMb * 1024 * 1024) {
-    return this._showToast(`Image too large (max ${_maxMb} MB)`, 'error');
+    return this._showToast(t('media.image_too_large', { maxMb: _maxMb }), 'error');
   }
   if (!this._imageQueue) this._imageQueue = [];
-  if (this._imageQueue.length >= 5) {
-    return this._showToast('Max 5 images at once', 'error');
+  if (this._composerAttachmentCount() >= this._maxAttachments()) {
+    return this._showToast(t('media.max_attachments_n', { n: this._maxAttachments() }), 'error');
   }
   this._imageQueue.push(file);
   this._renderImageQueue();
@@ -39,7 +87,7 @@ _renderImageQueue() {
       img.onload = () => URL.revokeObjectURL(img.src);
       const removeBtn = document.createElement('button');
       removeBtn.className = 'image-queue-remove';
-      removeBtn.title = 'Remove';
+      removeBtn.title = t('media.remove');
       removeBtn.textContent = '×';
       removeBtn.addEventListener('click', () => {
         this._imageQueue.splice(idx, 1);
@@ -67,7 +115,7 @@ _renderImageQueue() {
       size.textContent = this._formatFileSize(file.size);
       const removeBtn = document.createElement('button');
       removeBtn.className = 'image-queue-remove';
-      removeBtn.title = 'Remove';
+      removeBtn.title = t('media.remove');
       removeBtn.textContent = '×';
       removeBtn.addEventListener('click', () => {
         this._fileQueue.splice(idx, 1);
@@ -85,7 +133,7 @@ _renderImageQueue() {
   if (totalQueued > 1) {
     const clearAll = document.createElement('button');
     clearAll.className = 'image-queue-clear-all';
-    clearAll.textContent = 'Clear All';
+    clearAll.textContent = t('media.clear_all');
     clearAll.addEventListener('click', () => {
       this._clearImageQueue();
       this._clearFileQueue();
@@ -111,9 +159,7 @@ _makeSpoilerToggle(file, isPip = false) {
     // Open eye when the image will send normally; closed (slashed) eye once
     // it's marked as a spoiler.
     btn.innerHTML = this._eyeIcon(on, 12);
-    btn.title = on
-      ? ((typeof t === 'function' && t('app.messages.spoiler_on')) || 'Spoiler on — click to send normally')
-      : ((typeof t === 'function' && t('app.messages.mark_spoiler')) || 'Mark as spoiler');
+    btn.title = t(on ? 'app.messages.spoiler_on' : 'app.messages.mark_spoiler');
     btn.setAttribute('aria-pressed', on ? 'true' : 'false');
   };
   sync();
@@ -154,8 +200,8 @@ _queueGeneralFile(file) {
     return this._showToast(t('media.file_too_large', { maxMb }), 'error');
   }
   if (!this._fileQueue) this._fileQueue = [];
-  if (this._fileQueue.length >= 5) {
-    return this._showToast('Max 5 files at once', 'error');
+  if (this._composerAttachmentCount() >= this._maxAttachments()) {
+    return this._showToast(t('media.max_attachments_n', { n: this._maxAttachments() }), 'error');
   }
   this._fileQueue.push(file);
   this._renderImageQueue();
@@ -182,12 +228,12 @@ _queueImageForPiP(file, targetCode) {
   if (!file || !file.type.startsWith('image/')) return;
   const _maxMb = parseInt(this.serverSettings?.max_upload_mb) || 25;
   if (file.size > _maxMb * 1024 * 1024) {
-    return this._showToast(`Image too large (max ${_maxMb} MB)`, 'error');
+    return this._showToast(t('media.image_too_large', { maxMb: _maxMb }), 'error');
   }
   if (!this._pipImageQueue) this._pipImageQueue = [];
   if (!this._pipImageQueueTarget) this._pipImageQueueTarget = targetCode;
-  if (this._pipImageQueue.length >= 5) {
-    return this._showToast('Max 5 images at once', 'error');
+  if (this._pipImageQueue.length >= this._maxAttachments()) {
+    return this._showToast(t('media.max_attachments_n', { n: this._maxAttachments() }), 'error');
   }
   this._pipImageQueue.push(file);
   this._pipImageQueueTarget = targetCode;
@@ -214,7 +260,7 @@ _renderPiPImageQueue() {
     img.onload = () => URL.revokeObjectURL(img.src);
     const removeBtn = document.createElement('button');
     removeBtn.className = 'image-queue-remove';
-    removeBtn.title = 'Remove';
+    removeBtn.title = t('media.remove');
     removeBtn.textContent = '×';
     removeBtn.addEventListener('click', () => {
       this._pipImageQueue.splice(idx, 1);
@@ -228,7 +274,7 @@ _renderPiPImageQueue() {
   if (this._pipImageQueue.length > 1) {
     const clearAll = document.createElement('button');
     clearAll.className = 'image-queue-clear-all';
-    clearAll.textContent = 'Clear All';
+    clearAll.textContent = t('media.clear_all');
     clearAll.addEventListener('click', () => {
       this._pipImageQueue = [];
       this._renderPiPImageQueue();
@@ -260,11 +306,11 @@ _queueThreadFile(file) {
   if (!file) return;
   const _maxMb = parseInt(this.serverSettings?.max_upload_mb) || 25;
   if (file.size > _maxMb * 1024 * 1024) {
-    return this._showToast(`File too large (max ${_maxMb} MB)`, 'error');
+    return this._showToast(t('media.file_too_large', { maxMb: _maxMb }), 'error');
   }
   if (!this._threadPending) this._threadPending = [];
-  if (this._threadPending.length >= 5) {
-    return this._showToast('Max 5 attachments at once', 'error');
+  if (this._threadPending.length >= this._maxAttachments()) {
+    return this._showToast(t('media.max_attachments_n', { n: this._maxAttachments() }), 'error');
   }
   this._threadPending.push(file);
   this._renderThreadPending();
@@ -299,7 +345,7 @@ _renderThreadPending() {
     }
     const removeBtn = document.createElement('button');
     removeBtn.className = 'image-queue-remove';
-    removeBtn.title = 'Remove';
+    removeBtn.title = t('media.remove');
     removeBtn.textContent = '×';
     removeBtn.addEventListener('click', () => {
       this._threadPending.splice(idx, 1);
@@ -311,7 +357,7 @@ _renderThreadPending() {
   if (this._threadPending.length > 1) {
     const clearAll = document.createElement('button');
     clearAll.className = 'image-queue-clear-all';
-    clearAll.textContent = 'Clear All';
+    clearAll.textContent = t('media.clear_all');
     clearAll.addEventListener('click', () => {
       this._threadPending = [];
       this._renderThreadPending();
@@ -336,7 +382,7 @@ async _flushThreadPending(parentId) {
       formData.append('scope', threadCh && threadCh.is_dm ? 'dm' : 'channel');
       formData.append('file', file);
       const data = await this._uploadWithProgress('/api/upload-file', formData);
-      if (!data || data.error) { this._showToast(data?.error || 'Upload failed', 'error'); continue; }
+      if (!data || data.error) { this._showToast(data?.error || t('media.upload_failed'), 'error'); continue; }
       let content;
       if (data.isImage) {
         content = data.url;
@@ -347,7 +393,7 @@ async _flushThreadPending(parentId) {
       this.socket.emit('send-thread-message', { parentId, content });
     } catch (err) {
       if (err?.aborted) break;
-      this._showToast(err.message || 'Upload failed', 'error');
+      this._showToast(err.message || t('media.upload_failed'), 'error');
     }
   }
 },
@@ -360,7 +406,7 @@ _updateAvatarPreview() {
   const preview = document.getElementById('avatar-upload-preview');
   if (!preview) return;
   if (this.user.avatar) {
-    preview.innerHTML = `<img src="${this._escapeHtml(this.user.avatar)}" alt="avatar">`;
+    preview.innerHTML = `<img src="${this._escapeHtml(this.user.avatar)}" alt="${t('media_runtime.avatar.alt')}">`;
   } else {
     const color = this._getUserColor(this.user.username);
     const initial = this.user.username.charAt(0).toUpperCase();
@@ -374,9 +420,9 @@ _updateBorderPreview() {
   const preview = document.getElementById('border-upload-preview');
   if (!preview) return;
   if (this.user.border) {
-    preview.innerHTML = `<img src="${this._escapeHtml(this.user.border)}" alt="border">`;
+    preview.innerHTML = `<img src="${this._escapeHtml(this.user.border)}" alt="${t('media_runtime.avatar.border_alt')}">`;
   } else {
-    preview.innerHTML = `<div style="width:100%;height:100%;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:0.7rem;color:var(--text-muted)">None</div>`;
+    preview.innerHTML = `<div style="width:100%;height:100%;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:0.7rem;color:var(--text-muted)">${t('media_runtime.none')}</div>`;
   }
 },
 
@@ -652,7 +698,7 @@ _setViewerChatAnimPref(pref) {
 
 // The address to judge "can this animate" by, unwrapping the media proxy.
 _chatImgRealUrl(img) {
-  return img.getAttribute('data-mp-origin') || img.getAttribute('src') || '';
+  return img.getAttribute('data-mp-origin') || img.getAttribute('data-lazy-src') || img.getAttribute('src') || '';
 },
 
 _applyViewerChatAnimPref() {
@@ -896,7 +942,7 @@ _renderBorderEditor() {
 
   let avatarLayer;
   if (avatarUrl) {
-    avatarLayer = `<img class="border-crop-avatar ${shapeClass}" src="${this._escapeHtml(avatarUrl)}" alt="avatar">`;
+    avatarLayer = `<img class="border-crop-avatar ${shapeClass}" src="${this._escapeHtml(avatarUrl)}" alt="${t('media_runtime.avatar.alt')}">`;
   } else {
     const color = this._getUserColor(this.user.username);
     const initial = this.user.username.charAt(0).toUpperCase();
@@ -905,7 +951,7 @@ _renderBorderEditor() {
 
   if (borderUrl) {
     const W = stage.clientWidth || 192, H = stage.clientHeight || 192;
-    let stack = `<img class="border-crop-border" src="${this._escapeHtml(borderUrl)}" alt="border">`;
+    let stack = `<img class="border-crop-border" src="${this._escapeHtml(borderUrl)}" alt="${t('media_runtime.avatar.border_alt')}">`;
     let cb = { left: 0, top: 0, right: 1, bottom: 1 };
     // An opacity draft is the single source of truth for opacity, so hide the
     // committed opacity op(s) while editing instead of multiplying with them.
@@ -1077,13 +1123,13 @@ _positionBorderHandles() {
 _renderBorderHistory() {
   const list = document.getElementById('border-crop-history');
   if (!list) return;
-  const tr = (k, f) => (window.t ? window.t(k) : f);
+  const tr = (key) => t(key);
   if (!this._borderOps.length) {
-    list.innerHTML = `<div class="bce-hist-empty">${tr('modals.border_crop.no_edits', 'No edits yet')}</div>`;
+    list.innerHTML = `<div class="bce-hist-empty">${tr('modals.border_crop.no_edits')}</div>`;
     return;
   }
   const glyph = { crop: '▣', move: '✥', resize: '⤢', rotate: '⟳', opacity: '◐', distort: '◇' };
-  const undoTitle = tr('modals.border_crop.undo', 'Undo this and later edits');
+  const undoTitle = tr('modals.border_crop.undo');
   list.innerHTML = this._borderOps.map((op, i) =>
     `<div class="bce-hist-row"><span class="bce-hist-label">${glyph[op.type] || ''} ${tr('modals.border_crop.mode_' + op.type, op.type)}</span>` +
     `<button type="button" class="bce-hist-undo" data-index="${i}" title="${undoTitle}">↶</button></div>`
@@ -1121,8 +1167,7 @@ _commitBorderDraft() {
   // can drift it out of frame. Rather than persist an out-of-frame fit, discard the
   // change and tell the user (this runs at the commit a tool switch / Done triggers).
   if (this._borderBoxExceeds(d)) {
-    const msg = (window.t && window.t('modals.border_crop.exceeds_frame')) || 'The border exceeds the avatar frame, discarded changes';
-    this._showToast(msg, 'error');
+    this._showToast(t('modals.border_crop.exceeds_frame'), 'error');
     return;
   }
   this._borderOps.push(d);
@@ -1501,7 +1546,7 @@ _setupAvatarUpload() {
       this._borderOps = [];
       this._borderDraft = null;
       const preview = document.getElementById('border-upload-preview');
-      if (preview) preview.innerHTML = `<div style="width:100%;height:100%;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:0.7rem;color:var(--text-muted)">None</div>`;
+      if (preview) preview.innerHTML = `<div style="width:100%;height:100%;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:0.7rem;color:var(--text-muted)">${t('media_runtime.none')}</div>`;
       this._updateBorderEditButton();
       this._markAvatarUnsaved();
       return;
@@ -1526,8 +1571,8 @@ _setupAvatarUpload() {
     if (e.target && e.target.id === 'avatar-file-input') {
       const file = e.target.files[0];
       if (!file) return;
-      if (file.size > 5 * 1024 * 1024) return this._showToast('Image too large (max 5 MB)', 'error');
-      if (!file.type.startsWith('image/')) return this._showToast('Not an image file', 'error');
+      if (file.size > 5 * 1024 * 1024) return this._showToast(t('toasts.image_too_large', { max: 5 }), 'error');
+      if (!file.type.startsWith('image/')) return this._showToast(t('toasts.not_an_image'), 'error');
 
       this._pendingAvatarFile = file;
       this._pendingAvatarRemoved = false;
@@ -1540,7 +1585,7 @@ _setupAvatarUpload() {
         if (preview) {
           const img = document.createElement('img');
           img.src = ev.target.result;
-          img.alt = 'avatar preview';
+          img.alt = t('media_runtime.avatar.preview_alt');
           preview.innerHTML = '';
           preview.appendChild(img);
         }
@@ -1552,8 +1597,8 @@ _setupAvatarUpload() {
     if (e.target && e.target.id === 'border-file-input') {
       const file = e.target.files[0];
       if (!file) return;
-      if (file.size > 5 * 1024 * 1024) return this._showToast((window.t && window.t('toasts.image_too_large', { max: 5 })) || 'Image too large (max 5 MB)', 'error');
-      if (!file.type.startsWith('image/')) return this._showToast((window.t && window.t('toasts.not_an_image')) || 'Not an image file', 'error');
+      if (file.size > 5 * 1024 * 1024) return this._showToast(t('toasts.image_too_large', { max: 5 }), 'error');
+      if (!file.type.startsWith('image/')) return this._showToast(t('toasts.not_an_image'), 'error');
 
       this._pendingBorderFile = file;
       this._pendingBorderRemoved = false;
@@ -1568,7 +1613,7 @@ _setupAvatarUpload() {
         if (preview) {
           const img = document.createElement('img');
           img.src = ev.target.result;
-          img.alt = 'border preview';
+          img.alt = t('media_runtime.avatar.border_preview_alt');
           preview.innerHTML = '';
           preview.appendChild(img);
         }
@@ -1586,13 +1631,13 @@ _setupAvatarUpload() {
 
 _markAvatarUnsaved() {
   const status = document.getElementById('avatar-save-status');
-  if (status) { status.textContent = 'Unsaved changes'; status.style.color = 'var(--warning, orange)'; }
+  if (status) { status.textContent = t('media_runtime.avatar.unsaved'); status.style.color = 'var(--warning, orange)'; }
 },
 
 // Commit pending avatar + shape to the server via HTTP (not socket!)
 async _commitAvatarSettings() {
   const status = document.getElementById('avatar-save-status');
-  if (status) { status.textContent = 'Saving...'; status.style.color = 'var(--text-secondary)'; }
+  if (status) { status.textContent = t('media_runtime.avatar.saving'); status.style.color = 'var(--text-secondary)'; }
 
   try {
     // 1. Upload avatar image via HTTP if a new file was chosen
@@ -1605,7 +1650,7 @@ async _commitAvatarSettings() {
         body: formData
       });
       const data = await resp.json();
-      if (!resp.ok) throw new Error(data.error || 'Upload failed');
+      if (!resp.ok) throw new Error(data.error || t('toasts.upload_failed'));
 
       // Server stored the file and returned the URL path
       this.user.avatar = data.url;
@@ -1618,7 +1663,7 @@ async _commitAvatarSettings() {
       if (preview) {
         const img = document.createElement('img');
         img.src = data.url;
-        img.alt = 'avatar';
+        img.alt = t('media_runtime.avatar.alt');
         preview.innerHTML = '';
         preview.appendChild(img);
       }
@@ -1636,7 +1681,7 @@ async _commitAvatarSettings() {
           'Content-Type': 'application/json'
         }
       });
-      if (!resp.ok) throw new Error('Failed to remove avatar');
+      if (!resp.ok) throw new Error(t('media_runtime.avatar.remove_failed'));
 
       this.user.avatar = null;
       localStorage.setItem('haven_user', JSON.stringify(this.user));
@@ -1655,7 +1700,7 @@ async _commitAvatarSettings() {
         body: formData
       });
       const data = await resp.json();
-      if (!resp.ok) throw new Error(data.error || 'Upload failed');
+      if (!resp.ok) throw new Error(data.error || t('toasts.upload_failed'));
 
       this.user.border = data.url;
       localStorage.setItem('haven_user', JSON.stringify(this.user));
@@ -1675,7 +1720,7 @@ async _commitAvatarSettings() {
           'Content-Type': 'application/json'
         }
       });
-      if (!resp.ok) throw new Error('Failed to remove border');
+      if (!resp.ok) throw new Error(t('media_runtime.avatar.border_remove_failed'));
 
       this.user.border = null;
       localStorage.setItem('haven_user', JSON.stringify(this.user));
@@ -1697,7 +1742,7 @@ async _commitAvatarSettings() {
           headers: { 'Authorization': `Bearer ${this.token}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({ transform })
         });
-        if (!resp.ok) throw new Error('Failed to save border fit');
+        if (!resp.ok) throw new Error(t('media_runtime.avatar.border_fit_failed'));
         const data = await resp.json();
         this.user.borderTransform = data.transform || null;
         localStorage.setItem('haven_user', JSON.stringify(this.user));
@@ -1719,7 +1764,7 @@ async _commitAvatarSettings() {
         },
         body: JSON.stringify({ shape: this._pendingAvatarShape })
       });
-      if (!resp.ok) throw new Error('Failed to save shape');
+      if (!resp.ok) throw new Error(t('media_runtime.avatar.shape_failed'));
 
       this._avatarShape = this._pendingAvatarShape;
       this.user.avatarShape = this._pendingAvatarShape;
@@ -1739,7 +1784,7 @@ async _commitAvatarSettings() {
         },
         body: JSON.stringify({ mode: this._pendingAnimateProfile })
       });
-      if (!resp.ok) throw new Error('Failed to save animation policy');
+      if (!resp.ok) throw new Error(t('media_runtime.avatar.animation_failed'));
 
       this._animateProfile = this._pendingAnimateProfile;
       this.user.animateProfile = this._pendingAnimateProfile;
@@ -1748,14 +1793,14 @@ async _commitAvatarSettings() {
       if (this.socket) this.socket.emit('set-animate-profile', { mode: this._pendingAnimateProfile });
     }
 
-    if (status) { status.textContent = '✅ Saved!'; status.style.color = 'var(--success, #6f6)'; }
-    this._showToast('Avatar settings saved!', 'success');
+    if (status) { status.textContent = t('media_runtime.avatar.saved'); status.style.color = 'var(--success, #6f6)'; }
+    this._showToast(t('media_runtime.avatar.saved_toast'), 'success');
     setTimeout(() => { if (status) status.textContent = ''; }, 3000);
 
   } catch (err) {
     console.error('[Avatar] Save failed:', err);
     if (status) { status.textContent = '❌ ' + err.message; status.style.color = 'var(--danger, red)'; }
-    this._showToast('Failed to save: ' + err.message, 'error');
+    this._showToast(t('media_runtime.avatar.save_failed', { error: err.message }), 'error');
   }
 },
 
@@ -1869,33 +1914,33 @@ _setupSoundManagement() {
     uploadBtn.addEventListener('click', async () => {
       const file = fileInput.files[0];
       const name = nameInput ? nameInput.value.trim() : '';
-      if (!file) return this._showToast('Select an audio file', 'error');
-      if (!name) return this._showToast('Enter a sound name', 'error');
+      if (!file) return this._showToast(t('media_runtime.sound.select_file'), 'error');
+      if (!name) return this._showToast(t('media_runtime.sound.enter_name'), 'error');
       const maxSoundKb = parseInt(this.serverSettings?.max_sound_kb) || 1024;
-      if (file.size > maxSoundKb * 1024) return this._showToast(`Sound file too large (max ${maxSoundKb >= 1024 ? (maxSoundKb / 1024) + ' MB' : maxSoundKb + ' KB'})`, 'error');
+      if (file.size > maxSoundKb * 1024) return this._showToast(t('media_runtime.sound.too_large', { max: maxSoundKb >= 1024 ? (maxSoundKb / 1024) + ' MB' : maxSoundKb + ' KB' }), 'error');
 
       const formData = new FormData();
       formData.append('sound', file);
       formData.append('name', name);
 
       try {
-        this._showToast('Uploading sound...', 'info');
+        this._showToast(t('media_runtime.sound.uploading'), 'info');
         const res = await fetch('/api/upload-sound', {
           method: 'POST',
           headers: { 'Authorization': `Bearer ${this.token}` },
           body: formData
         });
         if (!res.ok) {
-          let errMsg = `Upload failed (${res.status})`;
+          let errMsg = t('toasts.upload_failed_status', { status: res.status });
           try { const d = await res.json(); errMsg = d.error || errMsg; } catch {}
           return this._showToast(errMsg, 'error');
         }
-        this._showToast(`Sound "${name}" uploaded!`, 'success');
+        this._showToast(t('media_runtime.sound.uploaded', { name }), 'success');
         fileInput.value = '';
         nameInput.value = '';
         this._loadCustomSounds();
       } catch {
-        this._showToast('Upload failed', 'error');
+        this._showToast(t('toasts.upload_failed'), 'error');
       }
     });
   }
@@ -2098,7 +2143,7 @@ _setupSoundManagement() {
       });
       this._soundHotkeys[hk] = this._recordingHotkeyFor;
       localStorage.setItem('haven_sound_hotkeys', JSON.stringify(this._soundHotkeys));
-      this._showToast(`Hotkey [${hk}] set for "${this._recordingHotkeyFor}"`, 'success');
+      this._showToast(t('media_runtime.sound.hotkey_set', { hotkey: hk, name: this._recordingHotkeyFor }), 'success');
       this._recordingHotkeyFor = null;
       this._renderSoundboard();
       return;
@@ -2296,7 +2341,7 @@ _openSoundModal(tab = 'soundboard') {
   modal.style.display = 'flex';
   // Sync popout button state
   const popoutBtn = document.getElementById('soundboard-popout-btn');
-  if (popoutBtn) { popoutBtn.textContent = '\u29c9'; popoutBtn.title = 'Pop out soundboard'; }
+  if (popoutBtn) { popoutBtn.textContent = '\u29c9'; popoutBtn.title = t('media_runtime.sound.popout'); }
   this._renderSoundboard();
   this._renderAssignTab();
   this._renderGlobalSoundSlots(this.customSounds || []);
@@ -2465,6 +2510,56 @@ _toggleSoundboardSidebar() {
   window._updateSbToggleRight?.();
 },
 
+// Hotkey chip with its clear control, or the "Set hotkey" link. Shared by the
+// Sound Manager grid/list, the pop-out and the sidebar list, so every layout
+// can bind and unbind a key (the sidebar used to render a read-only chip).
+_sbHotkeyControlsHtml(name, hk) {
+  const n = this._escapeHtml(name);
+  return hk
+    ? `<span class="sb-hotkey-row">
+         <span class="sb-hotkey">${this._escapeHtml(hk)}</span>
+         <span class="sb-hotkey-clear" data-sound="${n}" title="${t('media_runtime.sound.remove_hotkey')}">&times;</span>
+       </span>`
+    : `<span class="sb-hotkey-set" data-sound="${n}">${t('media_runtime.sound.set_hotkey')}</span>`;
+},
+
+// Set / clear / right-click-to-record on every .soundboard-btn inside grid.
+// rerender() redraws the layout that owns the grid after a clear.
+_bindSbHotkeyControls(grid, hotkeyMap, rerender) {
+  grid.querySelectorAll('.sb-hotkey-set').forEach(el => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const name = el.dataset.sound;
+      this._recordingHotkeyFor = name;
+      const btn = el.closest('.soundboard-btn');
+      if (btn) btn.classList.add('hotkey-recording');
+      this._showToast(t('media_runtime.sound.press_hotkey', { name }), 'info');
+    });
+  });
+  grid.querySelectorAll('.sb-hotkey-clear').forEach(el => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const name = el.dataset.sound;
+      const hk = hotkeyMap[name];
+      if (!hk) return;
+      delete this._soundHotkeys[hk];
+      localStorage.setItem('haven_sound_hotkeys', JSON.stringify(this._soundHotkeys));
+      this._showToast(t('media_runtime.sound.hotkey_removed', { name }), 'info');
+      rerender();
+    });
+  });
+  grid.querySelectorAll('.soundboard-btn').forEach(btn => {
+    btn.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      if (e.target.closest('.sb-hotkey-clear')) return;
+      const name = btn.dataset.name;
+      this._recordingHotkeyFor = name;
+      btn.classList.add('hotkey-recording');
+      this._showToast(t('media_runtime.sound.press_hotkey', { name }), 'info');
+    });
+  });
+},
+
 _renderSoundboardSidebar(filter = '') {
   const grid = document.getElementById('sb-sidebar-grid');
   if (!grid) return;
@@ -2476,7 +2571,7 @@ _renderSoundboardSidebar(filter = '') {
   Object.entries(this._soundHotkeys).forEach(([hk, name]) => { hotkeyMap[name] = hk; });
 
   if (all.length === 0) {
-    grid.innerHTML = `<p class="muted-text">${filter ? 'No matching sounds' : 'No sounds available'}</p>`;
+    grid.innerHTML = `<p class="muted-text">${t(filter ? 'media_runtime.sound.no_matches' : 'modals.sound_manager.no_sounds')}</p>`;
     return;
   }
 
@@ -2486,7 +2581,7 @@ _renderSoundboardSidebar(filter = '') {
 
   const renderBtn = (s) => {
     const hk = hotkeyMap[s.name];
-    const hotkeyHtml = hk ? `<span class="sb-hotkey">${this._escapeHtml(hk)}</span>` : '';
+    const hotkeyHtml = this._sbHotkeyControlsHtml(s.name, hk);
     return `<button class="soundboard-btn${this._soundPrefs[s.name]?.hidden ? ' hidden-sound' : ''}" data-name="${this._escapeHtml(s.name)}" data-url="${this._escapeHtml(s.url)}"><span class="sb-name">${this._escapeHtml(s.name)}</span>${hotkeyHtml}</button>`;
   };
 
@@ -2509,8 +2604,12 @@ _renderSoundboardSidebar(filter = '') {
     renderGroup('Built-in', builtinSounds, 'haven_sb_sidebar_builtin_open', builtinOpen);
 
   grid.querySelectorAll('.soundboard-btn').forEach(btn => {
-    btn.addEventListener('click', () => this._playSoundFile(btn.dataset.url));
+    btn.addEventListener('click', (e) => {
+      if (e.target.closest('.sb-hotkey-clear') || e.target.closest('.sb-hotkey-set')) return;
+      this._playSoundFile(btn.dataset.url);
+    });
   });
+  this._bindSbHotkeyControls(grid, hotkeyMap, () => this._renderSoundboardSidebar(filter));
   // Persist open/closed state of each category.
   grid.querySelectorAll('details.sb-sidebar-group').forEach(d => {
     d.addEventListener('toggle', () => {
@@ -2533,15 +2632,15 @@ _popOutSoundboard() {
   pip.className = 'sb-pip-overlay';
   pip.innerHTML = `
     <div class="music-pip-header" id="sb-pip-drag">
-      <button class="music-pip-btn" id="sb-pip-popin" title="Pop back in">\u29c8</button>
+      <button class="music-pip-btn" id="sb-pip-popin" title="${t('media_runtime.sound.pop_back_in')}">\u29c8</button>
       <span class="music-pip-label">\uD83C\uDFB5 Soundboard</span>
-      <button class="music-pip-btn" id="sb-pip-close" title="Close">\u2715</button>
+      <button class="music-pip-btn" id="sb-pip-close" title="${t('modals.common.close')}">\u2715</button>
     </div>
     <div class="sb-pip-body">
       <div class="sound-search-row" style="padding:0;margin-bottom:0">
-        <input type="text" id="sb-pip-search" placeholder="Search sounds..." class="settings-text-input" style="flex:1;font-size:0.75rem">
+        <input type="text" id="sb-pip-search" placeholder="${t('modals.sound_manager.search_placeholder')}" class="settings-text-input" style="flex:1;font-size:0.75rem">
       </div>
-      <div id="sb-pip-grid" class="sb-pip-grid"></div>
+      <div id="sb-pip-grid" class="soundboard-grid sb-pip-grid"></div>
     </div>
   `;
   document.body.appendChild(pip);
@@ -2810,10 +2909,10 @@ _renderSoundList(sounds) {
             });
             localStorage.setItem('haven_sound_hotkeys', JSON.stringify(this._soundHotkeys));
             localStorage.setItem('haven_global_sound_slots', JSON.stringify(this._globalSoundSlots));
-            this._showToast(`Renamed to "${newName}"`, 'success');
+            this._showToast(t('media_runtime.sound.renamed', { name: newName }), 'success');
             this._loadCustomSounds();
           } else {
-            let errMsg = 'Rename failed';
+            let errMsg = t('media_runtime.sound.rename_failed');
             try { const d = await res.json(); errMsg = d.error || errMsg; } catch {}
             this._showToast(errMsg, 'error');
             const span = document.createElement('span');
@@ -2822,7 +2921,7 @@ _renderSoundList(sounds) {
             input.replaceWith(span);
           }
         } catch {
-          this._showToast('Rename failed', 'error');
+          this._showToast(t('media_runtime.sound.rename_failed'), 'error');
         }
       };
 
@@ -2844,7 +2943,7 @@ _renderSoundList(sounds) {
           headers: { 'Authorization': `Bearer ${this.token}` }
         });
         if (res.ok) {
-          this._showToast(`Sound "${name}" deleted`, 'success');
+          this._showToast(t('media_runtime.sound.deleted', { name }), 'success');
           // Clean up hotkey
           Object.keys(this._soundHotkeys).forEach(k => {
             if (this._soundHotkeys[k] === name) delete this._soundHotkeys[k];
@@ -2856,10 +2955,10 @@ _renderSoundList(sounds) {
           localStorage.setItem('haven_global_sound_slots', JSON.stringify(this._globalSoundSlots));
           this._loadCustomSounds();
         } else {
-          this._showToast('Delete failed', 'error');
+          this._showToast(t('media_runtime.delete_failed'), 'error');
         }
       } catch {
-        this._showToast('Delete failed', 'error');
+        this._showToast(t('media_runtime.delete_failed'), 'error');
       }
     });
   });
@@ -2886,16 +2985,10 @@ _renderSoundboard(filter = '') {
   Object.entries(this._soundHotkeys).forEach(([hk, name]) => { hotkeyMap[name] = hk; });
 
   const html = sounds.length === 0
-    ? `<p class="muted-text" style="grid-column:1/-1">${filter ? 'No matching sounds' : 'No sounds available'}</p>`
+    ? `<p class="muted-text" style="grid-column:1/-1">${t(filter ? 'media_runtime.sound.no_matches' : 'modals.sound_manager.no_sounds')}</p>`
     : sounds.map(s => {
-        const hk = hotkeyMap[s.name];
-        const hotkeyHtml = hk
-          ? `<span class="sb-hotkey-row">
-               <span class="sb-hotkey">${this._escapeHtml(hk)}</span>
-               <span class="sb-hotkey-clear" data-sound="${this._escapeHtml(s.name)}" title="Remove hotkey">&times;</span>
-             </span>`
-          : `<span class="sb-hotkey-set" data-sound="${this._escapeHtml(s.name)}">Set hotkey</span>`;
-        return `<button class="soundboard-btn${this._soundPrefs[s.name]?.hidden ? ' hidden-sound' : ''}" data-name="${this._escapeHtml(s.name)}" data-url="${this._escapeHtml(s.url)}"><span class="sb-hide-btn" data-sound="${this._escapeHtml(s.name)}" title="${this._soundPrefs[s.name]?.hidden ? 'Show' : 'Hide'} this sound">👁️</span><span class="sb-name">${this._escapeHtml(s.name)}</span>
+        const hotkeyHtml = this._sbHotkeyControlsHtml(s.name, hotkeyMap[s.name]);
+        return `<button class="soundboard-btn${this._soundPrefs[s.name]?.hidden ? ' hidden-sound' : ''}" data-name="${this._escapeHtml(s.name)}" data-url="${this._escapeHtml(s.url)}"><span class="sb-hide-btn" data-sound="${this._escapeHtml(s.name)}" title="${t(this._soundPrefs[s.name]?.hidden ? 'media_runtime.sound.show' : 'media_runtime.sound.hide')}">👁️</span><span class="sb-name">${this._escapeHtml(s.name)}</span>
           ${hotkeyHtml}
         </button>`;
       }).join('');
@@ -2916,36 +3009,10 @@ _renderSoundboard(filter = '') {
       });
     });
 
-    // "Set hotkey" link
-    grid.querySelectorAll('.sb-hotkey-set').forEach(el => {
-      el.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const name = el.dataset.sound;
-        this._recordingHotkeyFor = name;
-        const btn = el.closest('.soundboard-btn');
-        if (btn) btn.classList.add('hotkey-recording');
-        this._showToast(`Press a key combo for "${name}" (Esc to cancel)`, 'info');
-      });
-    });
-
-    // "×" remove hotkey button
-    grid.querySelectorAll('.sb-hotkey-clear').forEach(el => {
-      el.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const name = el.dataset.sound;
-        const hk = hotkeyMap[name];
-        if (hk) {
-          delete this._soundHotkeys[hk];
-          localStorage.setItem('haven_sound_hotkeys', JSON.stringify(this._soundHotkeys));
-          this._showToast(`Hotkey removed for "${name}"`, 'info');
-          this._renderSoundboard(
-            this._soundboardPip
-              ? (document.getElementById('sb-pip-search')?.value?.trim() || '')
-              : (document.getElementById('soundboard-search')?.value?.trim() || '')
-          );
-        }
-      });
-    });
+    const currentFilter = () => this._soundboardPip
+      ? (document.getElementById('sb-pip-search')?.value?.trim() || '')
+      : (document.getElementById('soundboard-search')?.value?.trim() || '');
+    this._bindSbHotkeyControls(grid, hotkeyMap, () => this._renderSoundboard(currentFilter()));
 
     // Hide / show button (👁️)
     grid.querySelectorAll('.sb-hide-btn').forEach(el => {
@@ -2962,17 +3029,6 @@ _renderSoundboard(filter = '') {
       });
     });
 
-    // Right-click also starts hotkey recording
-    grid.querySelectorAll('.soundboard-btn').forEach(btn => {
-      btn.addEventListener('contextmenu', (e) => {
-        e.preventDefault();
-        if (e.target.closest('.sb-hotkey-clear')) return;
-        const name = btn.dataset.name;
-        this._recordingHotkeyFor = name;
-        btn.classList.add('hotkey-recording');
-        this._showToast(`Press a key combo for "${name}" (Esc to cancel)`, 'info');
-      });
-    });
   });
 },
 
@@ -2984,7 +3040,7 @@ _renderAssignTab() {
     { value: 'blip', label: 'Blip' }, { value: 'bell', label: 'Bell' },
     { value: 'drop', label: 'Drop' }, { value: 'alert', label: 'Alert' },
     { value: 'chord', label: 'Chord' }, { value: 'swoosh', label: 'Swoosh' },
-    { value: 'none', label: 'None' },
+    { value: 'none', label: t('media_runtime.none') },
   ];
   const customs = (this.customSounds || []).map(s => ({
     value: `custom:${s.name}`, label: s.name, url: s.url, builtin: !!s.builtin
@@ -3106,33 +3162,33 @@ _setupEmojiManagement() {
   uploadBtn.addEventListener('click', async () => {
     const file = fileInput.files[0];
     const name = nameInput ? nameInput.value.trim().replace(/[^a-zA-Z0-9_-]/g, '').toLowerCase() : '';
-    if (!file) return this._showToast('Select an image file', 'error');
-    if (!name) return this._showToast('Enter an emoji name (lowercase, no spaces)', 'error');
+    if (!file) return this._showToast(t('media_runtime.emoji.select_file'), 'error');
+    if (!name) return this._showToast(t('media_runtime.emoji.enter_name'), 'error');
 
     // Use cropped blob for non-GIF uploads, otherwise raw file
     const uploadBlob = (this._croppedEmojiBlob && file.type !== 'image/gif')
       ? this._croppedEmojiBlob
       : file;
     const maxEmojiKb = parseInt(this.serverSettings?.max_emoji_kb) || 256;
-    if (uploadBlob.size > maxEmojiKb * 1024) return this._showToast(`Emoji file too large (max ${maxEmojiKb} KB)`, 'error');
+    if (uploadBlob.size > maxEmojiKb * 1024) return this._showToast(t('media_runtime.emoji.too_large', { max: maxEmojiKb }), 'error');
 
     const formData = new FormData();
     formData.append('emoji', uploadBlob, file.name);
     formData.append('name', name);
 
     try {
-      this._showToast('Uploading emoji...', 'info');
+      this._showToast(t('media_runtime.emoji.uploading'), 'info');
       const res = await fetch('/api/upload-emoji', {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${this.token}` },
         body: formData
       });
       if (!res.ok) {
-        let errMsg = `Upload failed (${res.status})`;
+        let errMsg = t('toasts.upload_failed_status', { status: res.status });
         try { const d = await res.json(); errMsg = d.error || errMsg; } catch {}
         return this._showToast(errMsg, 'error');
       }
-      this._showToast(`Emoji :${name}: uploaded!`, 'success');
+      this._showToast(t('media_runtime.emoji.uploaded', { name }), 'success');
       fileInput.value = '';
       if (nameInput) nameInput.value = '';
       this._croppedEmojiBlob = null;
@@ -3142,7 +3198,7 @@ _setupEmojiManagement() {
       if (previewRow) previewRow.style.display = 'none';
       this._loadCustomEmojis();
     } catch {
-      this._showToast('Upload failed', 'error');
+      this._showToast(t('toasts.upload_failed'), 'error');
     }
   });
 
@@ -3161,29 +3217,30 @@ _setupEmojiManagement() {
       }
       if ([...formData.entries()].length === 0) {
         bulkInput.value = '';
-        return this._showToast(`All files exceeded the ${maxEmojiKb} KB limit`, 'error');
+        return this._showToast(t('media_runtime.all_files_too_large', { max: maxEmojiKb }), 'error');
       }
       try {
-        this._showToast(`Uploading ${files.length - skipped} emoji${files.length - skipped > 1 ? 's' : ''}...`, 'info');
+        const uploadCount = files.length - skipped;
+        this._showToast(t(uploadCount === 1 ? 'media_runtime.emoji.uploading_one' : 'media_runtime.emoji.uploading_other', { count: uploadCount }), 'info');
         const res = await fetch('/api/upload-emojis', {
           method: 'POST',
           headers: { 'Authorization': `Bearer ${this.token}` },
           body: formData
         });
         if (!res.ok) {
-          let errMsg = `Upload failed (${res.status})`;
+          let errMsg = t('toasts.upload_failed_status', { status: res.status });
           try { const d = await res.json(); errMsg = d.error || errMsg; } catch {}
           return this._showToast(errMsg, 'error');
         }
         const data = await res.json();
         const count = data.uploaded?.length || 0;
         const errCount = (data.errors?.length || 0) + skipped;
-        let msg = `${count} emoji${count !== 1 ? 's' : ''} uploaded`;
-        if (errCount) msg += ` (${errCount} skipped)`;
+        let msg = t(count === 1 ? 'media_runtime.emoji.uploaded_one' : 'media_runtime.emoji.uploaded_other', { count });
+        if (errCount) msg += ' ' + t('media_runtime.skipped', { count: errCount });
         this._showToast(msg, count ? 'success' : 'error');
         this._loadCustomEmojis();
       } catch {
-        this._showToast('Bulk upload failed', 'error');
+        this._showToast(t('media_runtime.bulk_upload_failed'), 'error');
       }
       bulkInput.value = '';
     });
@@ -3410,7 +3467,7 @@ _renderEmojiList(emojis) {
   if (!list) return;
 
   if (emojis.length === 0) {
-    list.innerHTML = '<p class="muted-text">No custom emojis uploaded</p>';
+    list.innerHTML = `<p class="muted-text">${t('modals.emoji_mgmt.no_emojis')}</p>`;
     return;
   }
 
@@ -3418,7 +3475,7 @@ _renderEmojiList(emojis) {
     <div class="custom-sound-item">
       <img src="${this._escapeHtml(e.url)}" alt=":${this._escapeHtml(e.name)}:" class="custom-emoji-preview" style="width:24px;height:24px;vertical-align:middle;margin-right:6px;">
       <span class="custom-sound-name">:${this._escapeHtml(e.name)}:</span>
-      <button class="btn-xs emoji-delete-btn" data-name="${this._escapeHtml(e.name)}" title="Delete">&#x1F5D1;</button>
+      <button class="btn-xs emoji-delete-btn" data-name="${this._escapeHtml(e.name)}" title="${t('media_runtime.delete')}">&#x1F5D1;</button>
     </div>
   `).join('');
 
@@ -3431,13 +3488,13 @@ _renderEmojiList(emojis) {
           headers: { 'Authorization': `Bearer ${this.token}` }
         });
         if (res.ok) {
-          this._showToast(`Emoji :${name}: deleted`, 'success');
+          this._showToast(t('media_runtime.emoji.deleted', { name }), 'success');
           this._loadCustomEmojis();
         } else {
-          this._showToast('Delete failed', 'error');
+          this._showToast(t('media_runtime.delete_failed'), 'error');
         }
       } catch {
-        this._showToast('Delete failed', 'error');
+        this._showToast(t('media_runtime.delete_failed'), 'error');
       }
     });
   });
@@ -3463,13 +3520,13 @@ _renderStickerList(stickers) {
   const list = document.getElementById('stickers-list');
   if (!list) return;
   if (!stickers || stickers.length === 0) {
-    list.innerHTML = '<p class="muted-text" data-i18n="modals.sticker_mgmt.no_stickers">No stickers uploaded</p>';
+    list.innerHTML = `<p class="muted-text">${t('modals.sticker_mgmt.no_stickers')}</p>`;
     return;
   }
   // Group by pack for display
   const packs = {};
   stickers.forEach(s => {
-    const p = s.pack_name || 'General';
+    const p = s.pack_name || t('media_runtime.sticker.general_pack');
     (packs[p] = packs[p] || []).push(s);
   });
   list.innerHTML = Object.keys(packs).sort().map(pack => `
@@ -3479,7 +3536,7 @@ _renderStickerList(stickers) {
         <div class="custom-sound-item">
           <img src="${this._escapeHtml(s.url)}" alt=":${this._escapeHtml(s.name)}:" style="width:48px;height:48px;vertical-align:middle;margin-right:8px;object-fit:contain;border-radius:4px;background:var(--bg-secondary)">
           <span class="custom-sound-name">:${this._escapeHtml(s.name)}:</span>
-          <button class="btn-xs sticker-delete-btn" data-name="${this._escapeHtml(s.name)}" title="Delete">&#x1F5D1;</button>
+          <button class="btn-xs sticker-delete-btn" data-name="${this._escapeHtml(s.name)}" title="${t('media_runtime.delete')}">&#x1F5D1;</button>
         </div>
       `).join('')}
     </div>
@@ -3494,13 +3551,13 @@ _renderStickerList(stickers) {
           headers: { 'Authorization': `Bearer ${this.token}` }
         });
         if (res.ok) {
-          this._showToast(`Sticker :${name}: deleted`, 'success');
+          this._showToast(t('media_runtime.sticker.deleted', { name }), 'success');
           this._loadStickers();
         } else {
-          this._showToast('Delete failed', 'error');
+          this._showToast(t('media_runtime.delete_failed'), 'error');
         }
       } catch {
-        this._showToast('Delete failed', 'error');
+        this._showToast(t('media_runtime.delete_failed'), 'error');
       }
     });
   });
@@ -3529,9 +3586,9 @@ _setupStickerManagement() {
   if (uploadBtn && fileInput) {
     uploadBtn.addEventListener('click', async () => {
       const file = fileInput.files[0];
-      if (!file) return this._showToast('Choose a file first', 'error');
+      if (!file) return this._showToast(t('media_runtime.sticker.choose_file'), 'error');
       const maxKb = parseInt(this.serverSettings?.max_sticker_kb) || 1024;
-      if (file.size > maxKb * 1024) return this._showToast(`File exceeds ${maxKb} KB limit`, 'error');
+      if (file.size > maxKb * 1024) return this._showToast(t('media_runtime.sticker.too_large', { max: maxKb }), 'error');
 
       const formData = new FormData();
       formData.append('sticker', file, file.name);
@@ -3547,17 +3604,17 @@ _setupStickerManagement() {
           body: formData
         });
         if (!res.ok) {
-          let errMsg = `Upload failed (${res.status})`;
+          let errMsg = t('toasts.upload_failed_status', { status: res.status });
           try { const d = await res.json(); errMsg = d.error || errMsg; } catch {}
           return this._showToast(errMsg, 'error');
         }
         const data = await res.json();
-        this._showToast(`Sticker :${data.name}: uploaded`, 'success');
+        this._showToast(t('media_runtime.sticker.uploaded', { name: data.name }), 'success');
         if (nameInput) nameInput.value = '';
         fileInput.value = '';
         this._loadStickers();
       } catch {
-        this._showToast('Upload failed', 'error');
+        this._showToast(t('toasts.upload_failed'), 'error');
       }
     });
   }
@@ -3579,21 +3636,22 @@ _setupStickerManagement() {
       }
       if ([...formData.entries()].length === 0) {
         bulkInput.value = '';
-        return this._showToast(`All files exceeded the ${maxKb} KB limit`, 'error');
+        return this._showToast(t('media_runtime.all_files_too_large', { max: maxKb }), 'error');
       }
 
       const pack = (packInput?.value || '').trim();
       if (pack) formData.append('pack_name', pack);
 
       try {
-        this._showToast(`Uploading ${files.length - skipped} sticker${files.length - skipped !== 1 ? 's' : ''}...`, 'info');
+        const uploadCount = files.length - skipped;
+        this._showToast(t(uploadCount === 1 ? 'media_runtime.sticker.uploading_one' : 'media_runtime.sticker.uploading_other', { count: uploadCount }), 'info');
         const res = await fetch('/api/upload-stickers', {
           method: 'POST',
           headers: { 'Authorization': `Bearer ${this.token}` },
           body: formData
         });
         if (!res.ok) {
-          let errMsg = `Upload failed (${res.status})`;
+          let errMsg = t('toasts.upload_failed_status', { status: res.status });
           try { const d = await res.json(); errMsg = d.error || errMsg; } catch {}
           return this._showToast(errMsg, 'error');
         }
@@ -3601,12 +3659,12 @@ _setupStickerManagement() {
         const data = await res.json();
         const count = data.uploaded?.length || 0;
         const errCount = (data.errors?.length || 0) + skipped;
-        let msg = `${count} sticker${count !== 1 ? 's' : ''} uploaded`;
-        if (errCount) msg += ` (${errCount} skipped)`;
+        let msg = t(count === 1 ? 'media_runtime.sticker.uploaded_one' : 'media_runtime.sticker.uploaded_other', { count });
+        if (errCount) msg += ' ' + t('media_runtime.skipped', { count: errCount });
         this._showToast(msg, count ? 'success' : 'error');
         this._loadStickers();
       } catch {
-        this._showToast('Bulk upload failed', 'error');
+        this._showToast(t('media_runtime.bulk_upload_failed'), 'error');
       }
 
       bulkInput.value = '';
@@ -3626,7 +3684,7 @@ _setupWebhookManagement() {
   document.getElementById('ferry-close-btn')?.addEventListener('click', () => this._closeFerryModal());
   document.getElementById('ferry-refresh-btn')?.addEventListener('click', () => {
     this.socket.emit('ferry:reconnect');
-    this._showToast('Reconnecting to Discord...', 'info');
+    this._showToast(t('media_runtime.ferry_reconnecting'), 'info');
   });
   document.getElementById('ferry-modal')?.addEventListener('click', (e) => {
     if (e.target === e.currentTarget) this._closeFerryModal();
@@ -3697,7 +3755,7 @@ _showBotDetail(botId) {
   const baseUrl = window.location.origin;
   const tokenVisible = typeof wh.token === 'string' && wh.token.length > 0;
   const webhookUrl = tokenVisible ? `${baseUrl}/api/webhooks/${wh.token}` : '';
-  const maskedToken = tokenVisible ? wh.token.slice(0, 12) + '••••••••••••' : 'Hidden - bot owner or admin only';
+  const maskedToken = tokenVisible ? wh.token.slice(0, 12) + '••••••••••••' : t('media_runtime.bot.hidden');
   const channelOptions = this._getBotChannelOptions(wh.channel_id);
 
   panel.innerHTML = `
@@ -3728,29 +3786,29 @@ _showBotDetail(botId) {
 
       <label class="settings-label">${t('modals.bot_mgmt.webhook_url_label')}</label>
       <div style="display:flex;gap:4px;align-items:center;margin-bottom:8px">
-        <code style="flex:1;font-size:0.6875rem;padding:6px 8px;background:var(--bg-input);border-radius:4px;color:var(--text-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${this._escapeHtml(webhookUrl || 'Hidden - bot owner or admin only')}</code>
+        <code style="flex:1;font-size:0.6875rem;padding:6px 8px;background:var(--bg-input);border-radius:4px;color:var(--text-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${this._escapeHtml(webhookUrl || t('media_runtime.bot.hidden'))}</code>
         <button class="btn-xs" id="bot-detail-copy-url" title="${t('modals.bot_mgmt.copy_url_title')}" ${tokenVisible ? '' : 'disabled'}>📋</button>
       </div>
 
       <label class="settings-label">${t('modals.bot_mgmt.token_label')}</label>
       <div style="font-size:0.6875rem;font-family:monospace;padding:4px 8px;background:var(--bg-input);border-radius:4px;color:var(--text-muted);margin-bottom:12px">${maskedToken}</div>
 
-      <label class="settings-label">📡 Callback URL <span style="font-size:0.625rem;color:var(--text-muted)">(optional — Haven will POST messages to this URL)</span></label>
+      <label class="settings-label">📡 ${t('media_runtime.bot.callback_url')} <span style="font-size:0.625rem;color:var(--text-muted)">${t('media_runtime.bot.callback_url_hint')}</span></label>
       <input type="url" id="bot-detail-callback-url" value="${this._escapeHtml(wh.callback_url || '')}" placeholder="https://mybot.example.com/haven-events" class="settings-text-input" style="width:100%;margin-bottom:8px">
 
-      <label class="settings-label">🔑 Callback Secret <span style="font-size:0.625rem;color:var(--text-muted)">(optional — used to sign payloads via X-Haven-Signature)</span></label>
+      <label class="settings-label">🔑 ${t('media_runtime.bot.callback_secret')} <span style="font-size:0.625rem;color:var(--text-muted)">${t('media_runtime.bot.callback_secret_hint')}</span></label>
       <input type="text" id="bot-detail-callback-secret" value="${this._escapeHtml(wh.callback_secret || '')}" placeholder="my-secret-key" class="settings-text-input" style="width:100%;margin-bottom:12px">
 
-      <label class="settings-label">🛡️ Moderation <span style="font-size:0.625rem;color:var(--text-muted)">(admin only — let this bot kick / ban / mute users via REST API)</span></label>
+      <label class="settings-label">🛡️ ${t('media_runtime.bot.moderation')} <span style="font-size:0.625rem;color:var(--text-muted)">${t('media_runtime.bot.moderation_hint')}</span></label>
       <label class="toggle-row" style="margin-bottom:12px">
         <input type="checkbox" id="bot-detail-can-moderate" ${wh.can_moderate ? 'checked' : ''} ${this.user && this.user.isAdmin ? '' : 'disabled'}>
-        <span>Allow this bot to perform moderation actions</span>
+        <span>${t('media_runtime.bot.allow_moderation')}</span>
       </label>
 
-      <label class="settings-label">Voice access <span style="font-size:0.625rem;color:var(--text-muted)">(admin only - lets this bot join voice as a WebRTC peer)</span></label>
+      <label class="settings-label">${t('media_runtime.bot.voice_access')} <span style="font-size:0.625rem;color:var(--text-muted)">${t('media_runtime.bot.voice_access_hint')}</span></label>
       <label class="toggle-row" style="margin-bottom:12px">
         <input type="checkbox" id="bot-detail-can-use-voice" ${wh.can_use_voice ? 'checked' : ''} ${this.user && this.user.isAdmin ? '' : 'disabled'}>
-        <span>Allow this bot to use voice channels</span>
+        <span>${t('media_runtime.bot.allow_voice')}</span>
       </label>
 
       <div style="display:flex;gap:8px;margin-top:8px">
@@ -3777,7 +3835,7 @@ _showBotDetail(botId) {
     const channelId = parseInt(panel.querySelector('#bot-detail-channel').value);
     const callbackUrl = panel.querySelector('#bot-detail-callback-url').value.trim();
     const callbackSecret = panel.querySelector('#bot-detail-callback-secret').value.trim();
-    if (!name) return this._showToast('Name is required', 'error');
+    if (!name) return this._showToast(t('media_runtime.bot.name_required'), 'error');
     const payload = { id: botId, name, channel_id: channelId, callback_url: callbackUrl, callback_secret: callbackSecret };
     const modBox = panel.querySelector('#bot-detail-can-moderate');
     if (modBox && !modBox.disabled) payload.can_moderate = modBox.checked ? 1 : 0;
@@ -3811,7 +3869,7 @@ _showBotDetail(botId) {
     });
   });
   panel.querySelector('#bot-detail-delete').addEventListener('click', () => {
-    if (confirm(`Delete bot "${wh.name}"? This cannot be undone.`)) {
+    if (confirm(t('media_runtime.bot.delete_confirm', { name: wh.name }))) {
       this._selectedBotId = null;
       this.socket.emit('delete-webhook', { id: botId });
     }
@@ -3853,13 +3911,51 @@ async _uploadBotAvatar(botId, file) {
     const json = await resp.json();
     if (json.url) {
       this.socket.emit('update-webhook', { id: botId, avatar_url: json.url });
-      this._showToast('Bot avatar updated', 'success');
+      this._showToast(t('media_runtime.bot.avatar_updated'), 'success');
     } else {
-      this._showToast(json.error || 'Upload failed', 'error');
+      this._showToast(json.error || t('toasts.upload_failed'), 'error');
     }
   } catch (err) {
-    this._showToast('Upload failed', 'error');
+    this._showToast(t('toasts.upload_failed'), 'error');
   }
+},
+
+// Helper function to simplify picker setups
+_setupPicker(pickerId, storageKey, allowedValues, defaultValue, dataKey, onChange, buttonDataKey) {
+  if (!allowedValues.includes(defaultValue)) {
+    throw new Error(`Invalid default value "${defaultValue}" for ${pickerId}`);
+  }
+
+  const picker = document.getElementById(pickerId);
+  if (!picker) return null;
+
+  const dataKeys = Array.isArray(dataKey) ? dataKey : [dataKey];
+  buttonDataKey ??= dataKeys[0];
+  const apply = (value, notify = false) => {
+    dataKeys.forEach(key => {
+      document.documentElement.dataset[key] = value;
+    });
+
+    picker.querySelectorAll('.density-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset[buttonDataKey] === value);
+    });
+    if (notify) onChange?.(value);
+  };
+
+  const stored = localStorage.getItem(storageKey);
+  const saved = allowedValues.includes(stored) ? stored : defaultValue;
+  apply(saved);
+
+  picker.addEventListener('click', (e) => {
+    const btn = e.target.closest('.density-btn');
+    if (!btn || !picker.contains(btn)) return;
+    const value = btn.dataset[buttonDataKey];
+    if (!allowedValues.includes(value)) return;
+
+    apply(value, true);
+    localStorage.setItem(storageKey, value);
+  });
+  return saved;
 },
 
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
@@ -3867,25 +3963,30 @@ async _uploadBotAvatar(botId, file) {
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 _setupDensityPicker() {
-  const picker = document.getElementById('density-picker');
-  if (!picker) return;
+  const pickerId = 'density-picker';
+  const storageKey = 'haven-density';
+  const allowedValues = ['compact', 'cozy', 'spacious'];
+  const defaultValue = 'cozy';
+  const dataKey = ['density', 'havenDensity'];
+  const buttonDataKey = 'density';
+  const onChange = (density) => {
+    document.dispatchEvent(new CustomEvent('haven:density-change', {detail: { density }}))
+  };
 
-  // Restore saved density
-  const saved = localStorage.getItem('haven-density') || 'cozy';
-  document.documentElement.dataset.density = saved;
-  picker.querySelectorAll('.density-btn').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.density === saved);
-  });
+  this._setupPicker(pickerId, storageKey, allowedValues, defaultValue, dataKey, onChange, buttonDataKey);
+},
 
-  picker.addEventListener('click', (e) => {
-    const btn = e.target.closest('.density-btn');
-    if (!btn) return;
-    const density = btn.dataset.density;
-    document.documentElement.dataset.density = density;
-    localStorage.setItem('haven-density', density);
-    picker.querySelectorAll('.density-btn').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-  });
+// ── Channel Scrolling Picker ──
+// Sets data-channel-scroll on <html>; CSS handles the layout. Persists the
+// viewer's choice and applies it live without a reload.
+_setupChannelScrollPicker() {
+  const pickerId = 'channel-scroll-picker';
+  const storageKey = 'haven-channel-scroll';
+  const allowedValues = ['separate', 'combined'];
+  const defaultValue = 'separate';
+  const dataKey = 'channelScroll';
+
+  this._setupPicker(pickerId, storageKey, allowedValues, defaultValue, dataKey);
 },
 
 // ── Toggle Style Picker (sliders vs checkboxes) ──
@@ -3893,25 +3994,14 @@ _setupDensityPicker() {
 // applies the same value pre-paint, so this only has to keep the buttons in
 // step and persist the choice.
 _setupToggleStylePicker() {
-  const picker = document.getElementById('toggle-style-picker');
-  if (!picker) return;
+  const pickerId = 'toggle-style-picker';
+  const storageKey = 'haven-toggle-style';
+  const allowedValues = ['switch', 'box'];
+  const defaultValue = 'switch';
+  const dataKey = 'toggleStyle';
+  const buttonDataKey = 'togglestyle';
 
-  // Sliders are the default; only an explicit 'box' choice differs.
-  const saved = localStorage.getItem('haven-toggle-style') === 'box' ? 'box' : 'switch';
-  document.documentElement.dataset.toggleStyle = saved;
-  picker.querySelectorAll('.density-btn').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.togglestyle === saved);
-  });
-
-  picker.addEventListener('click', (e) => {
-    const btn = e.target.closest('.density-btn');
-    if (!btn) return;
-    const style = btn.dataset.togglestyle === 'box' ? 'box' : 'switch';
-    document.documentElement.dataset.toggleStyle = style;
-    localStorage.setItem('haven-toggle-style', style);
-    picker.querySelectorAll('.density-btn').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-  });
+  this._setupPicker(pickerId, storageKey, allowedValues, defaultValue, dataKey, null, buttonDataKey);
 },
 
 // ── Animated Profile Pictures Picker (viewer side) ──
@@ -3990,26 +4080,14 @@ _setupZoomSlider() {
 },
 
 // ── Emoji Reaction Size Picker ──
-
 _setupEmojiSizePicker() {
-  const picker = document.getElementById('emoji-size-picker');
-  if (!picker) return;
+  const pickerId = 'emoji-size-picker';
+  const storageKey = 'haven-emojisize';
+  const allowedValues = ['small', 'normal', 'large', 'x-large'];
+  const defaultValue = 'normal';
+  const dataKey = 'emojisize';
 
-  const saved = localStorage.getItem('haven-emojisize') || 'normal';
-  document.documentElement.dataset.emojisize = saved;
-  picker.querySelectorAll('[data-emojisize]').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.emojisize === saved);
-  });
-
-  picker.addEventListener('click', (e) => {
-    const btn = e.target.closest('[data-emojisize]');
-    if (!btn) return;
-    const size = btn.dataset.emojisize;
-    document.documentElement.dataset.emojisize = size;
-    localStorage.setItem('haven-emojisize', size);
-    picker.querySelectorAll('[data-emojisize]').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-  });
+  this._setupPicker(pickerId, storageKey, allowedValues, defaultValue, dataKey);
 },
 
 // ── Debug Section ──
@@ -4078,6 +4156,22 @@ _setupDebugSection() {
       try {
         if (relayCb.checked) localStorage.setItem('haven_screen_relay_profile', '1');
         else localStorage.removeItem('haven_screen_relay_profile');
+      } catch {}
+      if (this.voice && typeof this.voice.reapplyScreenBitrate === 'function') {
+        this.voice.reapplyScreenBitrate();
+      }
+    });
+  }
+
+  // #5426: automatic relay detection for the profile above. On unless the
+  // person switched it off; voice.js reads the flag live on every apply.
+  const relayAutoCb = document.getElementById('pref-debug-screen-relay-auto');
+  if (relayAutoCb) {
+    try { relayAutoCb.checked = localStorage.getItem('haven_screen_relay_auto') !== '0'; } catch {}
+    relayAutoCb.addEventListener('change', () => {
+      try {
+        if (relayAutoCb.checked) localStorage.removeItem('haven_screen_relay_auto');
+        else localStorage.setItem('haven_screen_relay_auto', '0');
       } catch {}
       if (this.voice && typeof this.voice.reapplyScreenBitrate === 'function') {
         this.voice.reapplyScreenBitrate();
@@ -4182,7 +4276,7 @@ _applyEmbedSize(mode) {
   localStorage.setItem('haven-embed-size', mode);
   document.body.classList.remove('embed-size-off', 'embed-size-small', 'embed-size-medium', 'embed-size-full');
   document.body.classList.add(`embed-size-${mode}`);
-  const label = `⤢ ${mode.charAt(0).toUpperCase() + mode.slice(1)}`;
+  const label = `⤢ ${t(`settings.embed_display.${mode}`)}`;
   document.querySelectorAll('.lp-size').forEach(b => { b.textContent = label; });
   const picker = document.getElementById('embed-size-picker');
   if (picker) picker.querySelectorAll('[data-embed-size]').forEach(b => b.classList.toggle('active', b.dataset.embedSize === mode));
@@ -4191,26 +4285,17 @@ _applyEmbedSize(mode) {
 // ── Role Display Picker ──
 
 _setupRoleDisplayPicker() {
-  const picker = document.getElementById('role-display-picker');
-  if (!picker) return;
-
-  const saved = localStorage.getItem('haven-role-display') || 'colored-name';
-  document.documentElement.dataset.roleDisplay = saved;
-  picker.querySelectorAll('[data-roledisplay]').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.roledisplay === saved);
-  });
-
-  picker.addEventListener('click', (e) => {
-    const btn = e.target.closest('[data-roledisplay]');
-    if (!btn) return;
-    const mode = btn.dataset.roledisplay;
-    document.documentElement.dataset.roleDisplay = mode;
-    localStorage.setItem('haven-role-display', mode);
-    picker.querySelectorAll('[data-roledisplay]').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
+  const pickerId = 'role-display-picker';
+  const storageKey = 'haven-role-display';
+  const allowedValues = ['colored-name', 'dot'];
+  const defaultValue = 'colored-name';
+  const dataKey = 'roledisplay';
+  const onChange = () => {
     // Re-render member list to reflect the change
     if (this._updateUsers) this._updateUsers();
-  });
+  };
+
+  this._setupPicker(pickerId, storageKey, allowedValues, defaultValue, dataKey, onChange);
 },
 
 // ── Toolbar Icon Style Picker ──
@@ -4225,14 +4310,14 @@ _setupToolbarIconPicker() {
 
   const defaultOrder = ['react', 'reply', 'quote', 'thread', 'pin', 'archive', 'edit', 'delete'];
   const actionLabels = {
-    react: 'React',
-    reply: 'Reply',
-    quote: 'Quote',
-    thread: 'Thread',
-    pin: 'Pin / Unpin',
-    archive: 'Protect / Unprotect',
-    edit: 'Edit',
-    delete: 'Delete'
+    react: t('msg_toolbar.react'),
+    reply: t('msg_toolbar.reply'),
+    quote: t('msg_toolbar.quote'),
+    thread: t('msg_toolbar.thread'),
+    pin: t('media_runtime.toolbar.pin'),
+    archive: t('media_runtime.toolbar.protect'),
+    edit: t('msg_toolbar.edit'),
+    delete: t('msg_toolbar.delete')
   };
 
   const normalizeOrder = (value) => {
@@ -4285,8 +4370,8 @@ _setupToolbarIconPicker() {
       row.innerHTML = `
         <span class="toolbar-order-item-label">${actionLabels[key] || key}</span>
         <div class="toolbar-order-item-controls">
-          <button type="button" class="toolbar-order-move" data-dir="up" data-key="${key}" ${index === 0 ? 'disabled' : ''} title="Move up">▲</button>
-          <button type="button" class="toolbar-order-move" data-dir="down" data-key="${key}" ${index === currentOrder.length - 1 ? 'disabled' : ''} title="Move down">▼</button>
+          <button type="button" class="toolbar-order-move" data-dir="up" data-key="${key}" ${index === 0 ? 'disabled' : ''} title="${t('media_runtime.move_up')}">▲</button>
+          <button type="button" class="toolbar-order-move" data-dir="down" data-key="${key}" ${index === currentOrder.length - 1 ? 'disabled' : ''} title="${t('media_runtime.move_down')}">▼</button>
         </div>
       `;
       orderList.appendChild(row);
@@ -4384,41 +4469,64 @@ _getLightboxImages() {
   // Use whichever container opened the lightbox (main feed, thread panel, DM PiP)
   const container = this._lightboxContainer || document.getElementById('messages');
   if (!container) return [];
-  return Array.from(container.querySelectorAll('.chat-image')).map(img => img.src);
+  return Array.from(container.querySelectorAll('.chat-image'));
+},
+
+/** Point the lightbox at one chat image. A decrypted DM image has no usable
+ *  src any more (the feed revokes its object URL once painted, #5426), so it
+ *  is decrypted again on demand; until then the lightbox shows nothing but
+ *  the backdrop, which is what it used to show forever. (#5568) */
+_lightboxShow(imgEl, fallbackSrc = '') {
+  const lbImg = document.getElementById('lightbox-img');
+  if (!lbImg) return;
+  const seq = (this._lightboxSeq = (this._lightboxSeq || 0) + 1);
+  if (this._lightboxBlobUrl) {
+    try { URL.revokeObjectURL(this._lightboxBlobUrl); } catch { /* already gone */ }
+    this._lightboxBlobUrl = null;
+  }
+  if (imgEl && imgEl.dataset && imgEl.dataset.e2eSrc && this._e2eImageBlob) {
+    lbImg.src = '';
+    this._e2eImageBlob(imgEl).then(blob => {
+      if (seq !== this._lightboxSeq) return; // moved on or closed meanwhile
+      this._lightboxBlobUrl = URL.createObjectURL(blob);
+      lbImg.src = this._lightboxBlobUrl;
+    }).catch(() => { if (seq === this._lightboxSeq) lbImg.src = ''; });
+    return;
+  }
+  lbImg.src = imgEl ? imgEl.src : fallbackSrc;
 },
 
 _lightboxNavigate(dir) {
   const imgs = this._getLightboxImages();
-  const lbImg = document.getElementById('lightbox-img');
-  if (!lbImg || imgs.length < 2) return;
-  const curIdx = imgs.indexOf(lbImg.src);
-  if (curIdx < 0) return;
-  const newIdx = curIdx + dir;
+  if (imgs.length < 2 || !(this._lightboxIndex >= 0)) return;
+  const newIdx = this._lightboxIndex + dir;
   if (newIdx < 0 || newIdx >= imgs.length) return;
-  lbImg.src = imgs[newIdx];
+  this._lightboxIndex = newIdx;
+  this._lightboxShow(imgs[newIdx]);
   this._updateLightboxNav();
 },
 
 _updateLightboxNav() {
   const imgs = this._getLightboxImages();
-  const lbImg = document.getElementById('lightbox-img');
   const prevBtn = document.getElementById('lightbox-prev');
   const nextBtn = document.getElementById('lightbox-next');
-  if (!lbImg || !prevBtn || !nextBtn) return;
-  const curIdx = imgs.indexOf(lbImg.src);
+  if (!prevBtn || !nextBtn) return;
+  const curIdx = this._lightboxIndex >= 0 ? this._lightboxIndex : -1;
   prevBtn.disabled = curIdx <= 0;
   nextBtn.disabled = curIdx < 0 || curIdx >= imgs.length - 1;
-  // Hide nav if only one image
-  const showNav = imgs.length > 1;
+  // Hide nav when there is nothing to step through
+  const showNav = imgs.length > 1 && curIdx >= 0;
   prevBtn.style.display = showNav ? '' : 'none';
   nextBtn.style.display = showNav ? '' : 'none';
 },
 
-_openLightbox(src) {
+_openLightbox(src, imgEl = null) {
   const lb = document.getElementById('image-lightbox');
   const img = document.getElementById('lightbox-img');
   if (!lb || !img) return;
-  img.src = src;
+  const imgs = this._getLightboxImages();
+  this._lightboxIndex = imgEl ? imgs.indexOf(imgEl) : imgs.findIndex(i => i.src === src);
+  this._lightboxShow(imgEl || imgs[this._lightboxIndex] || null, src);
   lb.style.display = 'flex';
   this._updateLightboxNav();
 },
@@ -4428,6 +4536,12 @@ _closeLightbox() {
   if (lb) { lb.style.display = 'none'; }
   const img = document.getElementById('lightbox-img');
   if (img) { img.src = ''; }
+  this._lightboxSeq = (this._lightboxSeq || 0) + 1;
+  if (this._lightboxBlobUrl) {
+    try { URL.revokeObjectURL(this._lightboxBlobUrl); } catch { /* already gone */ }
+    this._lightboxBlobUrl = null;
+  }
+  this._lightboxIndex = -1;
   this._hideImageContextMenu();
 },
 
@@ -4469,13 +4583,13 @@ _setupModalExpand() {
       const expandBtn = document.createElement('button');
       expandBtn.type = 'button';
       expandBtn.className = 'modal-expand-btn';
-      expandBtn.title = 'Expand / Restore';
+      expandBtn.title = t('media_runtime.modal.expand_restore');
       expandBtn.textContent = '⛶';
       expandBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         const isMax = modal.classList.toggle('modal-maximized');
         expandBtn.textContent = isMax ? '⊖' : '⛶';
-        expandBtn.title = isMax ? 'Restore size' : 'Expand';
+        expandBtn.title = t(isMax ? 'media_runtime.modal.restore_size' : 'media_runtime.modal.expand');
       });
 
       // When a settings-style header is present, slot the expand button
@@ -4493,7 +4607,7 @@ _setupModalExpand() {
         const closeBtn = document.createElement('button');
         closeBtn.type = 'button';
         closeBtn.className = 'modal-expand-btn';
-        closeBtn.title = 'Close';
+        closeBtn.title = t('modals.common.close');
         closeBtn.textContent = '✕';
         closeBtn.addEventListener('click', (e) => {
           e.stopPropagation();
@@ -4502,7 +4616,7 @@ _setupModalExpand() {
           if (modal.classList.contains('modal-maximized')) {
             modal.classList.remove('modal-maximized');
             expandBtn.textContent = '⛶';
-            expandBtn.title = 'Expand / Restore';
+            expandBtn.title = t('media_runtime.modal.expand_restore');
           }
         });
         group.appendChild(closeBtn);
@@ -4565,8 +4679,8 @@ _eyeIcon(off, size = 14) {
 
 _hiddenImagePlaceholder(u) {
   const abs = this._escapeHtml(this._normalizeImgSrc(u));
-  const label = (typeof t === 'function' && t('app.messages.image_hidden')) || 'Image hidden';
-  const hint = (typeof t === 'function' && t('app.messages.click_to_show')) || 'click to show';
+  const label = t('app.messages.image_hidden');
+  const hint = t('app.messages.click_to_show');
   return `<span class="hidden-image" role="button" tabindex="0" data-hidden-src="${abs}" title="${this._escapeHtml(hint)}">${this._eyeIcon(true)} ${this._escapeHtml(label)} — ${this._escapeHtml(hint)}</span>`;
 },
 
@@ -4583,7 +4697,7 @@ _revealHiddenImage(ph) {
   if (proxied === null) img.setAttribute('data-mp-src', src);
   else img.src = proxied;
   img.className = 'chat-image';
-  img.alt = 'image';
+  img.alt = t('media_runtime.image.alt');
   ph.replaceWith(img);
 },
 
@@ -4593,10 +4707,10 @@ _showImageContextMenu(e, src) {
   menu.id = 'image-context-menu';
   menu.className = 'image-context-menu';
   menu.innerHTML = `
-    <button data-action="save">💾 Save Image</button>
-    <button data-action="copy">📋 Copy Image</button>
-    <button data-action="open">🔗 Open in New Tab</button>
-    <button data-action="hide">🙈 ${this._escapeHtml((typeof t === 'function' && t('app.messages.hide_image')) || 'Hide Image')}</button>
+    <button data-action="save">💾 ${t('media_runtime.image.save')}</button>
+    <button data-action="copy">📋 ${t('media_runtime.image.copy')}</button>
+    <button data-action="open">🔗 ${t('media_runtime.image.open_new_tab')}</button>
+    <button data-action="hide">🙈 ${this._escapeHtml(t('app.messages.hide_image'))}</button>
   `;
   menu.style.left = e.clientX + 'px';
   menu.style.top = e.clientY + 'px';
@@ -4722,7 +4836,7 @@ _showImageContextMenu(e, src) {
             const png = await resolvePngBlob();
             const b64 = await blobToBase64(png);
             const res = await window.havenDesktop.clipboardWriteImage(b64);
-            if (res?.ok) { this._showToast('Image copied to clipboard', 'success'); return; }
+            if (res?.ok) { this._showToast(t('media_runtime.image.copied'), 'success'); return; }
             console.warn('[Haven] IPC clipboard write failed:', res?.reason);
             // Fall through — still try web/desktop text fallbacks.
           } catch (err) {
@@ -4751,7 +4865,7 @@ _showImageContextMenu(e, src) {
           await navigator.clipboard.write([
             new ClipboardItem({ 'image/png': blobPromise })
           ]);
-          this._showToast('Image copied to clipboard', 'success');
+          this._showToast(t('media_runtime.image.copied'), 'success');
           return;
         } catch (err) {
           console.error('[Haven] Web clipboard.write failed:', err);
@@ -4763,15 +4877,13 @@ _showImageContextMenu(e, src) {
             if (window.havenDesktop?.clipboardWriteText) {
               const res = await window.havenDesktop.clipboardWriteText(src);
               if (res?.ok) {
-                this._showToast('Copied image URL (image bytes unavailable)', 'warning');
+                this._showToast(t('media_runtime.image.url_copied_bytes_unavailable'), 'warning');
                 return;
               }
             }
             await navigator.clipboard.writeText(src);
             this._showToast(
-              isDesktop
-                ? 'Copied image URL (could not copy image pixels)'
-                : 'Copied image URL (browser blocked image copy)',
+              t(isDesktop ? 'media_runtime.image.url_copied_desktop' : 'media_runtime.image.url_copied_browser'),
               'warning'
             );
             return;
@@ -4783,10 +4895,8 @@ _showImageContextMenu(e, src) {
             const denied = /denied|NotAllowed/i.test(String(err2?.name) + String(err2?.message));
             this._showToast(
               denied
-                ? (isDesktop
-                    ? 'Could not access clipboard — click inside Haven and try Copy Image again'
-                    : 'Clipboard blocked by the browser — click the page first, then retry')
-                : 'Failed to copy image: ' + (err2?.message || err2),
+                ? t(isDesktop ? 'media_runtime.image.clipboard_denied_desktop' : 'media_runtime.image.clipboard_denied_browser')
+                : t('media_runtime.image.copy_failed', { error: err2?.message || err2 }),
               'error'
             );
           }
@@ -4829,6 +4939,308 @@ _showImageContextMenu(e, src) {
 _hideImageContextMenu() {
   const existing = document.getElementById('image-context-menu');
   if (existing) existing.remove();
+},
+
+
+// ── Lazy media queue ──
+//
+// Chat images, stickers, GIFs and link-preview pictures used to load the
+// moment a message rendered, and every one of the 100 messages kept in the
+// DOM held its decoded bitmap. On a busy channel that was most of the
+// renderer's memory (about 430 MB on the desktop app). Now an image only
+// fetches when it comes within LAZY_NEAR px of the box it scrolls in, a few
+// at a time with the closest first, and it is let go again once it scrolls
+// LAZY_FAR px away or the window has been hidden for a while. After the first
+// load the picture's own size is remembered, and the blank that stands in for
+// it while unloaded has exactly that size, so max-width, the image size
+// setting and the window size all treat the blank like the picture and
+// nothing in the history moves.
+//
+// The whole document is watched, so the main chat, the thread panel, DM
+// pop-outs and search results all take part, and each image is observed
+// relative to the scroll box it lives in (a viewport-rooted observer never
+// sees anything scrolled out of a nested box, margin or not).
+//
+// The first load is the one time a picture changes size. When that picture
+// sits above what the reader is looking at, the content would slide down by
+// its height, and the browser's own scroll anchoring did not catch it in the
+// chat box, so the loader keeps its own anchor: on every scroll it notes the
+// element at the top of the box and where it sits, and right after a picture
+// above it grows, it moves the scroll by exactly the drift.
+
+_lazyBlank() {
+  return 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+},
+
+// A blank with the real picture's own size, for the unloaded state.
+_lazySizedBlank(w, h) {
+  return `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='${w}' height='${h}'/%3E`;
+},
+
+// Wrap an emitted `src="…"` attribute so the loader owns the fetch. Attributes
+// without a src (media-proxy placeholders) pass through untouched, and so does
+// everything when the loader is not running (no IntersectionObserver).
+_lazySrcAttr(attrs) {
+  const s = String(attrs || '');
+  if (!this._lazyMedia) return s;
+  return s.replace(/(^|\s)src="/, `$1src="${this._lazyBlank()}" data-lazy-src="`);
+},
+
+// The URL a lazy image shows or will show, for the lightbox and copy actions.
+_lazyRealSrc(img) {
+  return (img && (img.dataset?.lazySrc || img.getAttribute?.('src'))) || '';
+},
+
+// Distance from the viewport, in px. Zero for anything on screen.
+_lazyDistance(rect, viewportHeight) {
+  const top = rect.top, bottom = rect.bottom;
+  if (bottom >= 0 && top <= viewportHeight) return 0;
+  return top > viewportHeight ? top - viewportHeight : -bottom;
+},
+
+// Which pending images to start now: closest first, never more than
+// maxParallel in flight. Pure, so the test can drive it.
+_lazyPickNext(pending, inFlight, maxParallel) {
+  const room = Math.max(0, maxParallel - inFlight);
+  return [...pending].sort((a, b) => a.distance - b.distance).slice(0, room).map(p => p.img);
+},
+
+_lazySelector() {
+  return 'img.chat-image, img.sticker-img, img.lp-image, img.link-preview-gallery-img';
+},
+
+// The box an element scrolls in, or null when only the page scrolls.
+_lazyScrollerOf(el) {
+  let node = el && el.parentElement;
+  while (node && node !== document.body) {
+    const oy = getComputedStyle(node).overflowY;
+    if (oy === 'auto' || oy === 'scroll') return node;
+    node = node.parentElement;
+  }
+  return null;
+},
+
+_setupLazyMedia() {
+  if (this._lazyMedia || typeof IntersectionObserver !== 'function' || typeof MutationObserver !== 'function') return;
+  const L = this._lazyMedia = {
+    NEAR: 800, FAR: 2400, MAX_PARALLEL: 3, HIDDEN_UNLOAD_MS: 20000,
+    near: new Set(), inFlight: 0, hiddenTimer: null,
+    obs: new Map(), byImg: new WeakMap(), anchors: new Map(), growing: new Set(),
+  };
+  const sel = this._lazySelector();
+  const each = (root, fn) => {
+    if (!root || root.nodeType !== 1) return;
+    if (root.matches(sel)) fn(root);
+    root.querySelectorAll(sel).forEach(fn);
+  };
+  // Fires right after the layout in which a picture took its real size, so
+  // the scroll is corrected before anyone sees the slide.
+  if (typeof ResizeObserver === 'function') {
+    L.ro = new ResizeObserver((entries) => {
+      for (const e of entries) {
+        if (!L.growing.has(e.target)) continue;
+        L.growing.delete(e.target);
+        this._lazyHoldAnchor(this._lazyScrollerOf(e.target));
+      }
+    });
+  }
+  each(document.body, (img) => this._lazyAdopt(img));
+  L.mo = new MutationObserver((muts) => {
+    for (const m of muts) {
+      m.removedNodes.forEach((n) => each(n, (img) => this._lazyForget(img)));
+      m.addedNodes.forEach((n) => each(n, (img) => this._lazyAdopt(img)));
+    }
+  });
+  L.mo.observe(document.body, { childList: true, subtree: true });
+  document.addEventListener('visibilitychange', () => {
+    clearTimeout(L.hiddenTimer);
+    if (document.hidden) L.hiddenTimer = setTimeout(() => this._lazyUnloadAll(), L.HIDDEN_UNLOAD_MS);
+    else this._lazyPump();
+  });
+  window.addEventListener('resize', () => { for (const sc of L.obs.keys()) if (sc) this._lazyRecordAnchor(sc); });
+},
+
+// One near/far observer pair per scroll box, made on first use, plus the
+// scroll listener that keeps that box's anchor fresh.
+_lazyObserversFor(scroller) {
+  const L = this._lazyMedia;
+  let o = L.obs.get(scroller);
+  if (o) return o;
+  o = {
+    near: new IntersectionObserver((entries) => {
+      for (const e of entries) {
+        if (e.isIntersecting) L.near.add(e.target); else L.near.delete(e.target);
+      }
+      this._lazyPump();
+    }, { root: scroller, rootMargin: `${L.NEAR}px 0px` }),
+    far: new IntersectionObserver((entries) => {
+      for (const e of entries) if (!e.isIntersecting) this._lazyUnload(e.target);
+    }, { root: scroller, rootMargin: `${L.FAR}px 0px` }),
+  };
+  L.obs.set(scroller, o);
+  if (scroller) {
+    scroller.addEventListener('scroll', () => this._lazyRecordAnchor(scroller), { passive: true });
+    this._lazyRecordAnchor(scroller);
+  }
+  return o;
+},
+
+// Note the first message at the top edge of a scroll box and where it sits.
+// Sticky bits (a toolbar, a date divider) do not move with the content, so
+// they are passed over for the first thing underneath them.
+_lazyRecordAnchor(sc) {
+  const L = this._lazyMedia;
+  if (!L || !sc) return;
+  const r = sc.getBoundingClientRect();
+  if (r.height <= 0 || r.width <= 0) return;
+  const edge = r.top + 1;
+  let cands = sc.querySelectorAll('[data-msg-id]');
+  if (!cands.length) cands = sc.children;
+  for (const el of cands) {
+    const b = el.getBoundingClientRect();
+    if (b.height <= 0 || b.bottom <= edge) continue;
+    const pos = getComputedStyle(el).position;
+    if (pos === 'sticky' || pos === 'fixed') continue;
+    L.anchors.set(sc, { el, top: b.top });
+    return;
+  }
+  L.anchors.delete(sc);
+},
+
+// Put the anchor back where it was noted, after something above it grew.
+_lazyHoldAnchor(sc) {
+  const L = this._lazyMedia;
+  if (!L || !sc) return;
+  const a = L.anchors.get(sc);
+  if (!a || !a.el.isConnected || !sc.contains(a.el)) return;
+  const now = a.el.getBoundingClientRect().top;
+  const drift = now - a.top;
+  if (Math.abs(drift) < 1) return;
+  // A drift of more than a screen is a stale note, not a picture; start over.
+  if (Math.abs(drift) > sc.clientHeight) { this._lazyRecordAnchor(sc); return; }
+  sc.scrollTop += drift;
+  a.top = a.el.getBoundingClientRect().top;
+},
+
+_lazyAdopt(img) {
+  const L = this._lazyMedia;
+  if (!L) return;
+  if (img.closest('.lightbox, .image-lightbox, [data-no-lazy]')) return;
+  // E2E pictures arrive without a src and get a blob: from the decryptor.
+  if (img.classList.contains('e2e-img-pending') || img.classList.contains('e2e-img-loading') || img.classList.contains('e2e-img-failed')) return;
+  if (!img.dataset.lazy) {
+    const src = img.dataset.lazySrc || img.getAttribute('src') || '';
+    if (!src || src.startsWith('data:') || src.startsWith('blob:')) return;
+    img.dataset.lazySrc = src;
+    img.dataset.lazy = 'pending';
+    img.decoding = 'async';
+    if (img.getAttribute('src') !== this._lazyBlank()) img.src = this._lazyBlank();
+    if (L.ro) L.ro.observe(img);
+  }
+  // Observing an already observed target is a no-op, so a node that moved
+  // between boxes (a message promoted into a pop-out) is simply re-homed.
+  const prev = L.byImg.get(img);
+  const o = this._lazyObserversFor(this._lazyScrollerOf(img));
+  if (prev && prev !== o) { prev.near.unobserve(img); prev.far.unobserve(img); }
+  L.byImg.set(img, o);
+  o.near.observe(img);
+  o.far.observe(img);
+},
+
+// Stop watching an image that left the document, so the observers do not
+// keep detached nodes alive.
+_lazyForget(img) {
+  const L = this._lazyMedia;
+  if (!L) return;
+  const o = L.byImg.get(img);
+  if (o) { o.near.unobserve(img); o.far.unobserve(img); }
+  if (L.ro) L.ro.unobserve(img);
+  L.near.delete(img);
+  L.growing.delete(img);
+},
+
+_lazyPump() {
+  const L = this._lazyMedia;
+  if (!L || document.hidden) return;
+  const vh = window.innerHeight || 800;
+  const pending = [];
+  for (const img of L.near) {
+    if (!img.isConnected) { L.near.delete(img); continue; }
+    if (img.dataset.lazy !== 'pending') continue;
+    pending.push({ img, distance: this._lazyDistance(img.getBoundingClientRect(), vh) });
+  }
+  for (const img of this._lazyPickNext(pending, L.inFlight, L.MAX_PARALLEL)) {
+    const onScreen = this._lazyDistance(img.getBoundingClientRect(), vh) === 0;
+    img.dataset.lazy = 'loading';
+    L.inFlight++;
+    const start = () => this._lazyLoad(img);
+    // Visible images start now; the ones just outside wait for an idle
+    // slice so a fast scroll never fights the fetches for the main thread.
+    onScreen || typeof requestIdleCallback !== 'function' ? start() : requestIdleCallback(start, { timeout: 250 });
+  }
+},
+
+_lazyLoad(img) {
+  const L = this._lazyMedia;
+  const sc = this._lazyScrollerOf(img);
+  const firstLoad = !img.dataset.lazyW;
+  const wasAtBottom = !!sc && (sc.scrollHeight - sc.scrollTop - sc.clientHeight) <= 4;
+  if (sc && firstLoad) {
+    // A fresh anchor for this load; scrolling in the meantime refreshes it.
+    if (!L.anchors.has(sc)) this._lazyRecordAnchor(sc);
+    if (L.ro) L.growing.add(img);
+  }
+  const done = (ok) => {
+    img.onload = img.onerror = null;
+    L.inFlight = Math.max(0, L.inFlight - 1);
+    if (!img.isConnected) { L.growing.delete(img); return this._lazyPump(); }
+    img.dataset.lazy = ok ? 'loaded' : 'error';
+    if (ok && img.naturalWidth && img.naturalHeight) {
+      img.dataset.lazyW = img.naturalWidth;
+      img.dataset.lazyH = img.naturalHeight;
+    }
+    // The resize callback normally beat us here; if it did not (no size
+    // change, or no ResizeObserver), settle now.
+    if (L.growing.delete(img)) this._lazyHoldAnchor(sc);
+    this._lazySettleBottom(sc, wasAtBottom);
+    this._lazyPump();
+  };
+  img.onload = () => done(true);
+  img.onerror = () => done(false);
+  img.src = img.dataset.lazySrc;
+},
+
+// Someone reading the newest messages stays glued to the bottom while a
+// picture there takes its size, the way they did when pictures loaded at
+// once.
+_lazySettleBottom(sc, wasAtBottom) {
+  if (!sc) return;
+  const mainChat = sc.id === 'messages' && typeof this._coupledToBottom === 'boolean';
+  const glued = mainChat ? this._coupledToBottom : wasAtBottom;
+  if (!glued) return;
+  if (mainChat && this._debouncedScrollToBottom) this._debouncedScrollToBottom();
+  else sc.scrollTop = sc.scrollHeight;
+},
+
+_lazyUnload(img) {
+  const L = this._lazyMedia;
+  if (!L || img.dataset.lazy !== 'loaded') return;
+  img.dataset.lazy = 'pending';
+  // A GIF frozen to its first frame for the viewer's animation preference
+  // comes back animated, so let the freeze run again on the next load.
+  if (img.dataset.chatAnimDone) {
+    delete img.dataset.chatAnimDone;
+    delete img.dataset.chatAnimatedSrc;
+    delete img.dataset.chatAnimPlaying;
+  }
+  const w = +img.dataset.lazyW, h = +img.dataset.lazyH;
+  img.src = (w && h) ? this._lazySizedBlank(w, h) : this._lazyBlank();
+},
+
+_lazyUnloadAll() {
+  const L = this._lazyMedia;
+  if (!L) return;
+  document.querySelectorAll('img[data-lazy="loaded"]').forEach((img) => this._lazyUnload(img));
 },
 
 };

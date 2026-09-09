@@ -1,7 +1,16 @@
 'use strict';
 
 const crypto = require('crypto');
+const path = require('node:path');
 const { utcStamp, isInt, isValidUploadPath, VALID_ROLE_PERMS } = require('./helpers');
+const {
+  compatibleThemeFiles,
+  isThemeFilename,
+  readThemeMetadataFile,
+  validatedThemeDefault,
+} = require('../themeMetadata');
+
+const THEMES_DIR = path.join(__dirname, '..', '..', 'themes');
 
 module.exports = function register(socket, ctx) {
   const {
@@ -43,6 +52,16 @@ module.exports = function register(socket, ctx) {
       settings[r.key] = r.value;
     });
 
+    let storedPublishedThemes = [];
+    try { storedPublishedThemes = JSON.parse(settings.published_themes || '[]'); } catch {}
+    const publishedThemes = compatibleThemeFiles(THEMES_DIR, storedPublishedThemes);
+    settings.published_themes = JSON.stringify(publishedThemes);
+    settings.default_theme = validatedThemeDefault(
+      THEMES_DIR,
+      settings.default_theme || '',
+      publishedThemes
+    );
+
     // Not a stored setting: the server name actually in effect once
     // SERVER_NAME is taken into account. Without it the sidebar fell back to
     // "HAVEN" on servers whose name only ever came from the environment,
@@ -76,11 +95,13 @@ module.exports = function register(socket, ctx) {
 
     const key = typeof data.key === 'string' ? data.key.trim() : '';
     const value = typeof data.value === 'string' ? data.value.trim() : '';
+    let publishedThemeFiles = null;
+    let clearDefaultTheme = false;
 
     const allowedKeys = [
       'member_visibility', 'cleanup_enabled', 'cleanup_max_age_days', 'cleanup_max_size_mb',
       'giphy_api_key', 'tenor_api_key', 'server_name', 'server_title', 'server_icon', 'server_banner', 'permission_thresholds',
-      'tunnel_enabled', 'tunnel_provider', 'server_code', 'max_upload_mb', 'max_poll_options',
+      'tunnel_enabled', 'tunnel_provider', 'server_code', 'max_upload_mb', 'max_attachments', 'max_poll_options',
       'max_sound_kb', 'max_emoji_kb', 'max_sticker_kb', 'setup_wizard_complete', 'update_banner_admin_only',
       'default_theme', 'published_themes', 'channel_sort_mode', 'channel_cat_order', 'channel_cat_sort',
       'channel_tag_sorts', 'custom_tos', 'welcome_message', 'vanity_code', 'default_locale',
@@ -181,6 +202,7 @@ module.exports = function register(socket, ctx) {
     if (key === 'cleanup_max_age_days') { const n = parseInt(value); if (isNaN(n) || n < 0 || n > 3650) return; }
     if (key === 'cleanup_max_size_mb') { const n = parseInt(value); if (isNaN(n) || n < 0 || n > 100000) return; }
     if (key === 'max_upload_mb') { const n = parseInt(value); if (isNaN(n) || n < 1 || n > 102400) return; }
+    if (key === 'max_attachments') { const n = parseInt(value); if (isNaN(n) || n < 1 || n > 50) return; } // (#5561)
     if (key === 'max_poll_options') { const n = parseInt(value); if (isNaN(n) || n < 2 || n > 25) return; }
     if (key === 'max_message_chars') { const n = parseInt(value); if (isNaN(n) || n < 200 || n > 100000) return; }
     if (key === 'max_sound_kb') { const n = parseInt(value); if (isNaN(n) || n < 256 || n > 10240) return; }
@@ -238,7 +260,23 @@ module.exports = function register(socket, ctx) {
     if (key === 'default_theme') {
       // Allow built-in names OR "file:name.theme.css" for published custom themes
       const validBuiltin = ['', 'haven', 'discord', 'matrix', 'tron', 'halo', 'lotr', 'cyberpunk', 'nord', 'dracula', 'bloodborne', 'darksouls', 'eldenring', 'ice', 'abyss', 'minecraft', 'ffx', 'zelda', 'fallout', 'scripture', 'chapel', 'gospel', 'midnightpurple', 'crt', 'win95', 'rgb', 'daylight', 'cloudy'];
-      if (!validBuiltin.includes(value) && !/^file:[a-zA-Z0-9_\-. ]+\.theme\.css$/.test(value)) return;
+      if (!validBuiltin.includes(value)) {
+        if (!value.startsWith('file:')) return;
+        const file = value.slice(5);
+        const metadata = readThemeMetadataFile(THEMES_DIR, file);
+        if (!metadata?.compatible) {
+          return socket.emit('error-msg', 'That theme is missing or incompatible with this Haven server.');
+        }
+        try {
+          const row = db.prepare("SELECT value FROM server_settings WHERE key = 'published_themes'").get();
+          const published = row ? JSON.parse(row.value) : [];
+          if (!Array.isArray(published) || !published.includes(file)) {
+            return socket.emit('error-msg', 'Publish that theme before selecting it as the server default.');
+          }
+        } catch {
+          return socket.emit('error-msg', 'Could not verify the published theme list.');
+        }
+      }
     }
     if (key === 'default_locale') {
       const validLocales = ['', 'en', 'fr', 'de', 'es', 'pl', 'ru', 'zh', 'pt'];
@@ -247,8 +285,16 @@ module.exports = function register(socket, ctx) {
     if (key === 'published_themes') {
       try {
         const arr = JSON.parse(value);
-        if (!Array.isArray(arr)) return;
-        if (!arr.every(f => typeof f === 'string' && /^[a-zA-Z0-9_\-. ]+\.theme\.css$/.test(f))) return;
+        if (!Array.isArray(arr) || arr.length > 500) return;
+        if (!arr.every(isThemeFilename) || new Set(arr).size !== arr.length) return;
+        if (!arr.every(file => readThemeMetadataFile(THEMES_DIR, file)?.compatible)) {
+          return socket.emit('error-msg', 'Only installed, compatible themes can be published.');
+        }
+        publishedThemeFiles = arr;
+        const defaultRow = db.prepare("SELECT value FROM server_settings WHERE key = 'default_theme'").get();
+        const currentDefault = defaultRow?.value || '';
+        clearDefaultTheme = currentDefault.startsWith('file:')
+          && !publishedThemeFiles.includes(currentDefault.slice(5));
       } catch { return; }
     }
     if (key === 'custom_tos') { if (value.length > 50000) return; }
@@ -323,13 +369,23 @@ module.exports = function register(socket, ctx) {
     }
 
     try {
-      db.prepare('INSERT OR REPLACE INTO server_settings (key, value) VALUES (?, ?)').run(key, value);
+      const save = () => {
+        db.prepare('INSERT OR REPLACE INTO server_settings (key, value) VALUES (?, ?)').run(key, value);
+        if (clearDefaultTheme) {
+          db.prepare('INSERT OR REPLACE INTO server_settings (key, value) VALUES (?, ?)').run('default_theme', '');
+        }
+      };
+      if (clearDefaultTheme && typeof db.transaction === 'function') db.transaction(save)();
+      else save();
     } catch (err) {
       console.error('Failed to save server setting:', key, err.message);
       return socket.emit('error-msg', 'Failed to save setting — database write error');
     }
 
     io.except('bot-sockets').emit('server-setting-changed', { key, value });
+    if (clearDefaultTheme) {
+      io.except('bot-sockets').emit('server-setting-changed', { key: 'default_theme', value: '' });
+    }
 
     // Clearing the name hands it back to SERVER_NAME, so tell everyone what
     // the name resolves to now rather than leaving the old one on screen
@@ -489,11 +545,11 @@ module.exports = function register(socket, ctx) {
   // Normalise an admin-supplied channel list into a JSON string of positive
   // ints (capped). Returns '' for "all public", or null if the input is invalid.
   const _normaliseInviteChannels = (channels) => {
-    if (channels == null) return '';
+    if (channels == null) return '[]';
     if (!Array.isArray(channels)) return null;
     const ids = [...new Set(channels.map(n => parseInt(n)).filter(n => Number.isInteger(n) && n > 0))];
     if (ids.length > 500) return null;
-    return ids.length ? JSON.stringify(ids) : '';
+    return JSON.stringify(ids);
   };
 
   // hours <= 0 / falsy → never expires (null). Stored as a UTC string that
@@ -509,7 +565,7 @@ module.exports = function register(socket, ctx) {
     const mineOnly = !_canManageAllInvites();
     const rows = db.prepare(`
       SELECT ic.*,
-        (SELECT COUNT(*) FROM invite_code_uses u WHERE u.invite_code_id = ic.id) AS use_count,
+        ic.spent AS use_count,
         (ic.expires_at IS NOT NULL AND ic.expires_at <= CURRENT_TIMESTAMP) AS is_expired
       FROM invite_codes ic
       ${mineOnly ? 'WHERE ic.created_by = ?' : ''}

@@ -15,7 +15,7 @@ async _sendMessage() {
   if (!content && !hasImages && !hasFiles) return;
   if (!this.currentChannel) return;
   if (!this.socket.connected) {
-    this._showToast("Not connected — message not sent", 'error');
+    this._showToast(t('toasts.message_not_connected'), 'error');
     return;
   }
 
@@ -44,7 +44,7 @@ async _sendMessage() {
     // /tts:stop — cancel all speech synthesis immediately
     if (content.trim().toLowerCase() === '/tts:stop') {
       this.notifications?.stopTTS();
-      this._showToast('TTS stopped', 'info');
+      this._showToast(t('toasts.tts_stopped'), 'info');
       input.value = '';
       input.style.height = 'auto';
       this._hideMentionDropdown();
@@ -95,6 +95,34 @@ async _sendMessage() {
         else { this._showGifSlashResults(arg); }
         input.value = '';
         input.style.height = 'auto';
+        this._hideMentionDropdown();
+        this._hideSlashDropdown();
+        return;
+      }
+      if (cmd === 'time') {
+        // No argument opens the picker modal; the toast is kept for input
+        // that was typed but could not be parsed.
+        if (!arg) {
+          input.value = '';
+          input.style.height = 'auto';
+          this._hideMentionDropdown();
+          this._hideSlashDropdown();
+          this._openTimeModal();
+          return;
+        }
+        const token = this._buildTimeToken(arg);
+        if (!token) {
+          this._showToast(t('commands.time_usage'), 'error');
+        } else {
+          // Put the token in the box instead of posting it. The usual
+          // message is "let's meet at <time>", so people need to type
+          // around it, and they get to see what it resolved to first.
+          input.value = token;
+          input.style.height = 'auto';
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+          input.focus();
+          try { input.setSelectionRange(token.length, token.length); } catch { /* not a text input */ }
+        }
         this._hideMentionDropdown();
         this._hideSlashDropdown();
         return;
@@ -162,24 +190,27 @@ async _sendMessage() {
           unflip:    () => `${arg ? arg + ' ' : ''}┬─┬ ノ( ゜-゜ノ)`,
           lenny:     () => `${arg ? arg + ' ' : ''}( ͡° ͜ʖ ͡°)`,
           disapprove:() => `${arg ? arg + ' ' : ''}ಠ_ಠ`,
-          bbs:       () => `🕐 ${displayName} will be back soon`,
+          bbs:       () => t('commands.output.bbs', { name: displayName }),
           boobs:     () => `( . Y . )`,
           butt:      () => `( . )( . )`,
-          brb:       () => `⏳ ${displayName} will be right back`,
-          afk:       () => `💤 ${displayName} is away from keyboard`,
+          brb:       () => t('commands.output.brb', { name: displayName }),
+          afk:       () => t('commands.output.afk', { name: displayName }),
           me:        () => arg ? `_${displayName} ${arg}_` : null,
-          flip:      () => `🪙 ${displayName} flipped a coin: **${Math.random() < 0.5 ? 'Heads' : 'Tails'}**!`,
+          flip:      () => t('commands.output.flip', {
+            name: displayName,
+            side: t(Math.random() < 0.5 ? 'commands.output.heads' : 'commands.output.tails')
+          }),
           roll:      () => {
             const m = (arg || '1d6').match(/^(\d{1,2})?d(\d{1,4})$/i);
-            if (!m) return `🎲 ${displayName} rolled: **${Math.floor(Math.random() * 6) + 1}**`;
+            if (!m) return t('commands.output.roll_simple', { name: displayName, result: Math.floor(Math.random() * 6) + 1 });
             const count = Math.min(parseInt(m[1] || '1'), 20);
             const sides = Math.min(parseInt(m[2]), 1000);
             const rolls = Array.from({ length: count }, () => Math.floor(Math.random() * sides) + 1);
             const total = rolls.reduce((a, b) => a + b, 0);
-            return `🎲 ${displayName} rolled ${count}d${sides}: [${rolls.join(', ')}] = **${total}**`;
+            return t('commands.output.roll', { name: displayName, count, sides, rolls: rolls.join(', '), total });
           },
-          hug:       () => arg ? `🤗 ${displayName} hugs ${arg}` : null,
-          wave:      () => `👋 ${displayName} waves${arg ? ' ' + arg : ''}`,
+          hug:       () => arg ? t('commands.output.hug', { name: displayName, target: arg }) : null,
+          wave:      () => t('commands.output.wave', { name: displayName, text: arg ? ' ' + arg : '' }),
         };
         if (clientSlash[cmd]) {
           const transformed = clientSlash[cmd]();
@@ -212,7 +243,16 @@ async _sendMessage() {
     if (partner) {
       const verdict = this._dmLinkBlocked?.(content);
       if (verdict) {
-        this._showToast(`${verdict.message} It will show as blocked for them.`, 'warning');
+        let message;
+        if (verdict.rule === 'link_obfuscated') {
+          message = t('automod.block.obfuscated');
+        } else if (verdict.rule === 'link_masked') {
+          message = t('automod.block.masked', { host: verdict.host });
+        } else {
+          const reason = t(`automod.reason.${verdict.reasonKey || 'blocked'}`);
+          message = t('automod.block.link', { host: verdict.host, reason });
+        }
+        this._showToast(t('toasts.dm_link_blocked', { message }), 'warning');
       }
     }
 
@@ -288,6 +328,24 @@ _renderMessages(messages, lastReadMessageId) {
   }
   const container = document.getElementById('messages');
   container.innerHTML = '';
+  container.classList.remove('forum-view', 'forum-gallery');
+  this._forumActive = false;
+  if (this._isForumChannel && this._isForumChannel(this.currentChannel)) {
+    this._renderForum(messages);
+    return;
+  }
+  // A forum feed runs newest first: the most recently active topic sits at
+  // the top, where a forum reader expects it. (#144)
+  const forumFeed = this._isForumFeed();
+  // An empty forum explains itself; an empty channel needs no help. (#144)
+  {
+    if (forumFeed && messages.length === 0) {
+      const hint = document.createElement('div');
+      hint.className = 'forum-empty-hint';
+      hint.textContent = t('app.messages.forum_empty_hint');
+      container.appendChild(hint);
+    }
+  }
   // Only render the last MAX_DOM_MESSAGES to prevent OOM on large histories
   const MAX_DOM_MESSAGES = 100;
   const start = messages.length > MAX_DOM_MESSAGES ? messages.length - MAX_DOM_MESSAGES : 0;
@@ -298,13 +356,18 @@ _renderMessages(messages, lastReadMessageId) {
   // Only show it when there are actually unread messages and the last message
   // isn't already "read" (i.e. the user isn't fully caught up).
   let newMsgDividerInserted = false;
-  const showDivider = lastReadMessageId && messages.length > 0
+  const showDivider = !forumFeed && lastReadMessageId && messages.length > 0
     && messages[messages.length - 1].id > lastReadMessageId
     // Don't show divider if ALL messages are unread (nothing before the line)
     && messages[start]?.id <= lastReadMessageId;
 
-  for (let i = start; i < messages.length; i++) {
-    const prevMsg = i > start ? messages[i - 1] : null;
+  // Chat feeds render oldest first; a forum feed renders its most recently
+  // active topic first.
+  const order = [];
+  for (let i = start; i < messages.length; i++) order.push(i);
+  if (forumFeed) order.reverse();
+  for (const i of order) {
+    const prevMsg = (!forumFeed && i > start) ? messages[i - 1] : null;
 
     // Insert "NEW MESSAGES" divider before the first unread message
     if (showDivider && !newMsgDividerInserted && messages[i].id > lastReadMessageId
@@ -312,7 +375,7 @@ _renderMessages(messages, lastReadMessageId) {
       const divider = document.createElement('div');
       divider.className = 'new-messages-divider';
       divider.id = 'new-messages-divider';
-      divider.innerHTML = '<span>NEW MESSAGES</span>';
+      divider.innerHTML = `<span>${t('messages.new_messages')}</span>`;
       frag.appendChild(divider);
       newMsgDividerInserted = true;
     }
@@ -349,6 +412,11 @@ _renderMessages(messages, lastReadMessageId) {
     // Show jump-to-bottom button since we're not at the bottom
     const jumpBtn = document.getElementById('jump-to-bottom');
     if (jumpBtn) jumpBtn.classList.add('visible');
+  } else if (forumFeed) {
+    // The newest topic is at the top, and that is where a forum opens.
+    this._coupledToBottom = false;
+    container.scrollTop = 0;
+    requestAnimationFrame(() => { container.scrollTop = 0; });
   } else {
     this._scrollToBottom(true);
     // Re-scroll after images load, but only if user hasn't scrolled away.
@@ -598,8 +666,68 @@ _appendMessages(messages) {
   requestAnimationFrame(() => { this._suppressCoupleCheck = false; });
 },
 
+// Forum channels (#144): a reply is its topic's newest activity, so the topic
+// moves to the newest end of the list, next to the composer, the way a fresh
+// message would. Topics never compact into each other, so moving the node is
+// safe. A topic that is not loaded (older than the current window) is fetched
+// by reloading the channel, which lands it at the end too.
+/** True while the open channel is a forum, whose feed runs newest first. */
+_isForumFeed() {
+  const ch = this.channels && this.channels.find(c => c.code === this.currentChannel);
+  return !!(ch && ch.is_forum);
+},
+
+/** Older (less recently active) topics arrive oldest first and belong at the
+ *  bottom of a forum feed, the most recent of the batch nearest the top. (#144) */
+_appendOlderForum(messages) {
+  const container = document.getElementById('messages');
+  if (!container) return;
+  this._suppressCoupleCheck = true;
+  const fragment = document.createDocumentFragment();
+  const added = [];
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const el = this._createMessageEl(messages[i], null);
+    fragment.appendChild(el);
+    added.push(el);
+  }
+  container.appendChild(fragment);
+  for (const el of added) {
+    this._fetchLinkPreviews(el);
+    this._setupVideos(el);
+    this._decryptE2EImages(el);
+    this._decryptE2EFiles(el);
+  }
+  requestAnimationFrame(() => { this._suppressCoupleCheck = false; });
+},
+
+_bumpForumTopic(parentId) {
+  const ch = this.channels && this.channels.find(c => c.code === this.currentChannel);
+  if (!ch || !ch.is_forum) return;
+  if (this._forumActive && this._forumBump) { this._forumBump(parentId); return; }
+  const container = document.getElementById('messages');
+  if (!container) return;
+  const el = container.querySelector(`[data-msg-id="${parentId}"]`);
+  if (!el) {
+    if (!this._loadingHistory && !this._historyBefore && !this._historyAfter) {
+      this.socket.emit('get-messages', this._getMessagesParams ? this._getMessagesParams(this.currentChannel) : { code: this.currentChannel });
+    }
+    return;
+  }
+  if (container.firstElementChild === el) return;
+  const nearTop = container.scrollTop < 40;
+  // Newest activity goes on top. (#144)
+  container.insertBefore(el, container.firstElementChild);
+  // The window's least active topic may have just moved; keep the pagination
+  // cursor on whatever is last now.
+  const all = container.querySelectorAll('[data-msg-id]');
+  const lastEl = all[all.length - 1];
+  if (lastEl) this._oldestMsgId = parseInt(lastEl.dataset.msgId);
+  if (nearTop) container.scrollTop = 0;
+},
+
 _appendMessage(message, forceScroll = false) {
   const container = document.getElementById('messages');
+  if (this._forumActive && this._forumInsertTopic) { this._forumInsertTopic(message); return; }
   const lastMsg = container.lastElementChild;
 
   // Track persona name for @PersonaName mention resolution. (#5349)
@@ -625,21 +753,30 @@ _appendMessage(message, forceScroll = false) {
     };
   }
 
+  const forumFeed = this._isForumFeed();
   const wasAtBottom = forceScroll || this._coupledToBottom;
-  const msgEl = this._createMessageEl(message, prevMsg);
-  container.appendChild(msgEl);
+  const nearTop = container.scrollTop < 40;
+  const msgEl = this._createMessageEl(message, forumFeed ? null : prevMsg);
+  if (forumFeed) {
+    // A new topic is the newest activity, so it goes on top. (#144)
+    container.querySelector('.forum-empty-hint')?.remove();
+    container.insertBefore(msgEl, container.firstElementChild);
+  } else {
+    container.appendChild(msgEl);
+  }
 
-  // ── DOM trimming: remove oldest messages when the list grows too large ──
-  // This prevents unbounded memory growth that causes OOM crashes.
+  // ── DOM trimming: drop the least recent messages when the list grows too large ──
+  // This prevents unbounded memory growth that causes OOM crashes. The least
+  // recent end is the top of a chat feed and the bottom of a forum feed.
   const MAX_DOM_MESSAGES = 100;
   const trimmed = container.children.length > MAX_DOM_MESSAGES;
   while (container.children.length > MAX_DOM_MESSAGES) {
-    container.removeChild(container.firstElementChild);
+    container.removeChild(forumFeed ? container.lastElementChild : container.firstElementChild);
   }
   // Keep _oldestMsgId in sync with the DOM after trimming
-  const firstEl = container.firstElementChild;
-  if (firstEl && firstEl.dataset && firstEl.dataset.msgId) {
-    this._oldestMsgId = parseInt(firstEl.dataset.msgId);
+  const edgeEl = forumFeed ? container.lastElementChild : container.firstElementChild;
+  if (edgeEl && edgeEl.dataset && edgeEl.dataset.msgId) {
+    this._oldestMsgId = parseInt(edgeEl.dataset.msgId);
   }
   // Re-enable backward pagination since we trimmed old messages
   if (trimmed) this._noMoreHistory = false;
@@ -653,7 +790,9 @@ _appendMessage(message, forceScroll = false) {
   // here, after decryption and before anyone can click. (#5483)
   if (this._isDmContainer((msgEl))) this._enforceDmLinkPolicy((msgEl));
   this._wireBurnMessages?.(msgEl);
-  if (wasAtBottom) {
+  if (forumFeed) {
+    if (forceScroll || nearTop) container.scrollTop = 0;
+  } else if (wasAtBottom) {
     this._scrollToBottom(true);
   }
   // Scroll after images/gifs load, but only if still coupled to bottom.
@@ -690,12 +829,15 @@ _createMessageEl(msg, prevMsg) {
   const isImage = this._isImageUrl(msg.content);
   const curCh = this.channels && this.channels.find(c => c.code === this.currentChannel);
   const isAnnouncement = curCh && curCh.notification_type === 'announcement';
+  // Forum topics never fold into each other: every topic keeps its own header,
+  // which also keeps _bumpForumTopic's node move safe. (#144)
+  const isForum = !!(curCh && curCh.is_forum);
   // Threads were intentionally removed from DMs entirely. The PiP appenders
   // mark their messages with `_isDmRender`; main-pane DM views are caught by
   // `curCh.is_dm`. Either signal suppresses the thread button + preview so
   // there is no entry point left in any DM surface.
   const isDmContext = !!(msg && msg._isDmRender) || !!(curCh && curCh.is_dm);
-  const isCompact = prevMsg &&
+  const isCompact = prevMsg && !isForum &&
     // A preceding welcome/system line never folds the next message into it.
     (prevMsg.type || 'user') === 'user' &&
     prevMsg.user_id === msg.user_id &&
@@ -718,11 +860,13 @@ _createMessageEl(msg, prevMsg) {
 
   const reactionsHtml = this._renderReactions(msg.id, msg.reactions || []);
   const pollHtml = msg.poll ? this._renderPollWidget(msg.id, msg.poll) : '';
-  const threadHtml = (msg.thread && !isDmContext) ? this._renderThreadPreview(msg.id, msg.thread) : '';
+  const threadHtml = isDmContext ? ''
+    : (msg.thread ? this._renderThreadPreview(msg.id, msg.thread, { forum: isForum })
+      : (isForum ? this._renderThreadPreview(msg.id, { count: 0 }, { forum: true }) : ''));
   const editedHtml = msg.edited_at ? `<span class="edited-tag" title="${t('app.messages.edited_at', { date: new Date(msg.edited_at).toLocaleString() })}">${t('app.messages.edited')}</span>` : '';
   const pinnedTag = msg.pinned ? `<span class="pinned-tag" title="${t('app.messages.pinned')}">📌</span>` : '';
   const archivedTag = msg.is_archived ? `<span class="archived-tag" title="${t('app.messages.protected')}">🛡️</span>` : '';
-  const ephemeralTag = msg.ephemeral ? '<span class="ephemeral-tag" title="Only visible to you">Only visible to you</span>' : '';
+  const ephemeralTag = msg.ephemeral ? `<span class="ephemeral-tag" title="${t('app.messages.only_visible_to_you')}">${t('app.messages.only_visible_to_you')}</span>` : '';
   const e2eTag = msg._e2e ? `<span class="e2e-tag" title="${t('app.messages.e2e_encrypted')}">🔒</span>` : '';
   const needsStatusSlot = !!e2eTag || !!(msg.burn_seconds && msg.burn_seconds > 0);
   const statusSlotHtml = needsStatusSlot ? `<span class="message-inline-status">${e2eTag}</span>` : '';
@@ -747,9 +891,9 @@ _createMessageEl(msg, prevMsg) {
     // Threads are not available in DMs - omit the button entirely so there is
     // no entry point. Server-side `send-thread-message` and `get-thread-messages`
     // also reject DM channels as a defence in depth.
-    ...(isDmContext ? [] : [{ key: 'thread', html: `<button data-action="thread" title="Thread">${iThread}</button>` }]),
+    ...(isDmContext ? [] : [{ key: 'thread', html: `<button data-action="thread" title="${t('msg_toolbar.thread')}">${iThread}</button>` }]),
     // Message links contain the DM channel code - never expose them in DM context.
-    ...(canShareLink ? [{ key: 'copy-link', html: `<button data-action="copy-link" title="${t('msg_toolbar.copy_link') || 'Copy link to message'}">${iLink}</button>` }] : [])
+    ...(canShareLink ? [{ key: 'copy-link', html: `<button data-action="copy-link" title="${t('msg_toolbar.copy_link')}">${iLink}</button>` }] : [])
   ];
   // Gate pin/unpin on the explicit `pin_message` permission so granting it via
   // a role (without making the user a moderator) actually shows the button.
@@ -813,7 +957,7 @@ _createMessageEl(msg, prevMsg) {
   const coreToolbarBtns = visibleActions.map(a => a.html).join('');
   const overflowToolbarBtns = overflowActions.map(a => a.html).join('');
   const moreMenuHtml = overflowActions.length
-    ? `<div class="msg-toolbar-more"><button class="msg-toolbar-more-btn" type="button" aria-label="More actions">${iMore}</button><div class="msg-toolbar-overflow">${overflowToolbarBtns}</div></div>`
+    ? `<div class="msg-toolbar-more"><button class="msg-toolbar-more-btn" type="button" aria-label="${t('users.more_actions')}">${iMore}</button><div class="msg-toolbar-overflow">${overflowToolbarBtns}</div></div>`
     : '';
   const toolbarHtml = `<div class="msg-toolbar"><div class="msg-toolbar-group">${coreToolbarBtns}</div>${moreMenuHtml}</div>`;
   const replyHtml = msg.replyContext ? this._renderReplyBanner(msg.replyContext) : '';
@@ -922,20 +1066,20 @@ _createMessageEl(msg, prevMsg) {
 
   // Persona badge (#86, #5349) — shown when message was sent via a user persona
   const personaBadge = msg.persona_id
-    ? `<span class="persona-msg-badge" title="${this._escapeHtml((window.t && t('app.messages.via_persona', { name: msg.real_username || '' })) || `Sent via ${msg.real_username || 'real account'}`)}">persona</span>`
+    ? `<span class="persona-msg-badge" title="${this._escapeHtml(t('app.messages.via_persona', { name: msg.real_username || t('app.messages.real_account') }))}">${this._escapeHtml(t('app.messages.persona_badge'))}</span>`
     : '';
 
   // Ferry badge: where this message was sent on Discord. The routing prefix
   // is stripped before storage, so without this the channel would show people
   // apparently talking to nobody.
   const ferryBadge = msg.ferry_target
-    ? `<span class="ferry-badge" title="Relayed to Discord">🛶 ${this._escapeHtml(msg.ferry_target === 'dm' ? 'Discord DM' : msg.ferry_target)}</span>`
+    ? `<span class="ferry-badge" title="${this._escapeHtml(t('app.messages.relayed_to_discord'))}">🛶 ${this._escapeHtml(msg.ferry_target === 'dm' ? t('app.messages.discord_dm') : msg.ferry_target)}</span>`
     : '';
 
   // (#5381) Guest badge — shown next to the username when the author is
   // an ephemeral guest account.
   const guestBadge = (onlineUser && onlineUser.isGuest)
-    ? '<span class="guest-msg-badge" style="background:rgba(136,136,136,0.18);color:#aaa;font-size:0.62rem;padding:1px 5px;border-radius:3px;margin-left:4px;letter-spacing:0.04em" title="Temporary guest account">GUEST</span>'
+    ? `<span class="guest-msg-badge" style="background:rgba(136,136,136,0.18);color:#aaa;font-size:0.62rem;padding:1px 5px;border-radius:3px;margin-left:4px;letter-spacing:0.04em" title="${t('app.messages.temporary_guest')}">${t('app.messages.guest_badge')}</span>`
     : '';
 
   const el = document.createElement('div');
@@ -1205,7 +1349,7 @@ _openPinsPiP(pins) {
   const titleEl = document.getElementById('pins-pip-title');
   if (titleEl) {
     const ch = (this.channels || []).find(c => c.code === this.currentChannel);
-    titleEl.textContent = ch ? `# ${ch.name}` : (this.currentChannel || 'Channel');
+    titleEl.textContent = ch ? `# ${ch.name}` : (this.currentChannel || t('status_bar.channel'));
   }
 
   this._renderPinsPiPList(pins || []);
@@ -1413,7 +1557,7 @@ _fallbackToDownload(mediaEl) {
   link.href = url;
   link.download = name;
   link.className = 'file-download-link';
-  link.title = `${name} — cannot be played in this browser`;
+  link.title = t('app.messages.cannot_play_file', { name });
   if (!url.startsWith('blob:')) { link.target = '_blank'; link.rel = 'noopener noreferrer'; }
 
   const parts = [
@@ -1756,18 +1900,18 @@ _applyEmbedSpoiler(embedEl, link) {
   embedEl.classList.add('lp-spoiler');
   const tag = document.createElement('span');
   tag.className = 'spoiler-media-tag';
-  tag.textContent = '\u{1F441}\u{FE0F} ' + ((typeof t === 'function' && t('app.messages.spoiler')) || 'Spoiler');
+  tag.textContent = '\u{1F441}\u{FE0F} ' + t('app.messages.spoiler');
   embedEl.appendChild(tag);
 },
 
 /** Header row markup: site name (accent), size cycle button, collapse caret. */
 _embedHeaderHtml(siteName, collapsed) {
   const size = this._embedSize();
-  const label = size.charAt(0).toUpperCase() + size.slice(1);
+  const label = t(`settings.embed_display.${size}`);
   return '<div class="lp-header">'
-    + `<span class="lp-site">${this._escapeHtml(siteName || 'Link')}</span>`
-    + `<button type="button" class="lp-size" title="Embed size (Settings ▸ Link Previews for Off)">⤢ ${label}</button>`
-    + `<button type="button" class="lp-collapse" title="Collapse">${collapsed ? '▸' : '▾'}</button>`
+    + `<span class="lp-site">${this._escapeHtml(siteName || t('app.messages.link'))}</span>`
+    + `<button type="button" class="lp-size" title="${t('app.messages.embed_size_hint')}">⤢ ${label}</button>`
+    + `<button type="button" class="lp-collapse" title="${t('app.messages.collapse')}">${collapsed ? '▸' : '▾'}</button>`
     + '</div>';
 },
 
@@ -1860,7 +2004,7 @@ _toggleMoveSelect(msgEl) {
     msgEl.classList.remove('move-selected');
   } else {
     if (this._moveSelectedIds.size >= 200) {
-      this._showToast('Maximum 200 messages can be moved at once', 'error');
+      this._showToast(t('modals.move_messages.max_messages', { max: 200 }), 'error');
       return;
     }
     this._moveSelectedIds.add(id);
@@ -1895,7 +2039,7 @@ _showMoveChannelPicker() {
   );
 
   if (channels.length === 0) {
-    list.innerHTML = '<div class="move-msg-empty">No other channels available</div>';
+    list.innerHTML = `<div class="move-msg-empty">${t('modals.move_messages.no_channels')}</div>`;
   } else {
     for (const ch of channels) {
       const item = document.createElement('button');
@@ -1924,7 +2068,7 @@ _executeMoveMessages(toCode, toName) {
     if (resp && resp.error) {
       this._showToast(resp.error, 'error');
     } else if (resp && resp.success) {
-      this._showToast(`Moved ${resp.moved} message${resp.moved === 1 ? '' : 's'} to #${toName}`, 'success');
+      this._showToast(t(resp.moved === 1 ? 'modals.move_messages.moved_one' : 'modals.move_messages.moved_many', { n: resp.moved, name: toName }), 'success');
     }
     this._exitMoveSelectionMode();
   });
@@ -2048,7 +2192,7 @@ _showMessageContextMenu(e, msgEl) {
   // Separator, then the rest of the hover-toolbar actions
   items.push('<hr class="channel-ctx-sep">');
   items.push(`<button class="channel-ctx-item" data-action="react">😀 <span>${t('msg_toolbar.react')}</span></button>`);
-  if (!isDm) items.push(`<button class="channel-ctx-item" data-action="thread">🧵 <span>Thread</span></button>`);
+  if (!isDm) items.push(`<button class="channel-ctx-item" data-action="thread">🧵 <span>${t('msg_toolbar.thread')}</span></button>`);
   if (canShareLink) items.push(`<button class="channel-ctx-item" data-action="copy-link">🔗 <span>${t('msg_toolbar.copy_link')}</span></button>`);
   if (canArchive) {
     items.push(isArchived
@@ -2090,7 +2234,7 @@ _showMessageContextMenu(e, msgEl) {
     } else if (action === 'thread') {
       // Defence in depth — threads never exist in DMs.
       if (this.channels?.find(c => c.code === this.currentChannel)?.is_dm) {
-        this._showToast?.('Threads are not available in DMs', 'info');
+        this._showToast?.(t('thread_list.unavailable_in_dm'), 'info');
       } else {
         this._openThread(msgId);
       }

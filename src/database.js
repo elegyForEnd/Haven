@@ -444,6 +444,7 @@ function initDatabase() {
   insertSetting.run('registration_rate_limit_per_hour', '20');   // the cap value when enabled
   insertSetting.run('max_invite_uses', '0');            // the maximum uses each non-admin/manage-server invite link can accept
   insertSetting.run('max_upload_mb', '25');             // max file upload size in MB
+  insertSetting.run('max_attachments', '10');           // files one message may queue, images and other files together (1-50) (#5561)
   insertSetting.run('max_poll_options', '10');            // max poll answer options (2–25)
   insertSetting.run('max_message_chars', '2000');         // max characters per message (200–100000)
   insertSetting.run('max_sound_kb', '1024');              // max soundboard file size in KB (256–10240)
@@ -1122,6 +1123,13 @@ function initDatabase() {
     { name: 'voice_enabled',     sql: "ALTER TABLE channels ADD COLUMN voice_enabled INTEGER DEFAULT 1" },
     { name: 'text_enabled',      sql: "ALTER TABLE channels ADD COLUMN text_enabled INTEGER DEFAULT 1" },
     { name: 'soundboard_enabled', sql: "ALTER TABLE channels ADD COLUMN soundboard_enabled INTEGER DEFAULT 1" },
+    // Forum mode (#144): each top-level message is a topic, and the channel
+    // lists topics by their latest thread activity instead of creation time.
+    { name: 'is_forum',          sql: "ALTER TABLE channels ADD COLUMN is_forum INTEGER DEFAULT 0" },
+    // Forum parity: a per-channel tag list (JSON array of {name, emoji}) that
+    // topics pick from, and an NSFW flag users can hide behind a preference.
+    { name: 'forum_tags',        sql: "ALTER TABLE channels ADD COLUMN forum_tags TEXT DEFAULT NULL" },
+    { name: 'is_nsfw',           sql: "ALTER TABLE channels ADD COLUMN is_nsfw INTEGER DEFAULT 0" },
     // #5390 — extend the self-destruct timer with a "clear messages only"
     // mode. `auto_delete_mode` is 'delete' (existing behaviour: drop the
     // whole channel) or 'clear' (wipe messages but keep channel, perms,
@@ -1155,6 +1163,53 @@ function initDatabase() {
   } catch {
     db.exec("ALTER TABLE users ADD COLUMN public_key TEXT DEFAULT NULL");
   }
+
+  // ── Migration: E2E signing key (ECDSA P-256) ────────────
+  // Separate from public_key because P-256 cannot both agree and sign. This is
+  // what gives messages a sender the recipient can verify, rather than one the
+  // server asserts. See docs/group-dm-e2e-plan.md.
+  try {
+    db.prepare("SELECT signing_key FROM users LIMIT 0").get();
+  } catch {
+    db.exec("ALTER TABLE users ADD COLUMN signing_key TEXT DEFAULT NULL");
+  }
+
+  // ── Migration: group DM epoch keys ──────────────────────
+  try {
+    db.prepare("SELECT key_epoch FROM channels LIMIT 0").get();
+  } catch {
+    db.exec("ALTER TABLE channels ADD COLUMN key_epoch INTEGER DEFAULT 0");
+  }
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS dm_group_keys (
+      channel_id   INTEGER NOT NULL,
+      epoch        INTEGER NOT NULL,
+      recipient_id INTEGER NOT NULL,
+      wrapped_key  TEXT    NOT NULL,
+      wrapped_by   INTEGER NOT NULL,
+      created_at   TEXT DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (channel_id, epoch, recipient_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_dm_group_keys_lookup
+      ON dm_group_keys (channel_id, recipient_id, epoch);
+  `);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS dm_group_invites (
+      channel_id INTEGER NOT NULL,
+      user_id    INTEGER NOT NULL,
+      invited_by INTEGER NOT NULL,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (channel_id, user_id)
+    );
+    CREATE TABLE IF NOT EXISTS dm_group_rewrap_requests (
+      channel_id    INTEGER NOT NULL,
+      epoch         INTEGER NOT NULL,
+      requester_id  INTEGER NOT NULL,
+      created_at    TEXT DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (channel_id, epoch, requester_id)
+    );
+  `);
 
   // ── Migration: E2E encrypted private key (per-account sync) ──
   try {
@@ -1211,6 +1266,18 @@ function initDatabase() {
     db.prepare("SELECT imported_from FROM messages LIMIT 0").get();
   } catch {
     db.exec("ALTER TABLE messages ADD COLUMN imported_from TEXT DEFAULT NULL");
+  }
+
+  // ── Migration: invite_codes.spent (#5562) ──
+  // Redemptions used to be counted from invite_code_uses, whose rows go with
+  // the user (ON DELETE CASCADE), so deleting an account handed its use back
+  // to a single-use link. `spent` only ever goes up. Seeded from the rows
+  // that still exist, which is the best the old data can offer.
+  try {
+    db.prepare("SELECT spent FROM invite_codes LIMIT 0").get();
+  } catch {
+    db.exec("ALTER TABLE invite_codes ADD COLUMN spent INTEGER DEFAULT 0");
+    db.exec("UPDATE invite_codes SET spent = (SELECT COUNT(*) FROM invite_code_uses u WHERE u.invite_code_id = invite_codes.id)");
   }
 
   // ── Migration: webhook_avatar column on messages (Discord import avatars) ──
@@ -1525,6 +1592,13 @@ function initDatabase() {
     db.exec("ALTER TABLE messages ADD COLUMN thread_id INTEGER DEFAULT NULL REFERENCES messages(id) ON DELETE CASCADE");
   }
   db.exec("CREATE INDEX IF NOT EXISTS idx_messages_thread ON messages(thread_id) WHERE thread_id IS NOT NULL");
+  // ── Migration: forum topics carry a title and tags ──────
+  for (const col of [
+    { name: 'title', sql: "ALTER TABLE messages ADD COLUMN title TEXT DEFAULT NULL" },
+    { name: 'tags',  sql: "ALTER TABLE messages ADD COLUMN tags TEXT DEFAULT NULL" },
+  ]) {
+    try { db.prepare(`SELECT ${col.name} FROM messages LIMIT 0`).get(); } catch { db.exec(col.sql); }
+  }
   db.exec("CREATE INDEX IF NOT EXISTS idx_messages_reply_to ON messages(reply_to) WHERE reply_to IS NOT NULL");
 
   // ── Audit log ───────────────────────────────────────────
@@ -1570,6 +1644,31 @@ function initDatabase() {
       PRIMARY KEY (user_id, provider)
     );
     CREATE INDEX IF NOT EXISTS idx_user_connections_provider ON user_connections(provider);
+  `);
+
+  // ── Listening presence webhook tokens ───────────────────
+  // Per-user bearer secret for the reserved /api/webhooks/listening/:token
+  // path that any music player's plugin or script posts to. Stored (not
+  // derived) so a leaked URL can be revoked: regenerating replaces the row and
+  // the old token stops resolving on the next request. One row per user; the
+  // token is removed when the user turns the feature off, and cascades away
+  // with the account.
+  //
+  // The table used to be named navidrome_tokens, back when this was tied to a
+  // single source. Rename it in place so an existing install keeps its tokens.
+  if (
+    db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='navidrome_tokens'`).get() &&
+    !db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='listening_tokens'`).get()
+  ) {
+    db.exec(`ALTER TABLE navidrome_tokens RENAME TO listening_tokens`);
+  }
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS listening_tokens (
+      user_id    INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      token      TEXT UNIQUE NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_listening_tokens_token ON listening_tokens(token);
   `);
 
   // Full-text search index (messages_fts) — created/reconciled here so it runs

@@ -121,13 +121,14 @@
 </head>
 <body>
   <div class="io-header" id="io-header">
-    <h2>🌐 .io Games</h2>
-    <input type="text" id="io-search" placeholder="Search games...">
+    <h2>🌐 <span data-i18n="games.io.title">.io Games</span></h2>
+    <input type="text" id="io-search" data-i18n-placeholder="games.io.search" placeholder="Search games...">
   </div>
   <div class="io-grid-wrapper" id="io-grid-wrapper">
     <div class="io-grid" id="io-grid"></div>
   </div>
 
+  <script src="/js/i18n.js"></script>
   <script src="/games/io-games.js"></script>
 </body>
 </html>

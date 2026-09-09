@@ -160,6 +160,10 @@ They'll register their own account, then enter the code to join your channel.
 
 Every conversation in Haven happens inside a **channel**. Channels are like rooms — each has a unique 8-character code (e.g. `a3f8b2c1`). To get into a channel, you either create it or enter its code.
 
+### Forum Channels 🗂️
+
+Turn any channel into a forum from **Channel Functions → Forum**, or tick **Forum** when creating it. In a forum channel every message is a topic, and the feed runs newest first: the most recently active topic sits at the top. Replies go in that message's thread, the topic shows its reply count, and a new reply moves the topic back to the top, so old topics resurface instead of sinking. Inside a topic's thread, replies read top to bottom as usual. Every topic carries a **Reply to this topic** button, and the Reply action on a topic opens its thread rather than quoting it as a new topic. Everything else works as usual: topics can be pinned, reacted to, searched, and moved between channels with Move Messages.
+
 ### Creating Sub-Channels
 
 Right-click (or click ⋯) on any channel to create a **sub-channel** beneath it. Sub-channels appear indented under their parent with a `↳` icon. They have their own code and their own message history.
@@ -183,6 +187,8 @@ When creating a sub-channel, check the **🔒 Private** checkbox. Private sub-ch
 - Are invisible to non-members (they won't see it in their channel list)
 
 Use private sub-channels for admin-only discussions, sensitive topics, or small breakout groups within a larger channel.
+
+Any channel can be switched between private and public later from **Channel Functions → Private**. Going private keeps everyone who is already a member. Going public opens the channel to the whole server, history included.
 
 ---
 
@@ -276,6 +282,11 @@ Click **Clear** to remove your avatar and revert to the default initial-letter a
 ### Themes
 
 Haven includes 20+ visual themes. Click the **🎨** button at the bottom of the sidebar to open the theme picker. Themes change colors, fonts, and overall aesthetic. Your choice is saved per browser.
+
+Servers also include the optional **Compact** Theme API v1 file theme. An admin
+can publish it from **Settings → Admin → Branding → Custom Themes**. Compact
+tightens the desktop chrome while preserving the user's separate message-density
+choice under **Settings → Layout**.
 
 ### Effect Overlays
 
@@ -396,6 +407,8 @@ https://YOUR_PUBLIC_IP:3000
 
 > ⚠️ **Certificate Warning:** Your friends' browsers will show a security warning because Haven uses a self-signed certificate. This is normal and expected. Tell them to click **"Advanced"** → **"Proceed to site"**. The connection is still encrypted.
 
+> **No OpenSSL? No problem.** If there is no certificate when Haven starts, it makes one itself, so HTTPS works on a clean Windows install. To run plain HTTP on purpose (behind a reverse proxy that handles TLS, or LAN only), set `FORCE_HTTP=true` in your `.env`. Voice, camera and the mobile app need HTTPS on any address other than localhost.
+
 ---
 
 ## 🔐 Tailscale / WireGuard (No Port Forwarding, No Exposed IP)
@@ -476,6 +489,7 @@ Click [here](https://console.tailscale.com/admin/machines) to access the admin p
 ### Step 5: Sharing the link
 - Once you provide a share link to your friend, he will need to make an account on Tailscale, download the client and connect on his machine. Please note, your friend **does not** need to share anything from his end. Only the person hosting Haven will have to share.
 - Once your friend accepts the link, his device will now be able to reach your shared device.
+- Sharing is one way. Your friend's device will not appear in your admin page, and it does not need to. If he can see your machine on his end, the share worked.
 
 ### Step 6: Usage
 - Once everything is wired up, go to your Tailscale admin page, find your device, and notice the **IP Address** listed next to your device. This is your Tailnet IP address. It is not your actual IP address.
@@ -646,7 +660,7 @@ The `Upgrade` / `Connection` headers are required for Socket.io WebSocket traffi
 
 | Problem | Solution |
 |---------|----------|
-| **"SSL_ERROR_RX_RECORD_TOO_LONG"** | Browser is using `https://` but server is running HTTP. Change URL to `http://localhost:3000`, or install OpenSSL and restart (see Troubleshooting below) |
+| **"SSL_ERROR_RX_RECORD_TOO_LONG"** | Browser is using `https://` but server is running HTTP. Change URL to `http://localhost:3000`, or unset `FORCE_HTTP` and restart (see Troubleshooting below) |
 | Friends get "took too long to respond" | Port forwarding not set up, or firewall blocking |
 | Friends get "connection refused" | Server isn't running — launch `Start Haven.bat` |
 | Can't connect with `https://` | Make sure you're using port 3000, not 443 |
@@ -682,8 +696,10 @@ Haven also ships a couple of extras that are **installed but switched off by def
 
 | File | What it is |
 |------|-----------|
+| `themes/compact.theme.css` | Compact, a dense graphite Theme API v1 theme |
 | `themes/braid.theme.css` | Braid, a dark mint theme |
 | `themes/braid-light.theme.css` | Braid Light |
+| `plugins/CompactLayout.plugin.js` | Reversible desktop layout that pairs with Compact or any other theme |
 | `plugins/BraidLayout.plugin.js` | Braid's layout changes |
 | `plugins/MessageTimestamps.plugin.js` | Adds timestamps to messages |
 
@@ -691,7 +707,18 @@ To make a bundled theme available to everyone, go to **Settings → Admin → �
 
 Custom themes work the same way. Drop a `<name>.theme.css` file into the `themes/` folder, restart, then publish it in the same place. A theme can also be set as the server **default** from that section, which applies to anyone who has not already picked a theme of their own. It is a default rather than a lock, so a user who chooses a different theme keeps their choice.
 
+Enable **Compact Layout** per browser under **Settings → Plugins & Themes**. It
+folds the server rail into the navigation sidebar and docks account and active
+voice controls in that sidebar's footer on desktop. Tablet and mobile keep the
+native Haven layout. Use its `C` footer button or `Ctrl+Alt+C` to switch between
+Compact and classic layout without disabling the plugin.
+Only one structural layout plugin can be active at a time. If Braid Layout is
+already engaged, Compact waits until Braid restores the native layout, and vice
+versa.
+
 Theme authors who need stable CSS variables and semantic layout selectors should use the [Theme API v1 authoring reference](docs/theme-authoring.md) instead of depending on Haven's internal classes and IDs.
+
+If a theme or plugin makes the interface unusable, open `/app.html?haven-safe-mode=1`. Haven will suppress file themes and avoid fetching or evaluating plugins for that tab, allowing the extension choices to be reset from **Settings → Plugins & Themes**.
 
 ### Background images (wallpapers)
 
@@ -793,7 +820,9 @@ Restart Haven, and voice/screen sharing will work across any network.
 > - Forward **UDP**, not just TCP. TURN media is UDP: port 3478 plus the whole `min-port` to `max-port` range. A TCP-only forward lets coturn start up, answer, and relay nothing.
 > - Turn on NAT reflection (also called hairpin NAT) on your router, or people on your own LAN cannot reach `turn:your-domain.com`, because that name resolves to your public IP. pfSense and OPNsense call it NAT Reflection. Some routers do not support it at all, in which case split DNS pointing the name at the LAN address is the way round it.
 >
-> To check the relay by itself, put your TURN URL and credentials into the WebRTC project's Trickle ICE page (https://webrtc.github.io/samples/src/content/peerconnection/trickle-ice/). If it never produces a candidate of type `relay`, the problem is coturn or the firewall in front of it, not Haven.
+> The quickest check is inside Haven: Settings, Voice & Connectivity, **Test voice connectivity**. It runs your STUN and TURN the same way a call does and tells you which one is not answering and why. Bear in mind it runs from your browser, so a server that only answers on your own network passes there and still fails for everyone else.
+>
+> To check the relay outside Haven entirely, put your TURN URL and credentials into the WebRTC project's Trickle ICE page (https://webrtc.github.io/samples/src/content/peerconnection/trickle-ice/). If it never produces a candidate of type `relay`, the problem is coturn or the firewall in front of it, not Haven.
 
 > **coturn is not the only option.** [eturnal](https://eturnal.net/) does the same job and several people running Haven at home have found it easier to get working. The setting that matters is the same one under a different name: `relay_ipv4_addr` in `eturnal.yml` is coturn's `external-ip`, and its autodetection does not reliably find your public address behind NAT, so set it explicitly there too. Everything else on this page (UDP forwarding, the relay port range, NAT reflection) applies unchanged, and Haven does not care which one you point `TURN_URL` at.
 
@@ -861,7 +890,7 @@ Push notifications let you receive alerts when someone messages a channel you're
 
 - **HTTPS is required.** Push notifications use Service Workers, which only work over `https://` or `localhost`. If you're accessing Haven via a LAN IP like `http://192.168.1.x:3000`, push will **not** work.
 - A modern browser (Chrome, Edge, Firefox, or Safari 16+)
-- Haven must be running with SSL certificates (the default if OpenSSL is installed)
+- Haven must be running with SSL certificates (the default; Haven makes its own)
 
 ### How to Enable
 
@@ -898,7 +927,7 @@ Push notifications let you receive alerts when someone messages a channel you're
 | "Permission denied" | You blocked notifications. Reset in browser settings: Settings → Site Settings → Notifications → find Haven → Allow |
 | Toggle is grayed out | Your browser doesn't support push, or you're in incognito/private mode |
 | Notifications not appearing | Check your OS notification settings — Haven notifications may be muted at the system level |
-| Only works on localhost | For LAN/remote access, you need valid SSL. Haven auto-generates self-signed certs if OpenSSL is installed |
+| Only works on localhost | For LAN/remote access, you need valid SSL. Haven generates self-signed certs itself on first start |
 
 ---
 
@@ -1138,6 +1167,7 @@ Type `/` in the message box to see the full list with descriptions. A selection:
 | `/gif <query>` | Search and send a GIF inline |
 | `/play <name or url>` | Search and play music in the voice channel |
 | `/poll [question]` | Open the poll creator |
+| `/time 8pm` | Insert a time everyone reads in their own timezone |
 | `/roll 2d20` | Roll dice (any NdN format) |
 | `/flip` | Flip a coin |
 | `/me does something` | Italic action text |
@@ -1151,6 +1181,45 @@ Type `/` in the message box to see the full list with descriptions. A selection:
 
 Bots can register their own slash commands too, see the developer guide below.
 
+### Timestamps that follow the reader
+
+A message can carry an instant rather than a wall-clock time, so everyone sees
+it on their own clock. Useful when the group is spread across timezones: you say
+one time, nobody does the arithmetic, and nobody turns up an hour late.
+
+`/time 8pm` puts a token like `<t:1780853820:f>` in your message box. Type around
+it and send. Whoever reads it sees their own local time. The clock button next to
+the poll button, or `/time` on its own, opens a picker instead: pick the date and
+time, see every style previewed in your own locale, and insert the one you want.
+
+What `/time` accepts:
+
+| You type | Means |
+|----------|-------|
+| `/time 8pm` or `/time 20:00` | Today at that time, or tomorrow if it already went by |
+| `/time tomorrow 9am` | Tomorrow at nine |
+| `/time 2026-09-06 20:30` | That exact date and time |
+| `/time 2026-09-06` | Just the date |
+| `/time +2h` | Two hours from now (`m`, `h`, `d`, `w` all work) |
+| `/time 1780853820` | A unix timestamp you already have |
+
+Everything you type is read in **your** timezone. Add a style letter to change
+how it looks, for example `/time 8pm R`:
+
+| Letter | Looks like |
+|--------|-----------|
+| `t` | 8:17 PM |
+| `T` | 8:17:00 PM |
+| `d` | 09/06/2026 |
+| `D` | September 6, 2026 |
+| `f` (default) | September 6, 2026 at 8:17 PM |
+| `F` | Sunday, September 6, 2026 at 8:17 PM |
+| `R` | in 3 hours (counts itself down) |
+
+Hovering any of them shows the full date and time spelled out. This is the same
+syntax Discord uses, so tokens survive the Ferry bridge in both directions and
+the timestamp generators people already use work here too.
+
 ### Keyboard shortcuts
 
 | Key | Action |
@@ -1162,6 +1231,15 @@ Bots can register their own slash commands too, see the developer guide below.
 | `/` | Slash command autocomplete |
 | `::` | Persona autocomplete (send as one of your personas) |
 | `Tab` | Accept the highlighted suggestion |
+
+### Mentioning a role
+
+`@Moderators` (or any role name) lights up for everyone who holds that role and
+pings them the way an @mention does. It shows up in the `@` picker for anyone
+with the **Mention everyone** permission, and the server quietly disarms it for
+anyone without, since a role ping reaches a crowd the same way `@everyone` does.
+Anyone who would rather not be pinged by their roles can turn **@Role mentions**
+off under Settings, Sounds.
 
 ---
 
@@ -1184,7 +1262,8 @@ be handed to others through the role system, one permission at a time.
   username, get a temporary account with no password, see only the channels you
   whitelist, cannot DM, and are deleted when they disconnect
 - **Uploads & limits**: max upload size (25 MB by default, raise it as far as your
-  disk allows), max message length, per-member storage usage
+  disk allows), attachments per message (10 by default), max message length,
+  per-member storage usage
 - **Auto-cleanup**: automatic deletion of messages past a chosen age
 - **Server updates**: check for a new Haven release and apply it in place. Haven
   takes a pre-update backup and restarts itself
@@ -1223,20 +1302,20 @@ uploads folder will not run the server out of RAM.
 
 ## 🎞️ GIF Search Setup
 
-Haven's GIF picker needs a free API key from a provider. **Tenor** is the default
-and the one to use: GIPHY stopped issuing keys to new servers, so the GIPHY option
-is only useful if you already have one from before.
+Haven's GIF picker is powered by **GIPHY** and needs a free API key.
 
-1. Go to [console.cloud.google.com](https://console.cloud.google.com/) and create or
-   pick a project
-2. Enable the **Tenor API**, then open **Credentials → Create credentials → API key**
-3. Copy the key
-4. In Haven, as an admin, click the GIF button (🎞️) in the message box and paste the
+1. Go to [developers.giphy.com](https://developers.giphy.com/)
+2. Create an account (or sign in)
+3. Click **Create an App** → choose **API**
+4. Name it anything (e.g. "Haven Chat")
+5. Copy the API key
+6. In Haven, as an admin, click the GIF button (🎞️) in the message box and paste the
    key into the setup prompt
 
 The key is stored server-side, so only admins can see or change it, and every user
-can search GIFs once it is set. No payment is involved; the free tier is far more
-than a private server will use.
+can search GIFs once it is set. No payment is involved; GIPHY's free tier is far more
+than a private server will use. Tenor is no longer supported for new setup; a server
+that already has a Tenor key keeps working until a GIPHY key is set.
 
 ---
 
@@ -1408,14 +1487,12 @@ If your webhook has a `callback_url` and `callback_secret` configured, Haven wil
 ## 🆘 Troubleshooting
 
 **"SSL_ERROR_RX_RECORD_TOO_LONG" or "ERR_SSL_PROTOCOL_ERROR" in browser**
-→ Your browser is trying to connect via `https://` but the server is actually running in HTTP mode. This happens when SSL certificates weren't generated (usually because OpenSSL isn't installed).
+→ Your browser is trying to connect via `https://` but the server is actually running in HTTP mode. Haven makes its own self-signed certificate on first start (no OpenSSL needed), so this now only happens when `FORCE_HTTP=true` is set in your `.env`, or when the certificate files in your data directory are unreadable.
 **Quick fix:** Change the URL in your browser from `https://localhost:3000` to `http://localhost:3000`.
-**Permanent fix:** Install OpenSSL so Haven can generate certificates:
-1. Download from [slproweb.com/products/Win32OpenSSL.html](https://slproweb.com/products/Win32OpenSSL.html) (the "Light" version is fine)
-2. During install, choose **"Copy OpenSSL DLLs to the Windows system directory"**
-3. **Restart your PC** (so OpenSSL is added to PATH)
-4. Delete the `certs` folder in your data directory (`%APPDATA%\Haven\certs`)
-5. Re-launch `Start Haven.bat` — it will regenerate certificates and start in HTTPS mode
+**Permanent fix:**
+1. Open `.env` in your data directory (`%APPDATA%\Haven` on Windows, `~/.haven` elsewhere) and remove `FORCE_HTTP=true` unless a reverse proxy is terminating TLS for you
+2. If the startup log says the certificate could not be loaded, delete the `certs` folder in that data directory
+3. Re-launch `Start Haven.bat` — Haven regenerates the certificate and starts in HTTPS mode
 
 **How to tell if you're running HTTP or HTTPS:**
 Check the server's startup banner in the terminal. If it says `http://localhost:3000` — you're on HTTP. If it says `https://localhost:3000` — you're on HTTPS. The protocol in the URL you use must match.

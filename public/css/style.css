@@ -137,6 +137,10 @@
   font-style: normal;
   font-weight: 400;
   font-display: swap;
+  /* VT323's glyphs sit small in the em box, so CRT read a size smaller than
+     every other theme. Scale the face to Segoe UI's apparent size; layout
+     boxes stay put because font-size is unchanged. */
+  size-adjust: 120%;
   src: url('/fonts/vt323-latin.woff2?v=1') format('woff2');
   unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
@@ -145,6 +149,10 @@
   font-style: normal;
   font-weight: 400;
   font-display: swap;
+  /* VT323's glyphs sit small in the em box, so CRT read a size smaller than
+     every other theme. Scale the face to Segoe UI's apparent size; layout
+     boxes stay put because font-size is unchanged. */
+  size-adjust: 120%;
   src: url('/fonts/vt323-latin-ext.woff2?v=1') format('woff2');
   unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
 }
@@ -153,6 +161,10 @@
   font-style: normal;
   font-weight: 400;
   font-display: swap;
+  /* VT323's glyphs sit small in the em box, so CRT read a size smaller than
+     every other theme. Scale the face to Segoe UI's apparent size; layout
+     boxes stay put because font-size is unchanged. */
+  size-adjust: 120%;
   src: url('/fonts/vt323-vietnamese.woff2?v=1') format('woff2');
   unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
 }
@@ -186,8 +198,11 @@
   --border-light:  #383b5e;
 
   --success:       #43b581;
+  --success-text:  #fff;
   --danger:        #f04747;
+  --danger-text:   #fff;
   --warning:       #faa61a;
+  --warning-text:  #1a1a2e;
 
   --led-on:        #43b581;
   --led-off:       #555;
@@ -3512,7 +3527,7 @@ html.rgb-cycling *::after {
 .btn-sm:disabled:hover { background: var(--bg-tertiary); color: var(--text-secondary); }
 .btn-sm.btn-accent { background: var(--accent); color: var(--accent-text); font-size: 1rem; padding: 0.4375rem 0.625rem; line-height: 1; }
 .btn-sm.btn-accent:hover { background: var(--accent-hover); }
-.btn-sm.btn-danger { background: var(--danger, #e74c3c); color: white; font-size: 1rem; padding: 0.4375rem 0.625rem; line-height: 1; }
+.btn-sm.btn-danger { background: var(--danger, #e74c3c); color: var(--danger-text); font-size: 1rem; padding: 0.4375rem 0.625rem; line-height: 1; }
 .btn-sm.btn-danger:hover { filter: brightness(1.15); }
 
 /* ── Channel List ──────────────────────────────────────── */
@@ -3559,7 +3574,7 @@ html.rgb-cycling *::after {
 
 .channel-badge {
   background: var(--danger);
-  color: white;
+  color: var(--danger-text);
   font-size: 0.625rem;
   font-weight: 700;
   min-width: 1.125rem;
@@ -3923,7 +3938,7 @@ html.rgb-cycling *::after {
 }
 .dm-pip-send {
   background: var(--accent, #5865f2);
-  color: #fff;
+  color: var(--accent-text);
   border: none;
   border-radius: 0.375rem;
   padding: 0 0.625rem;
@@ -4103,7 +4118,7 @@ html.rgb-cycling *::after {
   gap: 0.375rem;
   padding: 0.25rem 0.75rem;
   background: linear-gradient(135deg, var(--accent), var(--accent-hover));
-  color: #fff;
+  color: var(--accent-text);
   font-size: 0.75rem;
   font-weight: 600;
   border-radius: 1.25rem;
@@ -4117,7 +4132,7 @@ html.rgb-cycling *::after {
 .update-banner:hover {
   transform: scale(1.05);
   box-shadow: 0 2px 12px rgba(var(--accent-rgb, 88, 101, 242), 0.4);
-  color: #fff;
+  color: var(--accent-text);
 }
 /* Low disk warning, admins only (#5505). Amber rather than red: uploads are
    refused but the server is still working, so this is a "go clear some space"
@@ -4144,7 +4159,7 @@ html.rgb-cycling *::after {
   padding: 0.0625rem 0.375rem;
   border-radius: 1rem;
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-text);
 }
 
 /* Member search in the right sidebar. Sits above the roster and filters it as
@@ -4289,7 +4304,10 @@ html.rgb-cycling *::after {
   gap: 0.375rem;
   padding: 0.25rem 0.75rem;
   background: linear-gradient(135deg, #3ddc84, #2bb55e);
-  color: #fff;
+  /* The fill is Android green in every theme, so this label can't follow
+     --accent-text. White on it measured 1.78:1 at the light end of the
+     gradient; this ink lands at 9.65:1 there and 6.46:1 at the dark end. */
+  color: #0b1f12;
   font-size: 0.75rem;
   font-weight: 600;
   border-radius: 1.25rem;
@@ -4305,7 +4323,7 @@ html.rgb-cycling *::after {
 .android-beta-banner:hover {
   transform: scale(1.05);
   box-shadow: 0 2px 12px rgba(61, 220, 132, 0.4);
-  color: #fff;
+  color: #0b1f12;
 }
 .android-beta-icon {
   font-size: 0.8125rem;
@@ -4317,7 +4335,7 @@ html.rgb-cycling *::after {
 .android-beta-dismiss {
   background: none;
   border: none;
-  color: rgba(255,255,255,0.7);
+  color: rgba(11,31,18,0.65);
   font-size: 0.9375rem;
   cursor: pointer;
   padding: 0 0 0 0.25rem;
@@ -4325,7 +4343,7 @@ html.rgb-cycling *::after {
   transition: color 0.15s;
 }
 .android-beta-dismiss:hover {
-  color: #fff;
+  color: #0b1f12;
 }
 
 /* ── Android Beta Promo Popup ── */
@@ -4571,7 +4589,7 @@ html.rgb-cycling *::after {
 }
 .desktop-promo-install:hover {
   background: var(--accent-hover);
-  color: #fff;
+  color: var(--accent-text);
   transform: scale(1.03);
 }
 .desktop-promo-later {
@@ -5084,7 +5102,7 @@ select.cfn-select.cfn-input {
   font-size: 0.8125rem; font-weight: 600;
 }
 .border-crop-mode-btn:last-child { border-right: none; }
-.border-crop-mode-btn.active { background: var(--accent, #7aa2ff); color: #fff; }
+.border-crop-mode-btn.active { background: var(--accent, #7aa2ff); color: var(--accent-text); }
 
 /* Shown only for the Crop tool (toggled in _renderBorderEditor). Auto-positions
    the crop handles around the border's opaque pixels; user edits/keeps from there. */
@@ -5333,6 +5351,11 @@ select.cfn-select.cfn-input {
   padding: 0 0.125rem; border-radius: 0.1875rem; transition: color 0.15s, background 0.15s;
 }
 .sb-hotkey-clear:hover { color: var(--danger); background: rgba(240,71,71,0.15); }
+/* Row layouts (list mode, sidebar) get a finger-sized clear target. */
+.soundboard-grid.list-mode .sb-hotkey-clear,
+#sb-sidebar-grid .sb-hotkey-clear { font-size: 1rem; padding: 0 0.375rem; }
+#sb-sidebar-grid .soundboard-btn { justify-content: space-between; }
+#sb-sidebar-grid .sb-hotkey-row, #sb-sidebar-grid .sb-hotkey-set { flex-shrink: 0; margin-left: 0.5rem; }
 .sb-hotkey-set {
   font-size: 0.5625rem; color: var(--accent); cursor: pointer; opacity: 0.7;
   transition: opacity 0.15s;
@@ -5795,39 +5818,29 @@ details.sound-section:not([open]) .sound-section-label::before {
      uses for exactly this reason (#5462). */
   z-index: 100010;
   width: 20rem;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-light);
-  border-radius: var(--radius);
-  box-shadow: 0 8px 32px rgba(0,0,0,0.7);
-  overflow: hidden;
-  animation: profile-popup-in 0.18s ease-out;
-  opacity: 1;
-  backdrop-filter: none;
-}
-
-/* Hover-over variant: translucent tooltip, non-interactive */
-.profile-popup-hover {
+  /* Translucent, theme-aware glass — colours come from CSS vars so it tracks
+     the active theme in both light and dark. */
   background: color-mix(in srgb, var(--bg-secondary) 65%, transparent);
   backdrop-filter: blur(20px) saturate(1.3);
   -webkit-backdrop-filter: blur(20px) saturate(1.3);
-  border-color: color-mix(in srgb, var(--border-light) 50%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border-light) 50%, transparent);
+  border-radius: var(--radius);
   box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+  overflow: hidden;
+  animation: profile-popup-in 0.18s ease-out;
+  opacity: 1;
+}
+
+/* Hover-over variant: a non-interactive preview. The base card is already
+   translucent glass, so this only strips the interactive bits. */
+.profile-popup-hover {
   animation: profile-popup-hover-in 0.15s ease-out;
   transition: opacity 0.2s ease, transform 0.2s ease;
-  pointer-events: none;  /* can't be interacted with — it's a tooltip */
+  pointer-events: none;  /* it is a tooltip, not a card */
 }
-.profile-popup-hover .profile-popup-banner {
-  opacity: 0.7;
-}
-.profile-popup-hover .profile-popup-close {
-  display: none;  /* no X button on tooltip */
-}
-.profile-popup-hover .profile-popup-body {
-  background: transparent;
-}
-.profile-popup-hover .profile-popup-actions {
-  display: none;
-}
+.profile-popup-hover .profile-popup-banner { opacity: 0.7; }
+.profile-popup-hover .profile-popup-close { display: none; }
+.profile-popup-hover .profile-popup-actions { display: none; }
 
 /* Fade-out for hover popups */
 .profile-popup-fading {
@@ -5906,7 +5919,7 @@ details.sound-section:not([open]) .sound-section-label::before {
 
 .profile-popup-body {
   padding: 0.625rem 1rem 1rem;
-  background: var(--bg-secondary);
+  background: transparent;
 }
 
 .profile-popup-names {
@@ -5984,7 +5997,8 @@ details.sound-section:not([open]) .sound-section-label::before {
   letter-spacing: 0.03em;
 }
 
-.profile-popup-roles {
+.profile-popup-roles,
+.user-profile-groups-list {
   display: flex;
   flex-wrap: wrap;
   gap: 0.25rem;
@@ -6000,6 +6014,20 @@ details.sound-section:not([open]) .sound-section-label::before {
   border: 1px solid;
   border-radius: 0.75rem;
   background: var(--bg-secondary);
+}
+
+.user-group-name {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.user-group-channel-info {
+  padding: 0.1rem 0.3rem;
+  border: 1px solid;
+  border-radius: 50%;
+  font-weight: 600;
+  color: var(--text-muted);
 }
 
 .profile-role-dot {
@@ -6042,14 +6070,6 @@ details.sound-section:not([open]) .sound-section-label::before {
   border: 1px solid var(--border-light) !important;
 }
 .profile-edit-btn:hover { background: var(--bg-hover); }
-
-.profile-nick-btn {
-  background: var(--bg-tertiary);
-  color: var(--text-secondary);
-  margin-top: 0.375rem;
-  border: 1px solid var(--border-light) !important;
-}
-.profile-nick-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
 
 .profile-gear-btn {
   background: var(--bg-tertiary);
@@ -6302,7 +6322,7 @@ details.sound-section:not([open]) .sound-section-label::before {
   height: 1rem;
   border-radius: 50%;
   background: var(--danger);
-  color: white;
+  color: var(--danger-text);
   font-size: 0.75rem;
   line-height: 1;
   display: none;
@@ -6761,7 +6781,7 @@ details.sound-section:not([open]) .sound-section-label::before {
 .wizard-indicator.active {
   background: var(--accent, #7c5cfc);
   border-color: var(--accent, #7c5cfc);
-  color: #fff;
+  color: var(--accent-text);
   box-shadow: 0 0 12px var(--accent-glow, rgba(124,92,252,0.4));
 }
 
@@ -6889,7 +6909,7 @@ details.sound-section:not([open]) .sound-section-label::before {
 
 .wizard-btn-small:hover {
   background: var(--accent, #7c5cfc);
-  color: #fff;
+  color: var(--accent-text);
 }
 
 .wizard-steps-list {
@@ -6916,7 +6936,7 @@ details.sound-section:not([open]) .sound-section-label::before {
 
 .wizard-btn-primary {
   background: var(--accent, #7c5cfc);
-  color: #fff;
+  color: var(--accent-text);
   border: none;
   border-radius: 0.375rem;
   padding: 0.625rem 1.5rem;
@@ -7032,10 +7052,16 @@ details.sound-section:not([open]) .sound-section-label::before {
   cursor: pointer;
   transition: opacity 0.15s ease;
   display: block;
-  object-fit: cover;
+  object-fit: contain;
 }
 
 .chat-image:hover { opacity: 0.85; }
+
+/* Lazy media queue: a quiet block while an inline image waits for its turn. */
+img[data-lazy="pending"],
+img[data-lazy="loading"] { background: var(--bg-tertiary); }
+img[data-lazy="loaded"] { animation: lazy-media-in 0.15s ease; }
+@keyframes lazy-media-in { from { opacity: 0.4; } to { opacity: 1; } }
 
 /* E2E encrypted image loading states */
 .e2e-img-pending,
@@ -7052,10 +7078,14 @@ details.sound-section:not([open]) .sound-section-label::before {
 @keyframes e2eImgPulse { 0%,100% { opacity: 0.5; } 50% { opacity: 1; } }
 .e2e-img-failed { opacity: 0.4; border-color: var(--danger, #e74c3c); }
 
-/* Full inline mode (Discord-style, toggled via client setting) */
+/* Full inline mode (toggled via client setting). The largest setting lets an
+   image use the whole message width; the height cap keeps a tall screenshot
+   from taking over the screen, and scales with the window so a wide image can
+   still fill the row on a big display. Both caps together preserve the aspect
+   ratio, so nothing is letterboxed. */
 .image-mode-full .chat-image {
-  max-width: min(25rem, 70%);
-  max-height: 18.75rem;
+  max-width: 100%;
+  max-height: min(50rem, 75vh);
   object-fit: contain;
 }
 
@@ -7088,9 +7118,9 @@ details.sound-section:not([open]) .sound-section-label::before {
 .image-lightbox {
   position: fixed;
   inset: 0;
-  /* Sit above modal overlays (which use z-index: 100001) so opening a
-     lightbox from inside the media gallery actually appears in front. */
-  z-index: 100010;
+  /* Sit above modal overlays (100001) and the profile card (100010) so opening
+     a lightbox from the media gallery or a profile avatar appears in front. */
+  z-index: 100020;
   background: rgba(0, 0, 0, 0.85);
   display: flex;
   align-items: center;
@@ -7263,6 +7293,14 @@ details.sound-section:not([open]) .sound-section-label::before {
 .user-ctx-submenu button:hover {
   background: var(--bg-hover, rgba(124,92,252,0.15));
 }
+/* Section divider + destructive (danger) items, folded in from the old gear menu */
+.user-ctx-divider {
+  height: 0.0625rem;
+  background: var(--border, rgba(255,255,255,0.12));
+  margin: 0.25rem 0.5rem;
+}
+.user-context-menu > button.user-ctx-danger { color: var(--danger); }
+.user-context-menu > button.user-ctx-danger:hover { background: rgba(233,69,96,0.12); color: var(--danger); }
 
 
 /* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
@@ -7405,6 +7443,70 @@ details.sound-section:not([open]) .sound-section-label::before {
 .cr-perm-toggle.perm-admin-only > span {
   color: var(--warning);
   font-weight: 600;
+}
+
+.user-profile-groups-manager {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding-left: 0.5rem;
+  padding-right: 0.5rem;
+  max-height: 20rem;
+  overflow-y: auto;
+}
+
+.group-channel-info-popup {
+  position: fixed;
+  z-index: 100010;
+  min-width: 12rem;
+  max-width: min(20rem, calc(100vw - 1rem));
+  max-height: calc(100vh - 1rem);
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--border-light);
+  border-radius: 0.4rem;
+  background: var(--bg-secondary);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  font-size: 0.8rem;
+}
+
+.group-channel-info-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.4rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.group-channel-info-close {
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 0.15rem;
+}
+
+.group-channel-info-close:hover {
+  color: var(--text-primary);
+}
+
+.group-channel-info-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  max-height: 15rem;
+  overflow-y: auto;
+}
+
+.group-channel-info-row {
+  color: var(--text-secondary);
+}
+
+.group-channel-info-row.sub {
+  padding-left: 0.75rem;
+  color: var(--text-muted);
 }
 
 /* Read-only banner shown when a non-admin opens a role at or above their own
@@ -9166,6 +9268,7 @@ html:not([data-toolbaricons="emoji"]):not([data-toolbaricons="color"]) .tb-icon-
 
 .image-queue-remove:hover {
   background: var(--danger);
+  color: var(--danger-text);
 }
 
 /* Custom dropdown wrapper for native <select> (#5418).
@@ -9308,6 +9411,165 @@ html:not([data-toolbaricons="emoji"]):not([data-toolbaricons="color"]) .tb-icon-
    @MENTION STYLES
    â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 
+/* Forum channels (#144): topics wear their reply button, empty forums explain themselves. */
+.thread-preview-empty { opacity: 0.7; }
+.thread-preview-empty:hover { opacity: 1; }
+.forum-empty-hint {
+  margin: 1.5rem auto;
+  max-width: 34rem;
+  padding: 0.875rem 1rem;
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  line-height: 1.5;
+  text-align: center;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+}
+
+/* <t:...> timestamps. Same instant for everyone, each reader's own clock. */
+.chat-timestamp {
+  background: rgba(124, 92, 252, 0.12);
+  border-radius: 0.25rem;
+  padding: 0 0.1875rem;
+  white-space: nowrap;
+  cursor: help;
+}
+
+/* ── /time timestamp modal ─────────────────────────────── */
+.tsm-header { margin-bottom: 1rem; }
+.tsm-clock {
+  font-size: 2.25rem;
+  line-height: 1;
+  text-align: center;
+  margin-bottom: 0.5rem;
+}
+.tsm-subtitle {
+  text-align: center;
+  margin-bottom: 0.375rem;
+  font-size: 0.9375rem;
+  color: var(--text-primary);
+}
+.tsm-syntax {
+  text-align: center;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  margin-bottom: 0.5rem;
+  line-height: 1.4;
+}
+
+.tsm-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.5rem;
+  margin-bottom: 0.625rem;
+}
+.tsm-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  flex: 1;
+  min-width: 0;
+}
+.tsm-field > label {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-secondary);
+}
+.tsm-input {
+  width: 100%;
+  padding: 0.5rem 0.5rem;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: 0.9375rem;
+  text-align: center;
+  transition: border-color var(--transition);
+}
+.tsm-input:focus { border-color: var(--accent); outline: none; }
+
+/* Calendar button reuses the native date input from search: the <input
+   type="date"> stays visually hidden and its picker is opened on demand. */
+.tsm-cal-field { flex: 0 0 auto; position: relative; }
+.tsm-cal-btn {
+  padding: 0.5rem 0.625rem;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: border-color var(--transition), background var(--transition);
+}
+.tsm-cal-btn:hover { background: var(--bg-hover); border-color: var(--accent); }
+.tsm-cal-native {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+  border: 0;
+  padding: 0;
+}
+
+.tsm-meridiem-field { flex: 0 0 auto; }
+.tsm-meridiem { display: flex; }
+.tsm-mer-btn {
+  padding: 0.5rem 0.5rem;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-left-width: 0;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--transition), color var(--transition);
+}
+.tsm-mer-btn:first-child {
+  border-left-width: 1px;
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+}
+.tsm-mer-btn:last-child { border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
+.tsm-mer-btn:hover { color: var(--text-primary); }
+.tsm-mer-btn.active {
+  background: var(--accent);
+  color: var(--accent-text);
+  border-color: var(--accent);
+}
+
+/* Every style previewed on its own row with a dedicated insert button. */
+.tsm-styles {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  margin-top: 0.875rem;
+}
+.tsm-style-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4375rem 0.625rem;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.tsm-style-preview {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.875rem;
+  color: var(--text-primary);
+}
+/* Let a long "Full Date/Time" wrap in the row instead of overflowing. */
+.tsm-style-preview .chat-timestamp { white-space: normal; }
+.tsm-style-insert { flex: 0 0 auto; }
+.tsm-style-preview:empty::after { content: "—"; color: var(--text-muted); }
+.tsm-style-preview.tsm-invalid { color: var(--text-muted); }
+
 .mention {
   background: rgba(124, 92, 252, 0.15);
   color: var(--accent);
@@ -9316,6 +9578,9 @@ html:not([data-toolbaricons="emoji"]):not([data-toolbaricons="color"]) .tb-icon-
   font-weight: 600;
   cursor: default;
 }
+
+.mention.mention-role { color: var(--role-color, var(--accent)); }
+.mention-role-dot { display: inline-block; width: 0.5rem; height: 0.5rem; border-radius: 50%; margin-right: 0.3rem; vertical-align: middle; }
 
 .mention.mention-self {
   background: rgba(124, 92, 252, 0.3);
@@ -10143,7 +10408,7 @@ html:not([data-toolbaricons="emoji"]):not([data-toolbaricons="color"]) .tb-icon-
 }
 .btn-danger {
   background: var(--danger, #f44);
-  color: #fff;
+  color: var(--danger-text);
   border: none;
   padding: 0.375rem 1.125rem;
   border-radius: var(--radius-sm);
@@ -10708,7 +10973,7 @@ html:not([data-toolbaricons="emoji"]):not([data-toolbaricons="color"]) .tb-icon-
 
 .btn-danger-fill {
   background: var(--danger) !important;
-  color: white !important;
+  color: var(--danger-text) !important;
 }
 
 .btn-danger-fill:hover {
@@ -10751,62 +11016,12 @@ html:not([data-toolbaricons="emoji"]):not([data-toolbaricons="color"]) .tb-icon-
   background: var(--bg-tertiary);
 }
 
-/* ── User gear dropdown menu ─────────────── */
-.user-gear-menu {
-  position: fixed;
-  /* The menu is appended to <body>, so it stacks against the whole page rather
-     than inside the member list it belongs to. At <= 900px the right sidebar
-     becomes a fixed overlay at z-index 100000, which left this menu (10002)
-     rendering behind the very sidebar it was opened from, so clicking the gear
-     looked like it did nothing (#5462). 100010 matches the value already used
-     elsewhere for popups that must clear modal overlays (100001), which also
-     covers opening this menu from the profile popup. */
-  z-index: 100010;
-  min-width: 10rem;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  box-shadow: 0 6px 24px rgba(0,0,0,0.5);
-  padding: 0.25rem;
-  display: flex;
-  flex-direction: column;
-  animation: gear-menu-in 0.12s ease-out;
-}
-@keyframes gear-menu-in {
-  from { opacity: 0; transform: translateY(-4px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-.gear-menu-item {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.4375rem 0.625rem;
-  font-size: 0.8125rem;
-  color: var(--text-secondary);
-  background: none;
-  border: none;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  white-space: nowrap;
-  transition: background 0.1s, color 0.1s;
-  width: 100%;
-  text-align: left;
-}
-.gear-menu-item:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
-}
-.gear-menu-danger { color: var(--danger); }
-.gear-menu-danger:hover { background: rgba(233,69,96,0.12); color: var(--danger); }
-.gear-menu-divider { height: 0.0625rem; background: var(--border); margin: 0.25rem 0.125rem; }
-
 /* ── Context menu scroll fallback (#5286) ──
    Floating menus (right-click, gear, channel, image, etc.) get capped to the
    viewport with overflow-y: auto so long menus scroll instead of clipping
    or running off-screen. The 16px margin keeps a little breathing room.
    .user-context-menu is omitted because its hover submenu would get clipped
    by overflow:auto; it stays short on its own. */
-.user-gear-menu,
 .channel-ctx-menu,
 .image-context-menu,
 .channel-functions-panel {
@@ -11176,6 +11391,8 @@ html:not([data-toolbaricons="emoji"]):not([data-toolbaricons="color"]) .tb-icon-
   border-bottom: 1px solid var(--border);
 }
 .settings-section:last-child { border-bottom: none; }
+
+.settings-subsection { margin-top: 0.6rem; }
 
 /* ── Admin section divider ── */
 .admin-section-divider {
@@ -11556,7 +11773,7 @@ html:not([data-toolbaricons="emoji"]):not([data-toolbaricons="color"]) .tb-icon-
   padding: 0.0625rem 0.3125rem;
   border-radius: 0.1875rem;
   background: var(--danger);
-  color: #fff;
+  color: var(--danger-text);
   font-weight: 600;
 }
 
@@ -11820,7 +12037,7 @@ html:not([data-toolbaricons="emoji"]):not([data-toolbaricons="color"]) .tb-icon-
 .btn-unban {
   flex-shrink: 0;
   background: var(--success) !important;
-  color: white !important;
+  color: var(--success-text) !important;
 }
 
 .btn-unban:hover { opacity: 0.85; }
@@ -11835,7 +12052,7 @@ html:not([data-toolbaricons="emoji"]):not([data-toolbaricons="color"]) .tb-icon-
 .btn-delete-user {
   flex-shrink: 0;
   background: var(--danger) !important;
-  color: white !important;
+  color: var(--danger-text) !important;
   font-size: 0.75rem;
   padding: 0.25rem 0.5rem !important;
 }
@@ -13253,7 +13470,7 @@ body.is-ios.ios-keyboard-open .message-input-area {
   padding: 0.3125rem 0.625rem; border-radius: 0.25rem; text-align: left; font-size: 0.75rem; white-space: nowrap;
 }
 .stream-layout-opt:hover { background: rgba(255,255,255,0.08); color: #fff; }
-.stream-layout-opt.active { background: var(--accent, #7c5cfc); color: #fff; }
+.stream-layout-opt.active { background: var(--accent, #7c5cfc); color: var(--accent-text); }
 
 .screen-share-tile {
   position: relative;
@@ -13676,6 +13893,10 @@ video:-webkit-full-screen {
   overflow-y: auto;
   flex: 1;
   min-height: 5rem;
+  /* It also carries .soundboard-grid for the list-view styles; that class caps
+     height and pads the Sound Manager grid, neither of which fits the pop-out. */
+  max-height: none;
+  padding: 0;
 }
 @media (max-width: 768px) {
   .sb-pip-overlay {
@@ -13896,7 +14117,7 @@ video:-webkit-full-screen {
   padding: 0.125rem 0.5rem !important;
   font-size: 0.6875rem;
   background: var(--danger) !important;
-  color: #fff !important;
+  color: var(--danger-text) !important;
   border-radius: var(--radius-sm);
   cursor: pointer;
   min-height: 0;
@@ -14939,6 +15160,74 @@ ul.chat-list { list-style-type: disc; }
   white-space: nowrap;
 }
 
+/* Titles/artists past 30 chars scroll instead of clipping, so everyone sees the
+   whole text at the same constant pace. Two identical copies scroll as one, and
+   translating by half the track lands copy two exactly where copy one began for
+   a seamless loop. Duration is set inline per length to keep the speed uniform. */
+.pa-marquee {
+  display: block;
+  overflow: hidden;
+}
+.pa-marquee-track {
+  display: inline-flex;
+  width: max-content;
+  animation: pa-marquee-scroll var(--pa-marquee-dur, 12s) linear infinite;
+}
+.pa-marquee-seg {
+  white-space: nowrap;
+  padding-right: 2rem;
+}
+@keyframes pa-marquee-scroll {
+  to { transform: translateX(-50%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pa-marquee-track { animation: none; }
+}
+
+/* Playback progress: a line with a dot playhead, plus elapsed/total times. */
+.profile-activity-progress {
+  display: block;
+  margin-top: 0.3125rem;
+}
+.pap-track {
+  position: relative;
+  display: block;
+  height: 0.25rem;
+  border-radius: 0.125rem;
+  background: var(--bg-tertiary);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+.pap-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 100%;
+  border-radius: 0.125rem;
+  background: var(--accent);
+}
+.pap-dot {
+  position: absolute;
+  top: 50%;
+  width: 0.5rem;
+  height: 0.5rem;
+  margin-left: -0.25rem;
+  border-radius: 50%;
+  background: var(--accent);
+  transform: translateY(-50%);
+}
+.pap-times {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 0.1875rem;
+  font-size: 0.625rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.profile-activity-progress.is-paused .pap-fill,
+.profile-activity-progress.is-paused .pap-dot {
+  opacity: 0.5;
+}
+
 /* Settings → Connections */
 .connection-row {
   display: flex;
@@ -15016,7 +15305,7 @@ ul.chat-list { list-style-type: disc; }
 }
 .connection-setup-actions .btn-sm.btn-accent {
   border-color: var(--accent);
-  color: #fff;
+  color: var(--accent-text);
 }
 .connection-block { margin-bottom: 0.5rem; }
 .connection-block .connection-row { margin-bottom: 0; }
@@ -15634,7 +15923,7 @@ ul.chat-list { list-style-type: disc; }
   font-size: 0.65rem;
   font-weight: 700;
   background: var(--accent, #7289da);
-  color: #fff;
+  color: var(--accent-text);
   padding: 0.0625rem 0.3125rem;
   border-radius: 0.5rem;
   flex-shrink: 0;
@@ -15850,6 +16139,12 @@ ul.chat-list { list-style-type: disc; }
   max-height: 100%;
   overflow-y: auto;
 }
+.role-sidebar-level {
+  font-size: 0.7em;
+  font-style: italic;
+  opacity: 0.6;
+  margin-left: auto;
+}
 .role-sidebar-item {
   display: flex;
   align-items: center;
@@ -15865,13 +16160,19 @@ ul.chat-list { list-style-type: disc; }
 }
 .role-sidebar-item.active {
   background: var(--accent, #5865f2);
-  color: #fff;
+  color: var(--accent-text);
 }
 /* Separates the synthetic Admin role from the real roles in the sidebar. */
 .role-sidebar-divider {
   height: 1px;
   margin: 0.375rem 0.25rem;
   background: var(--border, rgba(255,255,255,0.12));
+}
+.role-sidebar-section-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  font-style: italic;
+  opacity: 0.65;
 }
 .role-color-dot {
   width: 0.625rem;
@@ -16159,7 +16460,8 @@ ul.chat-list { list-style-type: disc; }
    LAYOUT DENSITY PICKER
    â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 
-.density-picker {
+.density-picker,
+.channel-scroll-picker {
   display: flex;
   gap: 0.5rem;
   padding: 0.5rem 0;
@@ -16419,6 +16721,13 @@ ul.chat-list { list-style-type: disc; }
   min-height: 0;
   flex: 1;
 }
+/* Expand scroll area to include scrolling join/create channel sections when screen height is short*/
+@media (max-height: 550px) {
+  .sidebar-mod-container {
+    overflow: auto;
+    display: block;
+  }
+}
 
 .mod-mode-active .mod-draggable {
   cursor: move;
@@ -16612,9 +16921,22 @@ ul.chat-list { list-style-type: disc; }
 .sidebar-split {
   flex: 1;
   min-height: 0;
-  display: flex;
   flex-direction: column;
+}
+[data-channel-scroll="separate"] .sidebar-split {
+  display: flex;
   overflow: hidden;
+}
+[data-channel-scroll="combined"] .sidebar-split {
+  display: block;
+  overflow: auto;
+}
+/* Short screen: use the expanded scrolling behavior regardless of mode */
+@media (max-height: 550px) {
+  [data-channel-scroll="separate"] .sidebar-split {
+    display: block;
+    overflow: auto;
+  }
 }
 
 /* Channels pane (top) */
@@ -16660,7 +16982,6 @@ ul.chat-list { list-style-type: disc; }
 /* Drag handle between channels & DMs — blends with natural section border */
 .sidebar-split-handle {
   height: 0;
-  cursor: row-resize;
   position: relative;
   flex-shrink: 0;
   z-index: 5;
@@ -16669,6 +16990,18 @@ ul.chat-list { list-style-type: disc; }
   padding: 0.25rem 0;
   box-sizing: content-box;
   transition: border-color 0.15s;
+}
+[data-channel-scroll="separate"] .sidebar-split-handle {
+  cursor: row-resize;
+}
+[data-channel-scroll="combined"] .sidebar-split-handle {
+  cursor: auto;
+}
+/* Short screen: use the expanded scrolling behavior regardless of mode */
+@media (max-height: 550px) {
+  [data-channel-scroll="separate"] .sidebar-split-handle {
+    cursor: auto;
+  }
 }
 
 /* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
@@ -17191,6 +17524,10 @@ ul.chat-list { list-style-type: disc; }
 .audit-log-load-more {
   display: block;
   margin: 0.5rem auto;
+}
+
+.audit-detail-pair {
+  margin-right: 0.5em;
 }
 
 /* ── Channel Roles Modal ─────────────────────── */
@@ -18792,7 +19129,7 @@ ul.chat-list { list-style-type: disc; }
 .qs-badge {
   margin-left: auto;
   background: var(--danger, #ed4245);
-  color: #fff;
+  color: var(--danger-text);
   font-size: 0.6875rem;
   font-weight: 700;
   padding: 0.0625rem 0.375rem;
@@ -19226,7 +19563,8 @@ ul.chat-list { list-style-type: disc; }
 }
 
 /* -- Personas (#86, #5349) ----------------------------- */
-.personas-section-header {
+.personas-section-header,
+.groups-section-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -19349,11 +19687,11 @@ ul.chat-list { list-style-type: disc; }
   height: 1.3rem;
   border-radius: 50%;
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-text);
   font-size: .72rem;
   flex: 0 0 auto;
 }
-.ferry-step-done .ferry-step-num { background: var(--success, #2ecc71); }
+.ferry-step-done .ferry-step-num { background: var(--success, #2ecc71); color: var(--success-text); }
 
 .ferry-status-ok  { color: var(--success, #2ecc71); font-size: .78rem; margin: 8px 0 0; }
 .ferry-status-bad { color: var(--danger, #e74c3c);  font-size: .78rem; margin: 8px 0 0; }
@@ -19448,3 +19786,59 @@ ul.chat-list { list-style-type: disc; }
   margin-right: 6px;
   vertical-align: middle;
 }
+
+/* ── Forum channels: topic cards, list or gallery, toolbar ─────────────── */
+.messages.forum-view { display: flex; flex-direction: column; padding: 0.75rem 1rem 1.5rem; }
+.forum-toolbar { position: sticky; top: 0; z-index: 3; background: var(--bg-primary); padding: 0.25rem 0 0.5rem; margin-bottom: 0.5rem; border-bottom: 1px solid var(--border); }
+.forum-toolbar-row { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.forum-toolbar-row + .forum-toolbar-row { margin-top: 0.5rem; }
+.forum-sort-view { margin-left: auto; display: flex; align-items: center; gap: 0.5rem; }
+.forum-select { background: var(--bg-input); color: var(--text-primary); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.3rem 0.5rem; font-size: 0.8rem; }
+.forum-select-small { padding: 0.2rem 0.4rem; font-size: 0.72rem; }
+.forum-view-toggle { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.forum-view-btn { background: transparent; border: none; color: var(--text-muted); padding: 0.3rem 0.6rem; cursor: pointer; font-size: 0.9rem; }
+.forum-view-btn.active { background: var(--accent); color: var(--accent-text, #fff); }
+.forum-tag-chip { background: var(--bg-tertiary); color: var(--text-secondary); border: 1px solid var(--border); border-radius: 999px; padding: 0.2rem 0.7rem; font-size: 0.75rem; cursor: pointer; }
+.forum-tag-chip:hover { color: var(--text-primary); border-color: var(--accent); }
+.forum-tag-chip.active { background: var(--accent); color: var(--accent-text, #fff); border-color: var(--accent); }
+.forum-tag-clear { background: none; border: none; color: var(--text-link); font-size: 0.75rem; cursor: pointer; }
+.forum-new-post { white-space: nowrap; }
+.forum-topics { display: flex; flex-direction: column; gap: 0.5rem; }
+.forum-topic { display: flex; gap: 0.75rem; background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.75rem; cursor: pointer; transition: border-color 0.15s, transform 0.15s; }
+.forum-topic:hover { border-color: var(--accent); transform: translateY(-1px); }
+.forum-topic-pinned { border-color: var(--accent-dim, var(--accent)); }
+.forum-topic-thumb { flex: 0 0 5.5rem; width: 5.5rem; height: 5.5rem; border-radius: calc(var(--radius) - 2px); overflow: hidden; background: var(--bg-input); display: flex; align-items: center; justify-content: center; }
+.forum-topic-thumb img.forum-thumb-img { width: 100%; height: 100%; object-fit: cover; max-width: none; max-height: none; min-width: 0; min-height: 0; margin: 0; }
+.forum-topic-thumb-empty { background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 35%, var(--bg-card)), var(--bg-card)); color: var(--accent-text); font-size: 1.6rem; }
+.forum-topic-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.2rem; }
+.forum-topic-tags { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+.forum-topic-tags:empty { display: none; }
+.forum-tag { background: var(--bg-tertiary); color: var(--text-secondary); border-radius: 999px; padding: 0.1rem 0.55rem; font-size: 0.68rem; }
+.forum-tag-pinned { color: var(--accent); }
+.forum-topic-title { font-weight: 700; font-size: 1rem; color: var(--text-primary); line-height: 1.3; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.forum-topic-snippet { color: var(--text-secondary); font-size: 0.82rem; line-height: 1.35; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.forum-topic-snippet:empty { display: none; }
+.forum-topic-meta { display: flex; align-items: center; gap: 0.75rem; font-size: 0.75rem; color: var(--text-muted); margin-top: auto; padding-top: 0.25rem; }
+.forum-topic-author { color: var(--text-secondary); font-weight: 600; }
+.forum-topic-replies { color: var(--accent); }
+.forum-topic-edit { margin-left: auto; background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 0.85rem; opacity: 0.6; }
+.forum-topic-edit:hover { opacity: 1; color: var(--accent); }
+.forum-load-more { align-self: center; margin-top: 0.75rem; }
+/* Gallery: a grid of true squares, the image fills the tile, the words sit on a scrim. */
+.messages.forum-gallery .forum-topics { display: grid; grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr)); gap: 0.6rem; }
+.messages.forum-gallery .forum-topic { position: relative; display: block; aspect-ratio: 1 / 1; padding: 0; overflow: hidden; }
+.messages.forum-gallery .forum-topic-thumb { position: absolute; inset: 0; width: auto; height: auto; border-radius: 0; font-size: 2.4rem; }
+.messages.forum-gallery .forum-topic-body { position: absolute; left: 0; right: 0; bottom: 0; padding: 1.25rem 0.6rem 0.5rem; gap: 0.15rem; background: linear-gradient(to top, rgba(8,8,14,0.88), rgba(8,8,14,0.55) 60%, transparent); color: #fff; }
+.messages.forum-gallery .forum-topic-title { color: #fff; font-size: 0.9rem; }
+.messages.forum-gallery .forum-topic-snippet { display: none; }
+.messages.forum-gallery .forum-topic-author, .messages.forum-gallery .forum-topic-meta { color: rgba(235,235,245,0.85); }
+.messages.forum-gallery .forum-topic-tags { position: absolute; top: 0.4rem; left: 0.4rem; right: 0.4rem; }
+.messages.forum-gallery .forum-tag { background: rgba(8,8,14,0.65); color: #fff; }
+.forum-post-modal { max-width: 34rem; width: 94%; }
+.forum-field { display: flex; flex-direction: column; gap: 0.3rem; margin-bottom: 0.75rem; font-size: 0.85rem; color: var(--text-secondary); }
+.forum-field input, .forum-field textarea { background: var(--bg-input); color: var(--text-primary); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.5rem 0.6rem; font: inherit; }
+.forum-tag-picker { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+/* Settings search */
+.settings-search-wrap { padding: 0.5rem 0.75rem 0.25rem; }
+.settings-search { width: 100%; background: var(--bg-input); color: var(--text-primary); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.4rem 0.6rem; font-size: 0.82rem; }
+.settings-search-hidden { display: none !important; }

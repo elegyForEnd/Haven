@@ -234,9 +234,16 @@ let _fxSpeedMult = 1.0;
 
 // Human-readable labels for effect speed sliders
 const _FX_LABELS = {
-  crt: '📺 CRT', ffx: '⚔️ Water', ice: '🧊 Frost', nord: '❄ Snow',
-  darksouls: '🔥 Embers', bloodborne: '🩸 Blood', matrix: 'Ⅿ Matrix',
-  cyberpunk: '⚡ Glitch', lotr: '⚜ Candle', eldenring: '✨ Golden Grace'
+  crt: () => `📺 ${t('theme_effects.crt')}`,
+  ffx: () => `⚔️ ${t('theme_effects.water')}`,
+  ice: () => `🧊 ${t('theme_effects.frost')}`,
+  nord: () => `❄ ${t('theme_effects.snow')}`,
+  darksouls: () => `🔥 ${t('theme_effects.embers')}`,
+  bloodborne: () => `🩸 ${t('theme_effects.blood')}`,
+  matrix: () => `Ⅿ ${t('theme_effects.matrix')}`,
+  cyberpunk: () => `⚡ ${t('theme_effects.glitch')}`,
+  lotr: () => `⚜ ${t('theme_effects.candle')}`,
+  eldenring: () => `✨ ${t('theme_effects.golden_grace')}`
 };
 
 // Get speed for a specific effect (per-effect → global fallback → 1.0)
@@ -280,7 +287,7 @@ function _rebuildEffectSpeedSliders() {
   if (active.length === 0) return;
 
   active.forEach(fx => {
-    const label = _FX_LABELS[fx] || fx;
+    const label = _FX_LABELS[fx]?.() || fx;
     const currentSpeed = _fxSpeedMap[fx] !== undefined ? _fxSpeedMap[fx] : 1.0;
     const sliderVal = Math.round(currentSpeed * 100);
 
@@ -1279,6 +1286,27 @@ function _updateEffectButtons(container, mode) {
   });
 }
 
+// Effects used to live only in localStorage. The desktop app can land on a
+// different storage origin between launches (http vs https autodetect), and
+// hardened browsers wipe local storage, so the pick came back as the theme's
+// defaults while the theme itself survived through the server. Mirror the
+// choice to user_preferences the way theme does.
+function _persistEffects(raw) {
+  localStorage.setItem('haven_effects', raw);
+  if (typeof socket !== 'undefined' && socket && socket.connected) {
+    socket.emit('set-preference', { key: 'effects', value: raw });
+  }
+}
+
+// Called from the socket 'preferences' handler before the theme is applied,
+// so the theme pass picks the restored effects up in the same go.
+function syncEffectsFromServer(raw) {
+  if (typeof raw !== 'string' || !raw) return;
+  try { localStorage.setItem('haven_effects', raw); } catch (e) {}
+  const container = document.getElementById('effect-selector');
+  if (container) _updateEffectButtons(container, _getStoredEffectMode());
+}
+
 function initEffectSelector() {
   const container = document.getElementById('effect-selector');
   if (!container) return;
@@ -1292,11 +1320,11 @@ function initEffectSelector() {
       const fx = btn.dataset.effect;
 
       if (fx === 'auto') {
-        localStorage.setItem('haven_effects', 'auto');
+        _persistEffects('auto');
         applyEffects('auto');
         _updateEffectButtons(container, 'auto');
       } else if (fx === 'none') {
-        localStorage.setItem('haven_effects', 'none');
+        _persistEffects('none');
         applyEffects('none');
         _updateEffectButtons(container, 'none');
       } else {
@@ -1310,11 +1338,11 @@ function initEffectSelector() {
         }
 
         if (current.length === 0) {
-          localStorage.setItem('haven_effects', 'none');
+          _persistEffects('none');
           applyEffects('none');
           _updateEffectButtons(container, 'none');
         } else {
-          localStorage.setItem('haven_effects', JSON.stringify(current));
+          _persistEffects(JSON.stringify(current));
           applyEffects(current);
           _updateEffectButtons(container, current);
         }
@@ -1462,11 +1490,28 @@ function initCustomThemeEditor() {
 // ────────────────────────────────────────────────────────
 // Main theme-switcher init (shared on all pages)
 // ────────────────────────────────────────────────────────
+function _isHavenSafeMode() {
+  if (document.documentElement.hasAttribute('data-haven-safe-mode')) return true;
+  return window.HavenThemeCompat?.isSafeMode?.(window.location) === true;
+}
+
+function _isThemeRecoveryPending() {
+  if (window.HavenThemeCompat?.isResetPending?.() === true) return true;
+  try { return sessionStorage.getItem('haven_customizations_reset_pending') === '1'; } catch { return false; }
+}
+
+function _isFileThemeCompatible(meta) {
+  return !!meta && meta.compatible !== false
+    && meta.compatibility !== 'invalid'
+    && meta.compatibility !== 'unsupported';
+}
+
 function initThemeSwitcher(containerId, socket) {
   const container = document.getElementById(containerId);
   if (!container) return;
 
-  const saved = localStorage.getItem('haven_theme') || 'haven';
+  const recoveryMode = _isHavenSafeMode() || _isThemeRecoveryPending();
+  const saved = recoveryMode ? 'haven' : (localStorage.getItem('haven_theme') || 'haven');
   const customEditor = document.getElementById('custom-theme-editor');
   const rgbEditor    = document.getElementById('rgb-theme-editor');
 
@@ -1486,8 +1531,10 @@ function initThemeSwitcher(containerId, socket) {
   // so they will pick up the active state via injectPublishedThemeButtons)
   container.querySelectorAll('.theme-btn').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.theme === saved);
+    if (recoveryMode) btn.disabled = true;
 
     btn.addEventListener('click', () => {
+      if (_isHavenSafeMode() || _isThemeRecoveryPending()) return;
       const theme = btn.dataset.theme;
 
       // Switching to a built-in theme: remove any injected file-theme links
@@ -1556,14 +1603,15 @@ function initThemeSwitcher(containerId, socket) {
 // on every connect, so re-storing it there keeps the two in step. The login
 // page passes false: it re-reads the default on each visit, and storing it
 // would freeze the first default a visitor ever saw. (#5536)
-function applyThemeFromServer(theme, persist = true) {
+function applyThemeFromServer(theme, persist = true, syncFallback = false) {
   if (!theme) return;
+  if (_isHavenSafeMode() || _isThemeRecoveryPending()) return;
 
   // File theme — delegate to plugin-loader if available; otherwise fall back to haven
   if (theme.startsWith('file:')) {
     const file = theme.slice(5);
     if (window.HavenPluginLoader?.applyFileTheme) {
-      window.HavenPluginLoader.applyFileTheme(file);
+      window.HavenPluginLoader.applyFileTheme(file, persist, syncFallback);
     } else {
       // Loader not ready yet — store it; loader will restore on init
       localStorage.setItem('haven_theme', theme);
@@ -1614,8 +1662,10 @@ function applyThemeFromServer(theme, persist = true) {
 // Deliberately the minimum: no plugin bookkeeping, no effect re-run, no socket.
 // plugin-loader's applyFileTheme() calls this for the shared half and then does
 // its own extra work on top, so the injection itself cannot drift between them.
-function applyPublishedThemeBase(file, persist = true) {
-  if (!file) return;
+function applyPublishedThemeBase(file, persist = true, meta = null) {
+  if (!file || _isHavenSafeMode() || _isThemeRecoveryPending()) return null;
+  const compatibility = meta || window.HavenThemeCompat?.getCachedTheme?.(file);
+  if (!_isFileThemeCompatible(compatibility)) return null;
   document.querySelectorAll('link[id^="haven-theme-"]').forEach(l => l.remove());
 
   const linkEl = document.createElement('link');
@@ -1645,8 +1695,8 @@ function injectPublishedThemeBar(container, themes, onPick) {
   const el = typeof container === 'string' ? document.getElementById(container) : container;
   if (!el || !Array.isArray(themes)) return;
 
-  const published = themes.filter(t => t && t.published);
-  if (!published.length) return;
+  window.HavenThemeCompat?.cacheThemes?.(themes);
+  const published = themes.filter(t => t && t.published && _isFileThemeCompatible(t));
 
   el.querySelectorAll('.theme-btn[data-custom-theme]').forEach(b => b.remove());
 
@@ -1656,21 +1706,33 @@ function injectPublishedThemeBar(container, themes, onPick) {
     btn.dataset.theme = `file:${theme.file}`;
     btn.dataset.customTheme = '1';
     btn.title = theme.name || theme.file;
+    if (_isHavenSafeMode() || _isThemeRecoveryPending()) btn.disabled = true;
     const icon = document.createElement('span');
     icon.className = 'theme-icon';
     icon.textContent = theme.icon || '🎨';
     btn.appendChild(icon);
     btn.addEventListener('click', () => {
-      applyPublishedThemeBase(theme.file);
-      if (typeof onPick === 'function') onPick(theme);
+      const applied = applyPublishedThemeBase(theme.file, true, theme);
+      if (applied && typeof onPick === 'function') onPick(theme);
     });
     el.appendChild(btn);
   }
 
   const saved = (() => { try { return localStorage.getItem('haven_theme') || ''; } catch { return ''; } })();
   if (saved.startsWith('file:')) {
+    const file = saved.slice(5);
+    const selected = themes.find(theme => theme?.file === file);
+    const recoveryMode = _isHavenSafeMode() || _isThemeRecoveryPending();
+    const applied = selected && _isFileThemeCompatible(selected) && !recoveryMode
+      ? applyPublishedThemeBase(file, false, selected)
+      : null;
+    if (!applied && !recoveryMode) {
+      localStorage.setItem('haven_theme', 'haven');
+      document.documentElement.setAttribute('data-theme', 'haven');
+      document.querySelectorAll('link[id^="haven-theme-"]').forEach(link => link.remove());
+    }
     el.querySelectorAll('.theme-btn').forEach(b => {
-      b.classList.toggle('active', b.dataset.theme === saved);
+      b.classList.toggle('active', b.dataset.theme === (applied ? saved : 'haven'));
     });
   }
 }

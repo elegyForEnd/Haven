@@ -185,19 +185,13 @@ _setupSocketListeners() {
       this.user.animateProfile = data.animateProfile === 'disabled' ? 'disabled' : 'trigger';
     }
     localStorage.setItem('haven_user', JSON.stringify(this.user));
-    // (#5394) Merge server-stored nicknames. Server is authoritative for any
-    // key it knows about; localStorage keeps anything the server doesn't have yet.
+    // (#5394) Server-stored nicknames are the record. localStorage is only a
+    // cache for the first paint before this event lands. The old merge also
+    // pushed any localStorage-only nickname back up on every connect, so a
+    // nickname cleared from one device came back from any other device that
+    // still had it cached, and could never be removed for good. (#5560)
     if (data.nicknames && typeof data.nicknames === 'object') {
-      const serverNicks = data.nicknames;
-      const localNicks = this._nicknames || {};
-      // Migrate: push localStorage-only nicknames to the server once.
-      const toSync = {};
-      for (const [id, nick] of Object.entries(localNicks)) {
-        if (nick && !serverNicks[id]) toSync[id] = nick;
-      }
-      if (Object.keys(toSync).length) this.socket.emit('set-nicknames-bulk', { nicknames: toSync });
-      // Server wins on conflict.
-      this._nicknames = { ...localNicks, ...serverNicks };
+      this._nicknames = { ...data.nicknames };
       localStorage.setItem('haven_nicknames', JSON.stringify(this._nicknames));
     }
     // Init E2E encryption AFTER socket is fully connected & server handlers registered
@@ -221,17 +215,14 @@ _setupSocketListeners() {
     const canModerate = this.user.isAdmin || this.user.effectiveLevel >= 25;
     const canCreateChannel = this.user.isAdmin || this._hasGlobalPerm('create_channel');
     document.getElementById('admin-controls').style.display = canCreateChannel ? 'block' : 'none';
-    if (this.user.isAdmin) {
-      document.getElementById('admin-mod-panel').style.display = 'block';
-      this.socket.emit('get-bilibili-auth-status');
-    } else {
-      document.getElementById('admin-mod-panel').style.display = (canModerate || this._hasPerm('manage_emojis') || this._hasPerm('manage_stickers') || this._hasPerm('manage_soundboard') || this._hasPerm('view_audit_log')) ? 'block' : 'none';
-    }
+    document.getElementById('admin-mod-panel').style.display = (canModerate || this._hasAnyAdminSettingsAccess()) ? 'block' : 'none';
+    if (this.user.isAdmin) this.socket.emit('get-bilibili-auth-status');
     document.getElementById('sidebar-members-btn').style.display = (this.user.isAdmin || canModerate || this._hasPerm('view_all_members') || this._hasPerm('view_channel_members')) ? '' : 'none';
   });
 
   // Roles updated (from admin assigning/revoking, or editing a role we hold)
   this.socket.on('roles-updated', (data) => {
+    this._refreshMentionableRoles?.();
     // The server also fires this with NO payload as a plain "the server's role
     // list changed" nudge (role edited, roles reset, admin role display
     // changed) for anyone with the Role Management modal open. There's no
@@ -254,7 +245,7 @@ _setupSocketListeners() {
     const canCreateChannel = this.user.isAdmin || this._hasGlobalPerm('create_channel');
     const canCreateInvites = this.user.isAdmin || this._hasGlobalPerm('manage_server') || this._hasGlobalPerm('invite_users');
     document.getElementById('admin-controls').style.display = canCreateChannel ? 'block' : 'none';
-    document.getElementById('admin-mod-panel').style.display = (canModerate || this._hasPerm('manage_emojis') || this._hasPerm('manage_stickers') || this._hasPerm('manage_soundboard') || this._hasPerm('view_audit_log')) ? 'block' : 'none';
+    document.getElementById('admin-mod-panel').style.display = (canModerate || this._hasAnyAdminSettingsAccess()) ? 'block' : 'none';
     document.getElementById('sidebar-members-btn').style.display = (this.user.isAdmin || canModerate || this._hasPerm('view_all_members') || this._hasPerm('view_channel_members')) ? '' : 'none';
     document.getElementById('sidebar-invite-panel').style.display = canCreateInvites ? 'block' : 'none';
     this._showToast(t('toasts.roles_updated'), 'info');
@@ -282,7 +273,7 @@ _setupSocketListeners() {
   this.socket.on('connect', () => {
     this._setLed('connection-led', 'on');
     this._setLed('status-server-led', 'on');
-    document.getElementById('status-server-text').textContent = 'Connected';
+    document.getElementById('status-server-text').textContent = t('app.status.connected');
     this._lastConnectTime = Date.now();
     this._authErrorStreak = 0;
     this._startPingMonitor();
@@ -308,6 +299,8 @@ _setupSocketListeners() {
     this.voice?.deferChannelGone?.(6000);
     this.socket.emit('get-channels');
     this.socket.emit('get-server-settings');
+    // Role names for @Role mentions: rendering and the @ picker. (#5579)
+    this._refreshMentionableRoles?.();
 
     // (#5399 follow-up) Reconcile per-channel mute prefs with the server
     // once per session so the server can honor them when fanning out
@@ -380,7 +373,7 @@ _setupSocketListeners() {
     }
     // Re-join voice if we were in voice before reconnect
     if (this.voice && this.voice.inVoice && this.voice.currentChannel) {
-      this.socket.emit('voice-rejoin', { code: this.voice.currentChannel });
+      this.socket.emit('voice-rejoin', { code: this.voice.currentChannel, ...this.voice.getNativeScreenClientInfo() });
       if (this.voice.isMuted) this.socket.emit('voice-mute-state', { code: this.voice.currentChannel, muted: true });
       if (this.voice.isDeafened) this.socket.emit('voice-deafen-state', { code: this.voice.currentChannel, deafened: true });
       // (#5427) When the socket flaps (common on the web client behind certain
@@ -444,6 +437,8 @@ _setupSocketListeners() {
       this.socket.emit('set-status', this._pendingStatus);
       this._pendingStatus = null;
     }
+    // The server decides whether this account still needs the recovery notice.
+    this.socket.emit('get-recovery-notice-state');
   });
   document.addEventListener('visibilitychange', () => {
     this.socket?.emit('visibility-change', { visible: !document.hidden });
@@ -543,7 +538,7 @@ _setupSocketListeners() {
       // live, so rebind the voice slot here instead. This is a no-op on
       // the server when we're already bound on this socket.
       if (voiceLive && this.voice?.currentChannel && this.socket?.connected) {
-        this.socket.emit('voice-rejoin', { code: this.voice.currentChannel });
+        this.socket.emit('voice-rejoin', { code: this.voice.currentChannel, ...this.voice.getNativeScreenClientInfo() });
       }
       // Re-fetch channels in case list changed while backgrounded
       this.socket?.emit('get-channels');
@@ -689,7 +684,7 @@ _setupSocketListeners() {
   this.socket.on('disconnect', () => {
     this._setLed('connection-led', 'danger pulse');
     this._setLed('status-server-led', 'danger pulse');
-    document.getElementById('status-server-text').textContent = 'Disconnected';
+    document.getElementById('status-server-text').textContent = t('app.status.disconnected');
     document.getElementById('status-ping').textContent = '--';
     // Drop outstanding probes — pairing one with a pong from after the
     // reconnect would report the length of the outage as latency.
@@ -752,7 +747,7 @@ _setupSocketListeners() {
     }
     this._setLed('connection-led', 'danger');
     this._setLed('status-server-led', 'danger');
-    document.getElementById('status-server-text').textContent = 'Error';
+    document.getElementById('status-server-text').textContent = t('app.status.error');
   });
 
   // Password was changed on this or another session — force re-login
@@ -844,7 +839,7 @@ _setupSocketListeners() {
     );
     this.voice?.resolveDeferredChannelGone?.(deferredRotation?.newCode || deferredChannel?.code || null);
     if (voiceRotation && this.voice?.inVoice && this.voice.currentChannel === voiceRotation.newCode) {
-      this.socket.emit('voice-rejoin', { code: voiceRotation.newCode });
+      this.socket.emit('voice-rejoin', { code: voiceRotation.newCode, ...this.voice.getNativeScreenClientInfo() });
       if (this.voice.isMuted) this.socket.emit('voice-mute-state', { code: voiceRotation.newCode, muted: true });
       if (this.voice.isDeafened) this.socket.emit('voice-deafen-state', { code: voiceRotation.newCode, deafened: true });
       this.voice._healPeerConnectionsAfterChannelRotation?.(voiceRotation.oldCode);
@@ -910,7 +905,7 @@ _setupSocketListeners() {
       } else {
         // Do not auto-join by deep link. Message/channel links are for members
         // who already have channel access.
-        this._showToast?.(t('toasts.channel_link_unavailable') || 'Channel not available on this server', 'error');
+        this._showToast?.(t('toasts.channel_link_unavailable'), 'error');
       }
       window.history.replaceState({}, '', window.location.pathname);
     }
@@ -1029,6 +1024,11 @@ _setupSocketListeners() {
       }
     }
 
+    if (this._forumLoadingMore && this._forumActive) {
+      this._forumLoadingMore = false;
+      this._forumAppendOlder(data.messages);
+      return;
+    }
     if (this._historyBefore) {
       // Pagination request — prepend older messages
       this._historyBefore = null;
@@ -1039,7 +1039,8 @@ _setupSocketListeners() {
       }
       if (data.messages.length < 80) this._noMoreHistory = true;
       this._oldestMsgId = data.messages[0].id;
-      this._prependMessages(data.messages);
+      if (this._isForumFeed?.()) this._appendOlderForum(data.messages);
+      else this._prependMessages(data.messages);
       // Release lock AFTER DOM manipulation so scroll-triggered re-requests
       // don't fire while _prependMessages is adjusting scroll position.
       this._loadingHistory = false;
@@ -1106,6 +1107,13 @@ _setupSocketListeners() {
       if (this._suppressCoupleCheck) return;
       const st = msgContainer.scrollTop;
       const dist = msgContainer.scrollHeight - msgContainer.clientHeight - st;
+      if (this._isForumFeed?.()) {
+        // Newest first: nothing to couple to at the bottom, and no jump button.
+        this._coupledToBottom = false;
+        if (jumpBtn) jumpBtn.classList.remove('visible');
+        lastScrollTop = st;
+        return;
+      }
       if (dist < 200 && this._noMoreFuture !== false) {
         // Only couple if the DOM contains the actual latest messages.
         // When newer messages have been trimmed, the scroll "bottom" is
@@ -1132,7 +1140,11 @@ _setupSocketListeners() {
     msgContainer.addEventListener('scroll', () => {
       if (this._suppressCoupleCheck) return;
       const now = Date.now();
-      if (msgContainer.scrollTop < 200 && !this._noMoreHistory && !this._loadingHistory && this._oldestMsgId && this.currentChannel && now - this._historyDebounce > 300) {
+      // A forum feed runs newest first, so its older topics load from the bottom.
+      const forumFeed = !!this._isForumFeed?.();
+      const distEnd = msgContainer.scrollHeight - msgContainer.clientHeight - msgContainer.scrollTop;
+      const atOlderEdge = forumFeed ? distEnd < 200 : msgContainer.scrollTop < 200;
+      if (atOlderEdge && !this._forumActive && !this._noMoreHistory && !this._loadingHistory && this._oldestMsgId && this.currentChannel && now - this._historyDebounce > 300) {
         this._loadingHistory = true;
         this._historyBefore = this._oldestMsgId;
         this._historyDebounce = now;
@@ -1147,7 +1159,7 @@ _setupSocketListeners() {
       // Forward pagination: load newer messages when near the bottom and
       // the DOM window doesn't extend to the latest messages.
       const distBottom = msgContainer.scrollHeight - msgContainer.clientHeight - msgContainer.scrollTop;
-      if (distBottom < 200 && !this._noMoreFuture && !this._loadingFuture && this._newestMsgId && this.currentChannel && now - this._historyDebounce > 300) {
+      if (!forumFeed && distBottom < 200 && !this._noMoreFuture && !this._loadingFuture && this._newestMsgId && this.currentChannel && now - this._historyDebounce > 300) {
         this._loadingFuture = true;
         this._historyAfter = this._newestMsgId;
         this._historyDebounce = now;
@@ -1237,7 +1249,7 @@ _setupSocketListeners() {
           const _isAnnouncement = _notifCh && _notifCh.notification_type === 'announcement';
           const _isReplyToMe = data.message.replyContext && data.message.replyContext.user_id === this.user.id;
           const _isDm = _notifCh && _notifCh.is_dm;
-          const _isMention = mentionRegex.test(data.message.content) || everyoneRegex.test(data.message.content);
+          const _isMention = mentionRegex.test(data.message.content) || everyoneRegex.test(data.message.content) || this._mentionsMyRole?.(data.message.content);
           const _notifOpts = _isMention ? { isMention: true } : _isReplyToMe ? { isReply: true } : _isDm ? { isDm: true } : null;
           if (_isMention) {
             this.notifications.play('mention', { isMention: true });
@@ -1300,7 +1312,7 @@ _setupSocketListeners() {
         const _isAnnouncement2 = _notifCh2 && _notifCh2.notification_type === 'announcement';
         const _isReplyToMe2 = data.message.replyContext && data.message.replyContext.user_id === this.user.id;
         const _isDm2 = _notifCh2 && _notifCh2.is_dm;
-        const _isMention2 = mentionRegex.test(data.message.content) || everyoneRegex2.test(data.message.content);
+        const _isMention2 = mentionRegex.test(data.message.content) || everyoneRegex2.test(data.message.content) || this._mentionsMyRole?.(data.message.content);
         const _notifOpts2 = _isMention2 ? { isMention: true } : _isReplyToMe2 ? { isReply: true } : _isDm2 ? { isDm: true } : null;
         if (_isMention2) {
           this.notifications.play('mention', { isMention: true });
@@ -1407,7 +1419,7 @@ _setupSocketListeners() {
       if ((now - (this._lastVoiceSelfHealAt || 0)) > 3000 && this.socket?.connected) {
         this._lastVoiceSelfHealAt = now;
         console.warn('[Voice] Self missing from roster — emitting voice-rejoin');
-        this.socket.emit('voice-rejoin', { code: data.channelCode });
+        this.socket.emit('voice-rejoin', { code: data.channelCode, ...this.voice.getNativeScreenClientInfo() });
       }
     }
     if (isViewing && localStorage.getItem('haven_hide_voice_panel') !== 'true') {
@@ -1562,7 +1574,7 @@ _setupSocketListeners() {
     if (!data || !data.code) return;
     if (this.currentChannel === data.code) {
       try { this.switchChannel(data.code); } catch (e) { console.warn('[auto-clear] re-switch failed:', e); }
-      this._showToast('🧹 Channel messages were auto-cleared', 'info');
+      this._showToast(t('toasts.channel_auto_cleared'), 'info');
     }
   });
 
@@ -1658,7 +1670,7 @@ _setupSocketListeners() {
       const _meEsc = (this.user.username || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const mentionRegex = _meEsc ? new RegExp(`@${_meEsc}(?!\\w)`, 'i') : null;
       const everyoneRegex = /(?<![\w@])@(everyone|here)\b/i;
-      const _isMention = (mentionRegex && mentionRegex.test(msg.content || '')) || everyoneRegex.test(msg.content || '');
+      const _isMention = (mentionRegex && mentionRegex.test(msg.content || '')) || everyoneRegex.test(msg.content || '') || this._mentionsMyRole?.(msg.content || '');
       const _isReplyToMe = msg.replyContext && msg.replyContext.user_id === this.user.id;
       if ((_isMention || _isReplyToMe) && !_isMuted) {
         this._recordThreadMention(data.channelCode, data.parentId, msg);
@@ -1686,6 +1698,18 @@ _setupSocketListeners() {
   this.socket.on('thread-updated', (data) => {
     if (data.channelCode !== this.currentChannel) return;
     this._updateThreadPreview(data.parentId, data.thread);
+    if (!this._forumActive) this._bumpForumTopic?.(data.parentId);
+  });
+
+  // Forum topics: retitled or retagged, and the channel's tag list changed.
+  this.socket.on('topic-updated', (data) => {
+    if (data.channelCode !== this.currentChannel) return;
+    this._forumApplyTopicUpdate?.(data);
+  });
+  this.socket.on('forum-tags-updated', (data) => {
+    const ch = this.channels && this.channels.find(c => c.code === data.code);
+    if (ch) ch.forum_tags = JSON.stringify(data.tags || []);
+    if (data.code === this.currentChannel && this._forumActive) this._forumReload?.();
   });
 
   // ── Polls ─────────────────────────────────────────
@@ -1862,7 +1886,10 @@ _setupSocketListeners() {
     // the server can't find it (the DB row's code column was just
     // updated), and we get the infinite "server says voice channel is
     // gone" loop. Migrate every voice-side code reference too.
-    if (wasInVoiceHere) console.log(`[Voice] channel code rotated mid-call: ${data.oldCode} -> ${data.newCode}`);
+    if (wasInVoiceHere) {
+      console.log(`[Voice] channel code rotated mid-call: ${data.oldCode} -> ${data.newCode}`);
+      this.voice._healPeerConnectionsAfterChannelRotation?.(data.oldCode);
+    }
     this._renderChannels();
     // If currently viewing this channel, update the header code display
     if (this.currentChannel === data.newCode) {
@@ -1966,30 +1993,29 @@ _setupSocketListeners() {
 
   this.socket.on('bio-updated', (data) => {
     this.user.bio = data.bio || '';
-    this._showToast('Bio updated', 'success');
+    this._showToast(t('toasts.bio_updated'), 'success');
   });
 
   // ── Username rename ──────────────────────────────
   this.socket.on('renamed', (data) => {
     this.token = data.token;
-    this.user = data.user;
+    this.user = {...this.user, ...data.user};
     if (this.voice && data.user.id) this.voice.localUserId = data.user.id;
     localStorage.setItem('haven_token', data.token);
-    localStorage.setItem('haven_user', JSON.stringify(data.user));
+    localStorage.setItem('haven_user', JSON.stringify(this.user));
     document.getElementById('current-user').textContent = data.user.displayName || data.user.username;
     const loginEl = document.getElementById('login-name');
     if (loginEl) loginEl.textContent = `@${data.user.username}`;
-    this._showToast(`Display name changed to "${data.user.displayName || data.user.username}"`, 'success');
+    this._showToast(t('toasts.display_name_changed', { name: data.user.displayName || data.user.username }), 'success');
     // Refresh admin UI in case admin status changed
     this.user.permissions = data.user.permissions || this.user.permissions || [];
     this.user.globalPermissions = data.user.globalPermissions || this.user.globalPermissions || [];
     const canCreate = data.user.isAdmin || this._hasGlobalPerm('create_channel');
     document.getElementById('admin-controls').style.display = canCreate ? 'block' : 'none';
-    if (data.user.isAdmin) {
-      document.getElementById('admin-mod-panel').style.display = 'block';
-    } else {
-      document.getElementById('admin-mod-panel').style.display = 'none';
-    }
+    // Same gate as login and roles-updated, so a moderator who changes their
+    // display name keeps the Admin tab instead of losing it until reload.
+    const canModerate = data.user.isAdmin || (this.user.effectiveLevel || 0) >= 25;
+    document.getElementById('admin-mod-panel').style.display = (canModerate || this._hasAnyAdminSettingsAccess()) ? 'block' : 'none';
   });
 
   this.socket.on('user-renamed', (data) => {
@@ -2057,7 +2083,7 @@ _setupSocketListeners() {
   // ── Bulk purge: admin replaced all of a user's messages with placeholder text ──
   this.socket.on('user-messages-purged', (data) => {
     if (!data || !data.channelCode) return;
-    const placeholder = data.placeholder || 'User banned.';
+    const placeholder = data.placeholder || t('modals.admin_action.purge_message_placeholder');
     if (data.channelCode === this.currentChannel) {
       const userMsgs = document.querySelectorAll(`[data-user-id="${data.userId}"]`);
       userMsgs.forEach(msgEl => {
@@ -2156,11 +2182,11 @@ _setupSocketListeners() {
         // Add pin tag to header
         const header = msgEl.querySelector('.message-header');
         if (header && !header.querySelector('.pinned-tag')) {
-          header.insertAdjacentHTML('beforeend', '<span class="pinned-tag" title="Pinned message">📌</span>');
+          header.insertAdjacentHTML('beforeend', `<span class="pinned-tag" title="${t('app.messages.pinned')}">📌</span>`);
         }
         // Update toolbar: swap pin → unpin
         const pinBtn = msgEl.querySelector('[data-action="pin"]');
-        if (pinBtn) { pinBtn.dataset.action = 'unpin'; pinBtn.title = 'Unpin'; }
+        if (pinBtn) { pinBtn.dataset.action = 'unpin'; pinBtn.title = t('msg_toolbar.unpin'); }
       }
       this._appendSystemMessage(`📌 ${t('header.messages.pinned_by', { name: data.pinnedBy })}`);
       this._markPinUnread?.(data.messageId);
@@ -2186,7 +2212,7 @@ _setupSocketListeners() {
         if (tag) tag.remove();
         // Update toolbar: swap unpin → pin
         const unpinBtn = msgEl.querySelector('[data-action="unpin"]');
-        if (unpinBtn) { unpinBtn.dataset.action = 'pin'; unpinBtn.title = 'Pin'; }
+        if (unpinBtn) { unpinBtn.dataset.action = 'pin'; unpinBtn.title = t('msg_toolbar.pin'); }
       }
       // Remove from pinned sidebar panel if it's open
       const pinnedItem = document.querySelector(`#pinned-panel .pinned-item[data-msg-id="${data.messageId}"]`);
@@ -2252,16 +2278,16 @@ _setupSocketListeners() {
         msgEl.dataset.archived = '1';
         const header = msgEl.querySelector('.message-header');
         if (header && !header.querySelector('.archived-tag')) {
-          header.insertAdjacentHTML('beforeend', '<span class="archived-tag" title="Protected from cleanup">🛡️</span>');
+          header.insertAdjacentHTML('beforeend', `<span class="archived-tag" title="${t('app.messages.protected')}">🛡️</span>`);
         }
         // For compact messages, add tag to content
         const content = msgEl.querySelector('.message-content');
         if (msgEl.classList.contains('message-compact') && content && !content.querySelector('.archived-tag')) {
-          content.insertAdjacentHTML('afterbegin', '<span class="archived-tag" title="Protected from cleanup">🛡️</span>');
+          content.insertAdjacentHTML('afterbegin', `<span class="archived-tag" title="${t('app.messages.protected')}">🛡️</span>`);
         }
         // Update toolbar: swap archive → unarchive
         const archBtn = msgEl.querySelector('[data-action="archive"]');
-        if (archBtn) { archBtn.dataset.action = 'unarchive'; archBtn.title = 'Unprotect'; }
+        if (archBtn) { archBtn.dataset.action = 'unarchive'; archBtn.title = t('app.messages.unprotect_btn'); }
       }
       this._appendSystemMessage(`🛡️ ${t('header.messages.protected_by', { name: data.archivedBy })}`);
     }
@@ -2280,7 +2306,7 @@ _setupSocketListeners() {
         if (contentTag) contentTag.remove();
         // Update toolbar: swap unarchive → archive
         const unarchBtn = msgEl.querySelector('[data-action="unarchive"]');
-        if (unarchBtn) { unarchBtn.dataset.action = 'archive'; unarchBtn.title = 'Protect from cleanup'; }
+        if (unarchBtn) { unarchBtn.dataset.action = 'archive'; unarchBtn.title = t('app.messages.protect_btn'); }
       }
       this._appendSystemMessage(`🛡️ ${t('header.messages.message_unprotected')}`);
     }
@@ -2319,7 +2345,9 @@ _setupSocketListeners() {
   // Banned Users modal is open, refresh it so the appeal shows immediately.
   this.socket.on('ban-appeal-received', (data) => {
     if (!this.user?.isAdmin) return;
-    this._showToast(t('toasts.ban_appeal_received', { username: data?.username || 'A banned user' }), 'info');
+    this._showToast(t('toasts.ban_appeal_received', {
+      username: data?.username || t('toasts.banned_user'),
+    }), 'info');
     const bansModal = document.getElementById('bans-modal');
     if (bansModal && bansModal.style.display !== 'none') {
       this.socket.emit('get-bans');
@@ -2378,15 +2406,28 @@ _setupSocketListeners() {
   // ── User preferences (persistent theme etc.) ───────
   this.socket.on('preferences', (prefs) => {
     this._userPrefs = prefs || {};
+    // The top-bar Android banner waits for this record before it shows (#5594).
+    this._syncAndroidBanner?.();
+    // Effects come back from the server like the theme does; restore them
+    // first so applyThemeFromServer() applies the saved pick, not the default.
+    if (prefs.effects && typeof syncEffectsFromServer === 'function') syncEffectsFromServer(prefs.effects);
     if (prefs.theme) {
       // User has a saved personal theme preference — apply it
-      applyThemeFromServer(prefs.theme);
+      applyThemeFromServer(prefs.theme, true, true);
     } else if (this.serverSettings.default_theme) {
       // No personal preference — apply the server's default theme
       applyThemeFromServer(this.serverSettings.default_theme);
+    } else if (prefs.effects && typeof applyEffects === 'function') {
+      // No theme pass to carry them, so the restored effects apply here.
+      applyEffects(_getStoredEffectMode());
     }
     // Sync hide-own-score toggle to the server's stored value so reopening
     // settings on a fresh device shows the correct state.
+    if (prefs.hide_nsfw != null) {
+      try { localStorage.setItem('haven_hide_nsfw', prefs.hide_nsfw); } catch {}
+      const nsfwToggle = document.getElementById('hide-nsfw-channels');
+      if (nsfwToggle) nsfwToggle.checked = prefs.hide_nsfw === 'true';
+    }
     if (prefs.hide_score_badge != null) {
       try { localStorage.setItem('haven_hide_own_score', prefs.hide_score_badge); } catch {}
       const ownToggle = document.getElementById('hide-own-score');
@@ -2395,6 +2436,13 @@ _setupSocketListeners() {
     // Activity toggles live entirely server-side (other clients must honour
     // them), so the UI can only be correct once prefs land.
     this._syncActivityUI?.();
+  });
+
+  // Server's verdict on the recovery-codes notice (see the connect handler's
+  // get-recovery-notice-state emit). Only shows when the account has no
+  // recovery codes and the user hasn't ticked "never show again".
+  this.socket.on('recovery-notice-state', ({ show } = {}) => {
+    if (show) setTimeout(() => this._showRecoveryNotice(), 2500);
   });
 
   // ── Rich presence: linked accounts ─────────────────
@@ -2411,9 +2459,16 @@ _setupSocketListeners() {
     for (const c of (this._connections.connections || [])) {
       if (!prev.has(c.provider)) {
         const label = c.provider.charAt(0).toUpperCase() + c.provider.slice(1);
-        this._showToast(`${label} linked`, 'success');
+        this._showToast(t('users.connections.link_success', { provider: label }), 'success');
       }
     }
+  });
+
+  // ── Listening presence: webhook token state ───
+  // token is a string when the feature is on, null when off. The full URL is
+  // built client-side from this origin so the server never handles it.
+  this.socket.on('listening-state', (data) => {
+    this._applyListeningState?.(data?.token || null);
   });
 
   // Server issued a short-lived link token — hand off to the provider in a
@@ -2434,7 +2489,7 @@ _setupSocketListeners() {
     const win = window.open(url, 'haven-connect', 'width=820,height=760,menubar=no,toolbar=no');
     if (!win) {
       // Popup blocked — tell the user rather than silently doing nothing.
-      this._showToast('Allow pop-ups for this site to link an account', 'error');
+      this._showToast(t('users.connections.allow_popups'), 'error');
     }
   });
 
@@ -2597,7 +2652,7 @@ _forceFullResync(reason) {
         try { this.socket.emit('request-online-users', { code: this.currentChannel }); } catch {}
         try { this.socket.emit('request-voice-users', { code: this.currentChannel }); } catch {}
         if (this.voice?.inVoice && this.voice.currentChannel) {
-          try { this.socket.emit('voice-rejoin', { code: this.voice.currentChannel }); } catch {}
+          try { this.socket.emit('voice-rejoin', { code: this.voice.currentChannel, ...this.voice.getNativeScreenClientInfo() }); } catch {}
         }
       }
     }
@@ -2624,7 +2679,7 @@ _lightVoiceResync(reason) {
     if (this.voice?.inVoice && this.voice.currentChannel) {
       // voice-rejoin is now a no-op on the server when already bound on this
       // socket (skipRenegotiate). Still safe — used only to refresh roster.
-      this.socket.emit('voice-rejoin', { code: this.voice.currentChannel });
+      this.socket.emit('voice-rejoin', { code: this.voice.currentChannel, ...this.voice.getNativeScreenClientInfo() });
       // UI may have been flipped to "Join Voice" by a partial desync — restore.
       try { this._reconcileVoiceUi?.(); } catch {}
       try { this.voice.reassertScreenStreams?.(); } catch {}

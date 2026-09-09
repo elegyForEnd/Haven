@@ -25,12 +25,39 @@ comment:
  */
 ```
 
-The current theme list reads `@name`, `@description`, `@author`, `@version`, and
-`@icon`. The `@haven-theme-api` declaration records the contract targeted by
-the theme. Compatibility enforcement is not part of Theme API v1 itself and is
-planned separately; older Haven versions simply ignore unknown metadata.
+The theme list reads `@name`, `@description`, `@author`, `@version`, `@icon`, and
+`@haven-theme-api`. Haven checks the API declaration before it injects the
+stylesheet. Older Haven versions ignore metadata they do not recognise.
+Declare each field on its own metadata line. Multiple `@haven-theme-api`
+declarations make the theme invalid.
 
 Use a short text character or emoji for `@icon`. Do not put HTML in metadata.
+
+## Compatibility
+
+Haven classifies each installed theme before loading it:
+
+| Status | Meaning | Loaded |
+| --- | --- | --- |
+| Compatible | Declares `@haven-theme-api 1` | Yes |
+| Legacy | Does not declare a Theme API | Yes |
+| Unsupported | Declares another positive integer version | No |
+| Invalid | Declares an empty, fractional, zero, negative, or non-numeric version | No |
+
+Legacy themes remain enabled for backward compatibility. Declaring an API is
+recommended because it lets Haven stop a known-incompatible theme before the
+theme can hide or break recovery controls.
+
+Incompatible themes remain visible in Plugins & Themes and in the admin theme
+list for diagnosis, but cannot be enabled, newly published, or selected as a
+new server default. If a selected theme disappears or becomes incompatible, Haven
+falls back to its built-in theme and updates the user's saved preference.
+
+Haven caches the last server compatibility verdict so a previously verified
+file theme can still load before first paint. A theme with no cached verdict
+waits for `/api/themes` on its first load. The server verdict is refreshed when
+the theme list loads, and the server validates the file again whenever it serves
+the stylesheet. The cache is only a flash-prevention optimisation.
 
 ## Installing and publishing
 
@@ -46,6 +73,11 @@ per browser as an additive CSS tweak from Plugins & Themes.
 
 Themes are server-managed files. Haven does not download themes from arbitrary
 URLs or provide a per-user raw CSS editor.
+
+`themes/compact.theme.css` is a shipped Theme API v1 example that uses only
+public tokens, page markers, and layout regions. It deliberately leaves message
+geometry to the user's Layout Density setting; structural compaction belongs in
+a plugin.
 
 ## Scoping a theme
 
@@ -100,8 +132,8 @@ from the Haven base theme.
 | `--text-link` | Links |
 
 Always check the contrast between `--accent` and `--accent-text`. A light accent
-usually needs dark accent text. Some specialised media and voice controls still
-define their own foreground colours, so verify those surfaces as well.
+usually needs dark accent text. A few specialised media controls use a fixed
+foreground for compatibility with existing themes, so verify those too.
 
 ### Borders and semantic states
 
@@ -110,11 +142,17 @@ define their own foreground colours, so verify those surfaces as well.
 | `--border` | Default border |
 | `--border-light` | Stronger or raised border |
 | `--success` | Positive and connected states |
+| `--success-text` | Foreground on success-filled controls |
 | `--danger` | Destructive and error states |
+| `--danger-text` | Foreground on danger-filled controls |
 | `--warning` | Warning states |
+| `--warning-text` | Foreground on warning-filled controls |
 | `--led-on` | Connected presence indicator |
 | `--led-off` | Disconnected presence indicator |
 | `--led-glow` | Connected indicator glow |
+
+Semantic colours can also appear as text or icons on Haven surfaces. Check each
+state colour against your backgrounds as well as against its paired foreground.
 
 ### Typography and geometry
 
@@ -165,6 +203,7 @@ Select major areas through `data-haven-region`:
 | `app-shell` | Primary application shell, including the status bar |
 | `workspace` | Main multi-column workspace |
 | `server-rail` | Server navigation rail |
+| `server-list` | Dynamic server list inside the server rail |
 | `navigation-sidebar` | Channels and direct-message sidebar |
 | `account` | Current account identity and account actions |
 | `sidebar-content` | Reorderable sidebar content |
@@ -173,6 +212,7 @@ Select major areas through `data-haven-region`:
 | `channels` | Channel list section |
 | `direct-messages` | Direct-message list section |
 | `sidebar-footer` | Pinned sidebar footer and controls |
+| `sidebar-actions` | Persistent sidebar action buttons |
 | `theme-picker` | Theme selector |
 | `main` | Main content column |
 | `channel-header` | Active channel header |
@@ -206,6 +246,62 @@ Select major areas through `data-haven-region`:
 
 `theme-picker` exists on both pages, but only one page is loaded in a document.
 
+## Public layout state
+
+Haven exposes three state attributes for themes and layout plugins:
+
+| Hook | Values | Purpose |
+| --- | --- | --- |
+| `data-haven-density` on `html` | `compact`, `cozy`, `spacious` | The user's message-density choice |
+| `data-haven-layout-editing` on `html` | `1` while active, otherwise absent | Mod Mode is editing the native layout |
+| `data-haven-layout-owner` on `html` | Plugin-defined owner ID, otherwise absent | The structural layout plugin currently moving regions |
+
+The density attribute is applied before first paint. Message geometry properties
+remain internal; use the state only to adapt surrounding layout without
+overriding the user's density choice.
+
+Interactive plugins can also listen for synchronous state changes:
+
+```js
+document.addEventListener('haven:density-change', (event) => {
+  console.log(event.detail.density);
+});
+
+document.addEventListener('haven:layout-editing', (event) => {
+  if (event.detail.active) restoreNativeLayout();
+  else reapplyLayout();
+});
+
+document.addEventListener('haven:layout-owner-change', (event) => {
+  console.log(event.detail.owner);
+});
+```
+
+`haven:layout-editing` fires before Mod Mode starts moving panels and after it
+has restored the saved native arrangement. Structural plugins should suspend
+on the first event and reapply only after the second. `event.detail.owner`
+identifies the owner that was active before editing. Haven reserves ownership
+for that plugin until the second event completes, so other layout plugins
+cannot take its place based on listener order.
+
+Structural layout plugins must also acquire the shared owner before moving
+regions and release it after restoring them:
+
+```js
+if (HavenApi.Layout.acquire('MyLayout')) {
+  movePublicRegions();
+}
+
+// During stop(), below the desktop breakpoint, or before Mod Mode edits:
+restorePublicRegions();
+HavenApi.Layout.release('MyLayout');
+```
+
+`acquire()` returns `false` while another structural plugin owns the layout.
+Listen for `haven:layout-owner-change` to retry after that owner releases it.
+This prevents one plugin from recording another plugin's temporary DOM as the
+native restore position. `HavenApi.Layout.owner` exposes the current owner.
+
 ## Stability policy
 
 For Theme API v1, Haven intends to keep these stable:
@@ -213,6 +309,9 @@ For Theme API v1, Haven intends to keep these stable:
 - `data-haven-theme-api="1"`
 - `data-haven-page` values
 - documented `data-haven-region` values
+- documented `data-haven-density`, `data-haven-layout-editing`, and `data-haven-layout-owner` states
+- documented `haven:density-change`, `haven:layout-editing`, and `haven:layout-owner-change` events
+- `HavenApi.Layout.acquire()`, `release()`, and `owner`
 - documented public design tokens
 
 The following are not part of Theme API v1:
@@ -222,7 +321,7 @@ The following are not part of Theme API v1:
 - inline styles used to represent runtime state
 - dynamically generated message, channel, member, and modal internals
 - undocumented custom properties
-- plugin APIs or JavaScript objects
+- undocumented plugin APIs or JavaScript objects
 
 A region keeps its semantic responsibility, but Haven may change its element
 type, class, ID, children, or location. Write selectors against the region and
@@ -312,6 +411,12 @@ CSS can visually position an element outside its parent, but that does not move
 its semantics, clipping context, keyboard order, or event assumptions. Prefer a
 reversible plugin when a layout requires a real structural move.
 
+`plugins/CompactLayout.plugin.js` is the minimal bundled example. It moves only
+complete public regions, records their original parents and sibling positions,
+restores the native layout below the desktop breakpoint and during Mod Mode,
+and leaves message density under the user's control. Its `Ctrl+Alt+C` shortcut
+and sidebar button provide an immediate way back to the classic layout.
+
 ## Security
 
 Themes are trusted server-managed CSS. CSS cannot use Haven's JavaScript API,
@@ -321,6 +426,33 @@ Only install themes from sources you trust.
 Plugins have a different security model: they execute JavaScript in the Haven
 page and are fully trusted code. Theme API v1 does not make plugins safe or
 sandbox them.
+
+## Extension Safe Mode
+
+If a theme hides controls or a plugin breaks startup, open Haven with:
+
+```text
+/app.html?haven-safe-mode=1
+```
+
+The login page also accepts `?haven-safe-mode=1`. Safe mode is stored only for
+the current browser tab, so it survives the login-to-app navigation without
+changing saved preferences.
+
+While safe mode is active:
+
+- Haven uses its built-in base theme.
+- File themes and additive CSS tweaks are not injected.
+- Plugin files are not fetched, evaluated, or started.
+- Installed extensions are still listed from server-provided metadata.
+- Enabled extensions can be identified and disabled.
+
+Open Settings, Plugins & Themes to either reset all theme/plugin choices or exit
+safe mode without changing them. Resetting keeps unrelated account and display
+preferences, updates the server-synchronised theme preference to Haven, and then
+reloads without the safe-mode query parameter.
+If the server cannot confirm the reset, extensions remain suppressed and the
+recovery notice offers a retry after the connection returns.
 
 ## Minimal complete example
 

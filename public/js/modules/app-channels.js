@@ -64,30 +64,30 @@ async switchChannel(code) {
     this._updateVoiceButtons(true);
     // If viewing a different channel from the one we're in voice in, show "Join Voice" instead of "Voice Active"
     if (this.voice.currentChannel !== code) {
-      const _canVoice = this.user?.isAdmin || this.user?.isGuest || this._hasPerm('use_voice');
       const indic = document.getElementById('voice-active-indicator');
       if (indic) indic.style.display = 'none';
+      const _showJoin = this._voiceJoinAvailable();
       const _scJoinBtn = document.getElementById('voice-join-btn');
-      if (_scJoinBtn) _scJoinBtn.style.display = (channel && channel.voice_enabled === 0) || !_canVoice ? 'none' : 'inline-flex';
+      if (_scJoinBtn) _scJoinBtn.style.display = _showJoin ? 'inline-flex' : 'none';
       const mobileJoin = document.getElementById('voice-join-mobile');
       if (mobileJoin) {
-        if ((channel && channel.voice_enabled === 0) || !_canVoice) mobileJoin.style.setProperty('display', 'none', 'important');
-        else mobileJoin.style.removeProperty('display');
+        if (_showJoin) mobileJoin.style.removeProperty('display');
+        else mobileJoin.style.setProperty('display', 'none', 'important');
       }
     }
   } else {
     // Show just the join button (not the indicator), but hide it for text-only channels or users without voice permission
+    const _showJoin = this._voiceJoinAvailable();
     const _scJoinBtn = document.getElementById('voice-join-btn');
-    const _canVoice = this.user?.isAdmin || this.user?.isGuest || this._hasPerm('use_voice');
-    if (_scJoinBtn) _scJoinBtn.style.display = (channel && channel.voice_enabled === 0) || !_canVoice ? 'none' : 'inline-flex';
+    if (_scJoinBtn) _scJoinBtn.style.display = _showJoin ? 'inline-flex' : 'none';
     const indic = document.getElementById('voice-active-indicator');
     if (indic) indic.style.display = 'none';
     const vp = document.getElementById('voice-panel');
     if (vp) vp.style.display = 'none';
     const mobileJoin = document.getElementById('voice-join-mobile');
     if (mobileJoin) {
-      if ((channel && channel.voice_enabled === 0) || !_canVoice) mobileJoin.style.setProperty('display', 'none', 'important');
-      else mobileJoin.style.removeProperty('display');
+      if (_showJoin) mobileJoin.style.removeProperty('display');
+      else mobileJoin.style.setProperty('display', 'none', 'important');
     }
   }
   document.getElementById('search-toggle-btn').style.display = '';
@@ -147,6 +147,17 @@ async switchChannel(code) {
   if (_emojiBtn) _emojiBtn.style.display = _textOff ? 'none' : '';
   if (_gifBtn) _gifBtn.style.display = _textOff ? 'none' : '';
   if (_pollBtn) _pollBtn.style.display = _textOff ? 'none' : '';
+  // In a forum the composer starts topics, and says so. (#144)
+  if (_msgInput) {
+    const _forumCh = this.channels && this.channels.find(c => c.code === code);
+    _msgInput.placeholder = (_forumCh && _forumCh.is_forum)
+      ? t('app.messages.placeholder_forum')
+      : t(window.innerWidth <= 480 ? 'app.messages.placeholder_short' : 'header.message_placeholder_commands');
+  }
+  const _timeBtn = document.getElementById('time-btn');
+  const _timeDivider = document.getElementById('time-divider');
+  if (_timeBtn) _timeBtn.style.display = _textOff ? 'none' : '';
+  if (_timeDivider) _timeDivider.style.display = _textOff ? 'none' : '';
   // Upload button tied to media toggle
   const _uploadBtn = document.getElementById('upload-btn');
   if (_uploadBtn) _uploadBtn.style.display = _mediaOff ? 'none' : '';
@@ -197,7 +208,7 @@ async switchChannel(code) {
       console.warn('[Haven] DM partner key fetch failed, continuing unencrypted:', err);
     }
   }
-  this.socket.emit('get-messages', { code });
+  this.socket.emit('get-messages', this._getMessagesParams ? this._getMessagesParams(code) : { code });
   // Belt-and-braces mark-read: if the server already told us the latest
   // message id for this channel (channels-list snapshot), fire a
   // mark-read IMMEDIATELY (not via the debounced _markRead path) so that
@@ -667,18 +678,28 @@ _updateChannelFunctionsPanel(ch) {
   // Voice & text toggles
   const voiceOff = ch.voice_enabled === 0;
   const textOff = ch.text_enabled === 0;
-  this._setCfnBadge('voice', !voiceOff, voiceOff ? 'OFF' : 'ON');
-  this._setCfnBadge('text', !textOff, textOff ? 'OFF' : 'ON');
+  this._setCfnBadge('voice', !voiceOff, t(voiceOff ? 'channel_functions.off' : 'channel_functions.on'));
+  this._setCfnBadge('text', !textOff, t(textOff ? 'channel_functions.off' : 'channel_functions.on'));
   // Basic toggles
-  this._setCfnBadge('streams', ch.streams_enabled !== 0, ch.streams_enabled !== 0 ? 'ON' : 'OFF');
-  this._setCfnBadge('music', ch.music_enabled !== 0, ch.music_enabled !== 0 ? 'ON' : 'OFF');
-  this._setCfnBadge('media', ch.media_enabled !== 0, ch.media_enabled !== 0 ? 'ON' : 'OFF');
-  this._setCfnBadge('soundboard', ch.soundboard_enabled !== 0, ch.soundboard_enabled !== 0 ? 'ON' : 'OFF');
+  this._setCfnBadge('streams', ch.streams_enabled !== 0, t(ch.streams_enabled !== 0 ? 'channel_functions.on' : 'channel_functions.off'));
+  this._setCfnBadge('music', ch.music_enabled !== 0, t(ch.music_enabled !== 0 ? 'channel_functions.on' : 'channel_functions.off'));
+  this._setCfnBadge('media', ch.media_enabled !== 0, t(ch.media_enabled !== 0 ? 'channel_functions.on' : 'channel_functions.off'));
+  this._setCfnBadge('soundboard', ch.soundboard_enabled !== 0, t(ch.soundboard_enabled !== 0 ? 'channel_functions.on' : 'channel_functions.off'));
   // Read-only toggle
   const isReadOnly = ch.read_only === 1;
-  this._setCfnBadge('read-only', isReadOnly, isReadOnly ? 'ON' : 'OFF');
+  this._setCfnBadge('read-only', isReadOnly, t(isReadOnly ? 'channel_functions.on' : 'channel_functions.off'));
+  const isForum = ch.is_forum === 1;
+  this._setCfnBadge('forum', isForum, t(isForum ? 'channel_functions.on' : 'channel_functions.off'));
+  const isPrivate = !!ch.is_private;
+  {
+    const _cfnPanel = document.getElementById('channel-functions-panel'); const nsfwRow = _cfnPanel?.querySelector('.cfn-row[data-fn="nsfw"] .cfn-badge');
+    if (nsfwRow) { nsfwRow.textContent = ch.is_nsfw ? t('channel_functions.on') : t('channel_functions.off'); nsfwRow.className = 'cfn-badge ' + (ch.is_nsfw ? 'cfn-on' : 'cfn-off'); }
+    const tagsRow = _cfnPanel?.querySelector('.cfn-row[data-fn="forum-tags"]');
+    if (tagsRow) { tagsRow.style.display = ch.is_forum ? '' : 'none'; const b = tagsRow.querySelector('.cfn-badge'); if (b) b.textContent = String(this._forumTagsOf ? this._forumTagsOf(ch.code).length : 0); }
+  }
+  this._setCfnBadge('private', isPrivate, t(isPrivate ? 'channel_functions.on' : 'channel_functions.off'));
   const interval = ch.slow_mode_interval || 0;
-  this._setCfnBadge('slow-mode', interval > 0, interval > 0 ? `${interval}s` : 'OFF');
+  this._setCfnBadge('slow-mode', interval > 0, interval > 0 ? `${interval}s` : t('channel_functions.off'));
   // (#5467) Cleanup protection and welcome messages are still admin-only on
   // the server. Now that the panel opens for manage_channel_settings holders
   // too, hide the rows they can't act on instead of letting the click bounce
@@ -686,11 +707,11 @@ _updateChannelFunctionsPanel(ch) {
   const isAdmin = !!this.user?.isAdmin;
   const cleanupRow = document.querySelector('.cfn-row[data-fn="cleanup-exempt"]');
   if (cleanupRow) cleanupRow.style.display = isAdmin ? '' : 'none';
-  this._setCfnBadge('cleanup-exempt', ch.cleanup_exempt === 1, ch.cleanup_exempt === 1 ? 'ON' : 'OFF');
+  this._setCfnBadge('cleanup-exempt', ch.cleanup_exempt === 1, t(ch.cleanup_exempt === 1 ? 'channel_functions.on' : 'channel_functions.off'));
   // Welcome messages — text channels only, hide the row for DMs.
   const welcomeRow = document.querySelector('.cfn-row[data-fn="welcome"]');
   if (welcomeRow) welcomeRow.style.display = (ch.is_dm || !isAdmin) ? 'none' : '';
-  this._setCfnBadge('welcome', ch.show_welcome === 1, ch.show_welcome === 1 ? 'ON' : 'OFF');
+  this._setCfnBadge('welcome', ch.show_welcome === 1, t(ch.show_welcome === 1 ? 'channel_functions.on' : 'channel_functions.off'));
   // Streams and music greyed when voice is disabled (they depend on voice)
   const streamsRow = document.querySelector('.cfn-row[data-fn="streams"]');
   if (streamsRow) streamsRow.classList.toggle('cfn-disabled', voiceOff);
@@ -704,13 +725,13 @@ _updateChannelFunctionsPanel(ch) {
   if (userLimitRow) userLimitRow.classList.toggle('cfn-disabled', voiceOff);
   // Voice Bitrate (0 = auto / no cap)
   const bitrate = ch.voice_bitrate || 0;
-  this._setCfnBadge('voice-bitrate', bitrate > 0, bitrate > 0 ? bitrate + ' kbps' : 'Auto');
+  this._setCfnBadge('voice-bitrate', bitrate > 0, bitrate > 0 ? bitrate + ' kbps' : t('channel_functions.voice_bitrate_auto'));
   // Voice bitrate greyed when voice is disabled
   const bitrateRow = document.querySelector('.cfn-row[data-fn="voice-bitrate"]');
   if (bitrateRow) bitrateRow.classList.toggle('cfn-disabled', voiceOff);
   // Announcement channel
   const isAnnouncement = ch.notification_type === 'announcement';
-  this._setCfnBadge('announcement', isAnnouncement, isAnnouncement ? 'ON' : 'OFF');
+  this._setCfnBadge('announcement', isAnnouncement, t(isAnnouncement ? 'channel_functions.on' : 'channel_functions.off'));
   // (#5389) Default role badge — show role name when set, else "None".
   // Hide for DMs since DMs have no role concept.
   // (#5467) Setting a channel's default role hands out a role, so the server
@@ -736,7 +757,7 @@ _updateChannelFunctionsPanel(ch) {
     const isClear = ch.auto_delete_mode === 'clear';
     this._setCfnBadge('self-destruct', true, isClear ? `${hoursLeft}h ↻` : `${hoursLeft}h`);
   } else {
-    this._setCfnBadge('self-destruct', false, 'OFF');
+    this._setCfnBadge('self-destruct', false, t('channel_functions.off'));
   }
   // AFK sub-channel (only for parent channels)
   const isParent = !ch.parent_channel_id && !ch.is_dm;
@@ -751,9 +772,9 @@ _updateChannelFunctionsPanel(ch) {
       const sub = (this.channels || []).find(c => c.code === afkSubCode);
       this._setCfnBadge('afk-sub', true, sub ? sub.name : afkSubCode.slice(0, 6));
     } else {
-      this._setCfnBadge('afk-sub', false, 'OFF');
+      this._setCfnBadge('afk-sub', false, t('channel_functions.off'));
     }
-    this._setCfnBadge('afk-timeout', afkTimeout > 0, afkTimeout > 0 ? `${afkTimeout}m` : 'OFF');
+    this._setCfnBadge('afk-timeout', afkTimeout > 0, afkTimeout > 0 ? `${afkTimeout}m` : t('channel_functions.off'));
   }
 },
 
@@ -1282,9 +1303,9 @@ _renderOrganizeList() {
       const label = group.tag ? this._escapeHtml(group.tag) : t('channels.untagged');
       const isTagSelected = this._organizeSelectedTag === tagKey;
       html += `<div class="organize-tag-header${isTagSelected ? ' selected' : ''}" data-tag-key="${this._escapeHtml(tagKey)}" draggable="true">
-        <span class="organize-tag-drag" title="${t('channels.drag_to_reorder') || 'Drag to reorder'}">⋮⋮</span>
+        <span class="organize-tag-drag" title="${t('channels.drag_to_reorder')}">⋮⋮</span>
         <span>${label}</span>
-        <select class="tag-sort-select" data-tag="${this._escapeHtml(tagKey)}" title="Sort this group" draggable="false">
+        <select class="tag-sort-select" data-tag="${this._escapeHtml(tagKey)}" title="${t('channels.sort_group')}" draggable="false">
           <option value="manual"${group.sort === 'manual' ? ' selected' : ''}>${t('channels.sort.manual')}</option>
           <option value="alpha"${group.sort === 'alpha' ? ' selected' : ''}>${t('channels.sort.alpha')}</option>
           <option value="created"${group.sort === 'created' ? ' selected' : ''}>${t('channels.sort.newest')}</option>
@@ -1887,7 +1908,10 @@ _renderChannels() {
     const isAnnouncement = ch.notification_type === 'announcement';
     const isTemporary = !!ch.expires_at;
     const isTempVoice = !!ch.is_temp_voice;
-    const hashIcon = isSub ? (ch.is_private ? '🔒' : '↳') : (isTempVoice ? '🔊' : (isTemporary ? '⏱️' : (isAnnouncement ? '📢' : '#')));
+    const hashIcon = isSub ? (ch.is_private ? '🔒' : '↳') : (isTempVoice ? '🔊' : (isTemporary ? '⏱️' : (isAnnouncement ? '📢' : (ch.is_forum ? '🗂️' : (ch.is_nsfw ? '🔞' : '#')))));
+    // NSFW channels stay out of sight when the user asked for that (phone in
+    // public), except the one they are actually in.
+    if (ch.is_nsfw && this._hideNsfw && this._hideNsfw() && ch.code !== this.currentChannel) el.style.display = 'none';
 
     // Build small status indicators for channel features
     const _badges = [];
@@ -2124,7 +2148,7 @@ _renderChannels() {
       let lastSubTag = undefined;
       subs.forEach(sub => {
         if (subHasTags && (lastSubTag === undefined || (sub.category || '').toLowerCase() !== (lastSubTag || '').toLowerCase())) {
-          const tagName = sub.category || 'Untagged';
+          const tagName = sub.category || t('channels.untagged');
           const tagKey = `haven_subtag_collapsed_${ch.code}_${tagName}`;
           const isTagCollapsed = localStorage.getItem(tagKey) === 'true';
           const tagLabel = document.createElement('div');
@@ -2139,7 +2163,7 @@ _renderChannels() {
           tagArrow.textContent = '▾';
           tagLabel.appendChild(tagArrow);
           const tagText = document.createElement('span');
-          tagText.textContent = tagName;
+          tagText.textContent = sub.category || t('channels.untagged');
           tagLabel.appendChild(tagText);
           tagLabel.addEventListener('click', (e) => {
             e.stopPropagation();
@@ -2158,7 +2182,7 @@ _renderChannels() {
         if (cat) subEl.dataset.catSubGroup = cat;
         if (subHasTags) {
           subEl.dataset.parentCode = ch.code;
-          subEl.dataset.subTag = sub.category || 'Untagged';
+          subEl.dataset.subTag = sub.category || t('channels.untagged');
           const subTagKey = `haven_subtag_collapsed_${ch.code}_${subEl.dataset.subTag}`;
           if (localStorage.getItem(subTagKey) === 'true') subEl.style.display = 'none';
         }
@@ -2213,6 +2237,21 @@ _renderChannels() {
     tempBtn.innerHTML = `<span style="font-size:0.9rem">➕</span><span>${t('channels.create_temp_channel')}</span>`;
     tempBtn.title = t('channels.create_temp_channel_title');
     tempBtn.addEventListener('click', async () => {
+      // One create form for every kind of channel: open it with Temporary
+      // ticked instead of a second prompt that only made a temp channel.
+      const form = document.getElementById('create-section-body');
+      const nameInput = document.getElementById('new-channel-name');
+      const tmp = document.getElementById('new-channel-temporary');
+      if (form && nameInput && tmp) {
+        form.style.display = '';
+        const arrow = document.getElementById('create-section-arrow');
+        if (arrow) arrow.textContent = '▾';
+        tmp.checked = true;
+        tmp.dispatchEvent(new Event('change'));
+        nameInput.focus();
+        nameInput.scrollIntoView({ block: 'center' });
+        return;
+      }
       const name = await this._showPromptModal(
         t('channels.create_temp_channel_title'),
         t('channels.create_temp_channel_hint')
@@ -2462,6 +2501,40 @@ _renderChannels() {
 
 // ── Drag-and-drop channel reordering ────────────────────
 
+// Chromium's native drag-and-drop only auto-scrolls the document, never a
+// nested overflow container, so a channel dragged to the top or bottom edge
+// of a long sidebar just stopped there. This drives the scroll ourselves from
+// dragover. The element that actually scrolls depends on the channel-scroll
+// mode (#channel-list in "separate", .sidebar-split in "combined" and on
+// short screens), so it is resolved on each call.
+_makeEdgeScroller(listEl, edge = 48, maxSpeed = 18) {
+  let raf = null, vel = 0;
+  const scroller = () => {
+    let el = listEl;
+    while (el && el !== document.body) {
+      const oy = getComputedStyle(el).overflowY;
+      if ((oy === 'auto' || oy === 'scroll') && el.scrollHeight > el.clientHeight) return el;
+      el = el.parentElement;
+    }
+    return listEl;
+  };
+  const stop = () => { if (raf) cancelAnimationFrame(raf); raf = null; vel = 0; };
+  const step = (sc) => () => {
+    if (!vel) { raf = null; return; }
+    sc.scrollTop += vel;
+    raf = requestAnimationFrame(step(sc));
+  };
+  const onDragOver = (clientY) => {
+    const sc = scroller();
+    const r = sc.getBoundingClientRect();
+    if (clientY < r.top + edge) vel = -maxSpeed * Math.min(1, (r.top + edge - clientY) / edge);
+    else if (clientY > r.bottom - edge) vel = maxSpeed * Math.min(1, (clientY - (r.bottom - edge)) / edge);
+    else { stop(); return; }
+    if (!raf) raf = requestAnimationFrame(step(sc));
+  };
+  return { onDragOver, stop };
+},
+
 _setupChannelDragDrop() {
   const canManage = this.user?.isAdmin || this._hasPerm('manage_server') || this._hasPerm('create_channel');
   const list = document.getElementById('channel-list');
@@ -2481,7 +2554,9 @@ _setupChannelDragDrop() {
   const indicator = document.createElement('div');
   indicator.className = 'ch-drag-indicator';
 
+  const edge = this._makeEdgeScroller(list);
   const cleanUp = () => {
+    edge.stop();
     if (dragSrc) { dragSrc.classList.remove('ch-dragging'); dragSrc = null; }
     indicator.remove();
   };
@@ -2513,6 +2588,7 @@ _setupChannelDragDrop() {
     if (!dragSrc) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
+    edge.onDragOver(e.clientY);
     const tgt = e.target.closest('.channel-item:not(.temp-channel-create-btn), .category-label');
     if (!tgt || !isCompatible(dragSrc, tgt)) { indicator.remove(); return; }
     const rect = tgt.getBoundingClientRect();
@@ -2529,6 +2605,7 @@ _setupChannelDragDrop() {
 
   list.addEventListener('drop', (e) => {
     e.preventDefault();
+    edge.stop();
     if (!dragSrc || !indicator.parentNode) { cleanUp(); return; }
     indicator.parentNode.insertBefore(dragSrc, indicator);
     indicator.remove();
@@ -2654,6 +2731,7 @@ _setupDmDragDrop() {
   indicator.className = 'ch-drag-indicator';
 
   const cleanUp = () => {
+    edge.stop();
     if (dragSrc) { dragSrc.classList.remove('ch-dragging'); dragSrc = null; }
     indicator.remove();
   };
@@ -2667,10 +2745,12 @@ _setupDmDragDrop() {
     e.dataTransfer.setData('text/plain', el.dataset.code || '');
   });
 
+  const edge = this._makeEdgeScroller(dmList);
   dmList.addEventListener('dragover', (e) => {
     if (!dragSrc) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
+    edge.onDragOver(e.clientY);
     const tgt = e.target.closest('.dm-item');
     if (!tgt || tgt === dragSrc) { indicator.remove(); return; }
     const rect = tgt.getBoundingClientRect();
@@ -2687,6 +2767,7 @@ _setupDmDragDrop() {
 
   dmList.addEventListener('drop', (e) => {
     e.preventDefault();
+    edge.stop();
     if (!dragSrc || !indicator.parentNode) { cleanUp(); return; }
     indicator.parentNode.insertBefore(dragSrc, indicator);
     indicator.remove();
@@ -2780,7 +2861,7 @@ _updateNestedIndicators() {
       if (!dot) {
         dot = document.createElement('span');
         dot.className = 'channel-badge-nested-dot';
-        dot.title = t('channels.nested_unread') || 'Unread messages inside';
+        dot.title = t('channels.nested_unread');
         el.appendChild(dot);
       }
     } else if (dot) {
@@ -2849,7 +2930,7 @@ _updateNestedIndicators() {
     if (!parentChannel) return;
     const subs = subChannelMap[parentChannel.id] || [];
     const total = subs.reduce((sum, s) => {
-      const subTag = s.category || 'Untagged';
+      const subTag = s.category || t('channels.untagged');
       if (subTag !== tagName) return sum;
       return sum + (this.unreadCounts[s.code] || 0);
     }, 0);
@@ -2991,15 +3072,15 @@ _fireNativeNotification(message, channelCode, opts) {
   const sender = this._getNickname(message.user_id, message.username);
   const channel = this.channels?.find(c => c.code === channelCode);
   const channelLabel = channel?.is_dm ? 'DM' : `#${channel?.name || channelCode}`;
-  const title = `${sender} in ${channelLabel}`;
+  const title = t('notifications_runtime.title', { sender, channel: channelLabel });
   let rawContent = message.content || '';
   // Detect E2E encrypted envelope — show generic text instead of ciphertext
   try { const p = JSON.parse(rawContent); if (p && p.v && p.ct) rawContent = ''; } catch { /* not JSON */ }
   // Burn-after-read: never reveal the message content in a notification
-  if (message.burn_seconds && message.burn_seconds > 0) rawContent = '🔥 Sent a burn message';
+  if (message.burn_seconds && message.burn_seconds > 0) rawContent = t('notifications_runtime.burn_message');
   const body = rawContent.length > 120
     ? rawContent.slice(0, 117) + '...'
-    : (rawContent || 'Sent a message');
+    : (rawContent || t('notifications_runtime.sent_message'));
 
   // Desktop app: always use native Electron notifications
   if (window.havenDesktop?.notify) {
@@ -3159,7 +3240,7 @@ _openQuickSwitcher() {
   overlay.id = 'quick-switcher-overlay';
   overlay.innerHTML = `
     <div class="quick-switcher-box">
-      <input type="text" id="quick-switcher-input" placeholder="Jump to channel or DM..." autocomplete="off" spellcheck="false">
+      <input type="text" id="quick-switcher-input" placeholder="${t('channels.quick_switcher_placeholder')}" autocomplete="off" spellcheck="false">
       <div id="quick-switcher-results"></div>
     </div>
   `;
