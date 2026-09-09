@@ -26,15 +26,18 @@
         if (this.session) this.end('disconnected', true);
       });
       window.addEventListener('haven-desktop-remote-control-ready', () => this._detectCapability());
-      window.addEventListener('haven-remote-control-revoked', event => {
+      window.addEventListener('ciacord-desktop-remote-control-ready', () => this._detectCapability());
+      const onNativeRevoked = event => {
         if (this.session && event.detail?.sessionId === this.session.id) {
           this.end(event.detail.reason || 'native-revoked', true);
         }
-      });
+      };
+      window.addEventListener('haven-remote-control-revoked', onNativeRevoked);
+      window.addEventListener('ciacord-remote-control-revoked', onNativeRevoked);
     }
 
     async _detectCapability() {
-      const bridge = window.havenDesktopRemoteControl;
+      const bridge = this._nativeBridge();
       if (bridge?.getCapability) {
         try { this.capability = await bridge.getCapability(); } catch {}
       }
@@ -185,9 +188,9 @@
     }
 
     async _startHost(session) {
-      const bridge = window.havenDesktopRemoteControl;
+      const bridge = this._nativeBridge();
       if (!bridge?.authorize || !this.capability.hostSupported) {
-        throw new Error('Hosting remote control requires Haven Desktop on Windows');
+        throw new Error('Hosting remote control requires Ciacord Desktop on Windows');
       }
       const authorization = await bridge.authorize({
         sessionId: session.id,
@@ -264,21 +267,21 @@
               session.pointerFlushPending = false;
               const point = session.latestPointer;
               session.latestPointer = null;
-              if (point) window.havenDesktopRemoteControl?.injectPointer(session.nativeToken, point.x, point.y);
+              if (point) this._nativeBridge()?.injectPointer(session.nativeToken, point.x, point.y);
             }, 1);
           }
           return;
         }
         if (event.data instanceof ArrayBuffer) {
           const input = this._decodeControlPacket(event.data);
-          if (input) window.havenDesktopRemoteControl?.inject(session.nativeToken, input);
+          if (input) this._nativeBridge()?.inject(session.nativeToken, input);
           return;
         }
         if (typeof event.data !== 'string' || event.data.length > 1024) return;
         try {
           const payload = JSON.parse(event.data);
           if (payload.sessionId !== session.id || !payload.input) return;
-          window.havenDesktopRemoteControl?.inject(session.nativeToken, payload.input);
+          this._nativeBridge()?.inject(session.nativeToken, payload.input);
         } catch {}
       };
     }
@@ -537,7 +540,7 @@
       try { session.pc?.close(); } catch {}
       try { session.screenStream?.getTracks().forEach(track => track.stop()); } catch {}
       if (session.nativeToken) {
-        try { await window.havenDesktopRemoteControl?.revoke({ token: session.nativeToken }); } catch {}
+        try { await this._nativeBridge()?.revoke({ token: session.nativeToken }); } catch {}
       }
       document.getElementById('remote-control-overlay')?.remove();
       document.getElementById('remote-control-host-banner')?.remove();
@@ -568,6 +571,10 @@
           : (typeof t === 'function' ? t(`remote_control.${key}`, params || {}) : '');
         return translated && translated !== `remote_control.${key}` ? translated : fallback;
       } catch { return fallback; }
+    }
+
+    _nativeBridge() {
+      return window.ciacordDesktopRemoteControl || window.havenDesktopRemoteControl;
     }
 
     _escape(value) {
