@@ -350,7 +350,6 @@ class HavenApp {
     this._setupLightbox();
     this._setupOnlineOverlay();
     this._setupModalExpand();
-    this._checkForUpdates();
     this._initMoveMessages();
 
     // CSP-safe image error handling (no inline onerror attributes)

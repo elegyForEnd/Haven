@@ -354,7 +354,6 @@ test('core semantic fills use their paired foreground tokens', () => {
     'music.css:.music-search-picker-play'
   ]);
   const statePairs = [
-    ['style.css', '.update-banner:hover', '--accent-text'],
     ['style.css', '.image-queue-remove:hover', '--danger-text'],
     ['style.css', '.ferry-step-done .ferry-step-num', '--success-text']
   ];

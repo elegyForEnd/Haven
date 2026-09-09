@@ -698,10 +698,6 @@ _applyServerSettings() {
     });
     if (typeof this._refreshAutoBackupList === 'function') this._refreshAutoBackupList();
 
-    const updateBannerAdminOnly = document.getElementById('update-banner-admin-only');
-    if (updateBannerAdminOnly) {
-      updateBannerAdminOnly.checked = this.serverSettings.update_banner_admin_only === 'true';
-    }
     const defaultTheme = document.getElementById('default-theme-select');
     if (defaultTheme) {
       defaultTheme.value = this.serverSettings.default_theme || '';
@@ -862,9 +858,6 @@ _applyServerSettings() {
 
   // Always update visual branding regardless of modal state
   this._applyServerBranding();
-
-  // Re-evaluate update banner visibility whenever settings change
-  this._applyUpdateBanner();
 
   // Re-render channels in case sort mode changed
   if (!localStorage.getItem('haven_server_sort_mode')) this._renderChannels();
@@ -1069,7 +1062,6 @@ _snapshotAdminSettings() {
     max_poll_options: this.serverSettings.max_poll_options || '10',
     session_duration_days: this.serverSettings.session_duration_days || '7',
     max_message_chars: this.serverSettings.max_message_chars || '2000',
-    update_banner_admin_only: this.serverSettings.update_banner_admin_only || 'false',
     admin_password_reset_enabled: this.serverSettings.admin_password_reset_enabled || 'false',
     unicode_emoji_auto_update: this.serverSettings.unicode_emoji_auto_update || 'false',
     registration_captcha_enabled: this.serverSettings.registration_captcha_enabled || 'false',
@@ -1244,12 +1236,6 @@ _saveAdminSettings() {
     changed = true;
   }
 
-  const updateBannerAdminOnly = document.getElementById('update-banner-admin-only')?.checked ? 'true' : 'false';
-  if (updateBannerAdminOnly !== (snap.update_banner_admin_only || 'false')) {
-    this.socket.emit('update-server-setting', { key: 'update_banner_admin_only', value: updateBannerAdminOnly });
-    changed = true;
-  }
-
   const adminPwReset = document.getElementById('admin-password-reset-enabled')?.checked ? 'true' : 'false';
   if (adminPwReset !== (snap.admin_password_reset_enabled || 'false')) {
     this.socket.emit('update-server-setting', { key: 'admin_password_reset_enabled', value: adminPwReset });
@@ -1418,8 +1404,6 @@ _cancelAdminSettings() {
     if (sdd) sdd.value = snap.session_duration_days ?? '0';
     const mmc = document.getElementById('max-message-chars');
     if (mmc) mmc.value = snap.max_message_chars || '2000';
-    const uba = document.getElementById('update-banner-admin-only');
-    if (uba) uba.checked = snap.update_banner_admin_only === 'true';
     const dt = document.getElementById('default-theme-select');
     if (dt) dt.value = snap.default_theme || '';
     const dl = document.getElementById('default-locale-select');

@@ -4111,29 +4111,6 @@ html.rgb-cycling *::after {
   flex-shrink: 0;
 }
 
-/* ── Update Available Banner ── */
-.update-banner {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.375rem;
-  padding: 0.25rem 0.75rem;
-  background: linear-gradient(135deg, var(--accent), var(--accent-hover));
-  color: var(--accent-text);
-  font-size: 0.75rem;
-  font-weight: 600;
-  border-radius: 1.25rem;
-  text-decoration: none;
-  white-space: nowrap;
-  flex-shrink: 0;
-  cursor: pointer;
-  animation: updateFadeIn 0.4s ease;
-  transition: transform 0.15s, box-shadow 0.15s;
-}
-.update-banner:hover {
-  transform: scale(1.05);
-  box-shadow: 0 2px 12px rgba(var(--accent-rgb, 88, 101, 242), 0.4);
-  color: var(--accent-text);
-}
 /* Low disk warning, admins only (#5505). Amber rather than red: uploads are
    refused but the server is still working, so this is a "go clear some space"
    nudge and not an outage. */
@@ -4225,13 +4202,6 @@ html.rgb-cycling *::after {
   animation: updatePulse 1.5s ease-in-out infinite;
 }
 
-.update-pulse {
-  width: 0.5rem;
-  height: 0.5rem;
-  background: #fff;
-  border-radius: 50%;
-  animation: updatePulse 1.5s ease-in-out infinite;
-}
 @keyframes updatePulse {
   0%, 100% { opacity: 1; transform: scale(1); }
   50% { opacity: 0.5; transform: scale(0.8); }
@@ -12595,11 +12565,9 @@ html:not([data-toolbaricons="emoji"]):not([data-toolbaricons="color"]) .tb-icon-
   /* Android beta banner — hide on phone, it eats header space */
   .android-beta-banner { display: none !important; }
 
-  /* Update banner — compact on phone */
-  .update-banner { padding: 0.1875rem 0.5rem; font-size: 0.6875rem; }
+  /* Low disk warning — compact on phone */
   .disk-low-banner { padding: 0.1875rem 0.5rem; font-size: 0.6875rem; }
   .disk-low-dot { width: 0.375rem; height: 0.375rem; }
-  .update-pulse { width: 0.375rem; height: 0.375rem; }
 
   /* Desktop app banner — hide on mobile (they have Haven-Android) */
   .desktop-app-banner { display: none !important; }
@@ -18087,13 +18055,10 @@ ul.chat-list { list-style-type: disc; }
 .main.banner-mode-transparent .channel-code-tag {
   text-shadow: none;
 }
-.main.banner-mode-shaded .update-banner,
 .main.banner-mode-shaded .desktop-app-banner,
 .main.banner-mode-shaded .android-beta-banner,
-.main.banner-mode-minimal .update-banner,
 .main.banner-mode-minimal .desktop-app-banner,
 .main.banner-mode-minimal .android-beta-banner,
-.main.banner-mode-transparent .update-banner,
 .main.banner-mode-transparent .desktop-app-banner,
 .main.banner-mode-transparent .android-beta-banner {
   text-shadow: none;
