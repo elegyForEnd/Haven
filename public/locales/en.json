@@ -773,7 +773,6 @@
     "reset_encryption": "Reset Encryption Keys",
     "search_placeholder": "Search... from:user in:#channel has:image",
     "get_desktop_app": "Get the Desktop App",
-    "android_beta": "Android App",
     "results": "Results",
     "pinned_count": "Pinned Messages",
     "uploading": "Uploading...",
@@ -2501,13 +2500,6 @@
       "working": "Working...",
       "failed": "Cleanup failed.",
       "done": "Removed {n} account(s)."
-    },
-    "recovery_notice": {
-      "title": "Account Recovery Codes",
-      "body": "You can now generate one-time recovery codes in <strong>Settings → 🔑 Recovery</strong>. If you ever forget your password, these codes let you reset it — no admin needed.",
-      "warning": "<strong>Heads up:</strong> Using a recovery code resets your password <em>and</em> wipes your E2E encryption keys on other devices. Encrypted DMs will be unreadable on any device you haven't used recently.",
-      "dsa": "Don't show this again",
-      "go_btn": "Go to Recovery Settings"
     },
     "wizard": {
       "title": "Welcome to Ciacord",

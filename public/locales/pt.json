@@ -733,7 +733,6 @@
     "reset_encryption": "Redefinir chaves de criptografia",
     "search_placeholder": "Pesquisar... from:usuário in:#canal has:image",
     "get_desktop_app": "Baixar o aplicativo para desktop",
-    "android_beta": "Aplicativo Android",
     "results": "Resultados",
     "pinned_count": "Mensagens fixadas",
     "uploading": "Enviando...",
@@ -2440,13 +2439,6 @@
       "working": "Processando...",
       "failed": "Falha na limpeza.",
       "done": "{n} conta(s) removida(s)."
-    },
-    "recovery_notice": {
-      "title": "Códigos de recuperação da conta",
-      "body": "Agora você pode gerar códigos de recuperação de uso único em <strong>Configurações → 🔑 Recuperação</strong>. Se esquecer sua senha, esses códigos permitirão redefini-la sem precisar de um administrador.",
-      "warning": "<strong>Atenção:</strong> usar um código de recuperação redefine sua senha <em>e</em> apaga suas chaves de criptografia E2E nos outros dispositivos. As DMs criptografadas ficarão ilegíveis em qualquer dispositivo que você não tenha usado recentemente.",
-      "dsa": "Não mostrar novamente",
-      "go_btn": "Ir para a recuperação da conta"
     },
     "wizard": {
       "title": "Bem-vindo ao Haven",

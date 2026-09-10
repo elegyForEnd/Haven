@@ -446,7 +446,6 @@
     "reset_encryption": "重置加密密钥",
     "search_placeholder": "搜索消息...",
     "get_desktop_app": "获取桌面应用",
-    "android_beta": "Android 测试版",
     "results": "结果",
     "pinned_count": "置顶消息",
     "uploading": "上传中...",
@@ -1093,13 +1092,6 @@
       "confirm": "确认",
       "dismiss": "忽略",
       "ok": "确定"
-    },
-    "recovery_notice": {
-      "title": "账户恢复码",
-      "body": "您现在可以在<strong>设置 → 🔑 恢复</strong>中生成一次性恢复码。如果您忘记密码，这些恢复码可以让您重置密码 — 无需管理员协助。",
-      "warning": "<strong>注意：</strong>使用恢复码会重置您的密码，<em>同时</em>清除其他设备上的E2E加密密钥。在您近期未使用的任何设备上，加密私信将无法读取。",
-      "dsa": "不再显示",
-      "go_btn": "前往恢复设置"
     },
     "wizard": {
       "title": "欢迎来到 Ciacord",

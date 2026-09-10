@@ -415,7 +415,6 @@
     "reset_encryption": "Réinitialiser les clés de chiffrement",
     "search_placeholder": "Rechercher des messages...",
     "get_desktop_app": "Obtenir l'application bureau",
-    "android_beta": "Bêta Android",
     "results": "Résultats",
     "pinned_count": "Messages épinglés",
     "uploading": "Envoi en cours...",
@@ -1057,13 +1056,6 @@
       "confirm": "Confirmer",
       "dismiss": "Ignorer",
       "ok": "OK"
-    },
-    "recovery_notice": {
-      "title": "Codes de récupération de compte",
-      "body": "Vous pouvez désormais générer des codes de récupération à usage unique dans <strong>Paramètres → 🔑 Récupération</strong>. Si vous oubliez votre mot de passe, ces codes vous permettent de le réinitialiser — sans intervention d'un admin.",
-      "warning": "<strong>Attention :</strong> L'utilisation d'un code de récupération réinitialise votre mot de passe <em>et</em> efface vos clés de chiffrement E2E sur les autres appareils. Les DM chiffrés seront illisibles sur tout appareil que vous n'avez pas utilisé récemment.",
-      "dsa": "Ne plus afficher",
-      "go_btn": "Accéder aux paramètres de récupération"
     },
     "wizard": {
       "title": "Bienvenue sur Ciacord",

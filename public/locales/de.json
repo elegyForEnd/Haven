@@ -415,7 +415,6 @@
     "reset_encryption": "Verschlüsselungsschlüssel zurücksetzen",
     "search_placeholder": "Nachrichten suchen...",
     "get_desktop_app": "Desktop-App herunterladen",
-    "android_beta": "Android Beta",
     "results": "Ergebnisse",
     "pinned_count": "Angeheftete Nachrichten",
     "uploading": "Wird hochgeladen...",
@@ -1057,13 +1056,6 @@
       "confirm": "Bestätigen",
       "dismiss": "Schließen",
       "ok": "OK"
-    },
-    "recovery_notice": {
-      "title": "Kontowiederherstellungscodes",
-      "body": "Du kannst jetzt Einmal-Wiederherstellungscodes unter <strong>Einstellungen → 🔑 Wiederherstellung</strong> generieren. Falls du dein Passwort vergisst, kannst du es damit zurücksetzen — ohne Admin-Hilfe.",
-      "warning": "<strong>Hinweis:</strong> Die Verwendung eines Wiederherstellungscodes setzt dein Passwort zurück <em>und</em> löscht deine E2E-Verschlüsselungsschlüssel auf anderen Geräten. Verschlüsselte DMs werden auf Geräten, die du nicht kürzlich verwendet hast, unlesbar.",
-      "dsa": "Nicht mehr anzeigen",
-      "go_btn": "Zu den Wiederherstellungseinstellungen"
     },
     "wizard": {
       "title": "Willkommen bei Ciacord",

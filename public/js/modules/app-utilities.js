@@ -1264,66 +1264,6 @@ _showToast(message, type = 'info', action = null, duration = 4000) {
   setTimeout(() => toast.remove(), duration);
 },
 
-/** Show a one-time notice about the Account Recovery feature.
- *  Whether to show it at all is decided server-side (no recovery codes yet AND
- *  not previously dismissed) — see get-recovery-notice-state. This only guards
- *  against showing twice within a single session (e.g. socket reconnects). */
-_showRecoveryNotice() {
-  if (this._recoveryNoticeShown) return;
-  this._recoveryNoticeShown = true;
-
-  const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay recovery-notice-overlay';
-  overlay.style.cssText = 'display:flex;z-index:9999';
-  overlay.innerHTML = `
-    <div class="modal" style="max-width:400px">
-      <h3>🔑 ${t('modals.recovery_notice.title')}</h3>
-      <p class="modal-desc" style="margin-bottom:12px">${t('modals.recovery_notice.body')}</p>
-      <div style="background:rgba(231,76,60,0.12);border:1px solid rgba(231,76,60,0.4);border-radius:8px;padding:10px 12px;margin-bottom:14px;font-size:0.83rem;color:var(--text-secondary)">
-        ⚠️ ${t('modals.recovery_notice.warning')}
-      </div>
-      <label style="display:flex;align-items:center;gap:8px;font-size:0.85rem;color:var(--text-muted);margin-bottom:14px;cursor:pointer">
-        <input type="checkbox" id="recovery-notice-dsa">
-        <span>${t('modals.recovery_notice.dsa')}</span>
-      </label>
-      <div class="modal-actions">
-        <button class="btn-primary" id="recovery-notice-go">${t('modals.recovery_notice.go_btn')}</button>
-        <button class="btn-sm" id="recovery-notice-close" style="padding:8px 18px">${t('modals.common.dismiss')}</button>
-      </div>
-    </div>
-  `;
-
-  document.body.appendChild(overlay);
-
-  // Persist "never show again" per-account (not localStorage), same as the
-  // promo modals. A plain close is session-only; the notice returns next login
-  // unless the user generates recovery codes (which the server check suppresses
-  // it on) or ticks the box here.
-  const persistIfChecked = () => {
-    if (document.getElementById('recovery-notice-dsa')?.checked) {
-      this.socket.emit('set-preference', { key: 'recovery_notice_seen', value: 'true' });
-    }
-  };
-
-  const dismiss = () => {
-    persistIfChecked();
-    overlay.remove();
-  };
-
-  document.getElementById('recovery-notice-close').addEventListener('click', dismiss);
-  document.getElementById('recovery-notice-go').addEventListener('click', () => {
-    persistIfChecked();
-    overlay.remove();
-    // Open settings modal and navigate to recovery section
-    document.getElementById('open-settings-btn')?.click();
-    setTimeout(() => {
-      const navItem = document.querySelector('.settings-nav-item[data-target="section-recovery"]');
-      if (navItem) navItem.click();
-    }, 150);
-  });
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) dismiss(); });
-},
-
 /** Warn users before downloading potentially harmful file types */
 _showExternalLinkWarning(displayText, url) {
   document.querySelector('.risky-download-overlay')?.remove();

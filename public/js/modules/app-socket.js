@@ -437,8 +437,6 @@ _setupSocketListeners() {
       this.socket.emit('set-status', this._pendingStatus);
       this._pendingStatus = null;
     }
-    // The server decides whether this account still needs the recovery notice.
-    this.socket.emit('get-recovery-notice-state');
   });
   document.addEventListener('visibilitychange', () => {
     this.socket?.emit('visibility-change', { visible: !document.hidden });
@@ -2406,8 +2404,6 @@ _setupSocketListeners() {
   // ── User preferences (persistent theme etc.) ───────
   this.socket.on('preferences', (prefs) => {
     this._userPrefs = prefs || {};
-    // The top-bar Android banner waits for this record before it shows (#5594).
-    this._syncAndroidBanner?.();
     // Effects come back from the server like the theme does; restore them
     // first so applyThemeFromServer() applies the saved pick, not the default.
     if (prefs.effects && typeof syncEffectsFromServer === 'function') syncEffectsFromServer(prefs.effects);
@@ -2436,13 +2432,6 @@ _setupSocketListeners() {
     // Activity toggles live entirely server-side (other clients must honour
     // them), so the UI can only be correct once prefs land.
     this._syncActivityUI?.();
-  });
-
-  // Server's verdict on the recovery-codes notice (see the connect handler's
-  // get-recovery-notice-state emit). Only shows when the account has no
-  // recovery codes and the user hasn't ticked "never show again".
-  this.socket.on('recovery-notice-state', ({ show } = {}) => {
-    if (show) setTimeout(() => this._showRecoveryNotice(), 2500);
   });
 
   // ── Rich presence: linked accounts ─────────────────

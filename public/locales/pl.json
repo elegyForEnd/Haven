@@ -437,7 +437,6 @@
     "reset_encryption": "Resetuj klucze szyfrowania",
     "search_placeholder": "Szukaj... od:użytkownik na:#kanale zawiera:obraz",
     "get_desktop_app": "Pobierz aplikację desktopową",
-    "android_beta": "Aplikacja Android",
     "results": "Wyniki",
     "pinned_count": "Przypięte wiadomości",
     "uploading": "Przesyłanie...",
@@ -1105,13 +1104,6 @@
       "confirm": "Potwierdź",
       "dismiss": "Odrzuć",
       "ok": "OK"
-    },
-    "recovery_notice": {
-      "title": "Kody odzyskiwania konta",
-      "body": "Możesz teraz generować jednorazowe kody odzyskiwania w <strong>Ustawienia → 🔑 Odzyskiwanie</strong>. Jeśli zapomnisz hasła, te kody pozwolą je zresetować — bez potrzeby angażowania administratora.",
-      "warning": "<strong>Uwaga:</strong> Użycie kodu odzyskiwania resetuje hasło <em>i</em> usuwa klucze szyfrowania E2E na innych urządzeniach. Zaszyfrowane wiadomości prywatne będą nieczytelne na urządzeniach, z których nie korzystałeś ostatnio.",
-      "dsa": "Nie pokazuj ponownie",
-      "go_btn": "Przejdź do ustawień odzyskiwania"
     },
     "wizard": {
       "title": "Witaj w Ciacord",

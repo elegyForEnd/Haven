@@ -98,75 +98,6 @@ _initDesktopAppBanner() {
     if (e.target === modal) modal.style.display = 'none';
   });
 },
-/** Wire the "Android Beta" banner in the top bar. The signup modal itself
- *  is shown via the unified welcome-popup queue (see `_initWelcomePopups`). */
-_initAndroidBetaBanner() {
-  // ── Top-bar banner ──
-  // Gone for good once the person closes it, or ticks "Don't show this
-  // again" on the promo. The record lives with the account like the promo's
-  // own, with a localStorage copy for the moment before preferences arrive.
-  // Nothing wrote the permanent flag before, so the banner came back on
-  // every reload whatever was clicked (#5594).
-  const banner = document.getElementById('android-beta-banner');
-  if (banner && !banner.dataset.wired) {
-    banner.dataset.wired = '1';
-    banner.addEventListener('click', (e) => {
-      // Don't open modal if dismiss button was clicked
-      if (e.target.closest('.android-beta-dismiss')) return;
-      const modal = document.getElementById('android-beta-modal');
-      if (modal) modal.style.display = 'flex';
-    });
-    const dismissBtn = document.getElementById('android-beta-dismiss');
-    if (dismissBtn) {
-      dismissBtn.addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        try { localStorage.setItem('haven_ab_banner_nodisplay', '1'); } catch { /* storage unavailable */ }
-        if (this._userPrefs) this._userPrefs.android_banner_seen = 'true';
-        this.socket?.emit('set-preference', { key: 'android_banner_seen', value: 'true' });
-        this._syncAndroidBanner();
-      });
-    }
-  }
-  this._syncAndroidBanner();
-
-  // ── Wire the modal's own close buttons (Maybe Later, Submit, overlay
-  // click) to just hide the modal. The welcome-popup queue takes care of
-  // marking the entry as seen and advancing to the next popup via a
-  // MutationObserver on display style. ──
-  const modal = document.getElementById('android-beta-modal');
-  if (!modal) return;
-
-  const submitBtn = document.getElementById('android-beta-submit');
-  if (submitBtn) {
-    submitBtn.addEventListener('click', () => { modal.style.display = 'none'; });
-  }
-  const laterBtn = document.getElementById('android-beta-later');
-  if (laterBtn) {
-    laterBtn.addEventListener('click', () => { modal.style.display = 'none'; });
-  }
-  modal.addEventListener('click', (e) => {
-    if (e.target === modal) modal.style.display = 'none';
-  });
-},
-
-/** Show or hide the top-bar Android banner from what is known right now:
- *  closed once (account record or its local copy), or the promo's "Don't
- *  show this again" ticked. Runs at start-up, when preferences arrive, and
- *  after either dismissal (#5594). Until the account's record is in, the
- *  banner stays down rather than flashing at someone who already closed it. */
-_syncAndroidBanner() {
-  const banner = document.getElementById('android-beta-banner');
-  if (!banner) return;
-  let local = false;
-  try { local = !!localStorage.getItem('haven_ab_banner_nodisplay'); } catch { /* storage unavailable */ }
-  const prefs = this._userPrefs || {};
-  const gone = local || prefs.android_banner_seen === 'true' || prefs.promo_seen_android === 'true';
-  if (gone) { banner.style.display = 'none'; return; }
-  if (!this._userPrefs) return;
-  banner.style.display = 'inline-flex';
-},
-
 // ── Welcome Popup Queue (#5391 followup) ───────────────
 /** Unified first-time-visit popup sequencer. Replaces the previous
  *  uncoordinated `setTimeout`-soup where each promo modal raced the others.
@@ -207,16 +138,12 @@ _initWelcomePopups() {
       const legacy = {
         promo_seen_desktop: seen.desktop_app_promo || localStorage.getItem('haven_desktop_promo_dismissed'),
         promo_seen_android: seen.android_app_promo || localStorage.getItem('haven_ab_promo_nodisplay'),
-        recovery_notice_seen: localStorage.getItem('haven_recovery_notice_v1'),
       };
       for (const [prefKey, wasDismissed] of Object.entries(legacy)) {
         if (!wasDismissed || this._userPrefs[prefKey] === 'true') continue;
         this._userPrefs[prefKey] = 'true';
         this.socket.emit('set-preference', { key: prefKey, value: 'true' });
       }
-      // The server already answered get-recovery-notice-state for this
-      // connection before the pref landed, so cover this session by hand.
-      if (legacy.recovery_notice_seen) this._recoveryNoticeShown = true;
       localStorage.setItem('haven_promo_prefs_migrated', '1');
     }
   } catch { /* storage unavailable: nothing to carry over */ }
@@ -318,8 +245,6 @@ _initWelcomePopups() {
         if (checkbox && checkbox.checked) {
           this.socket.emit('set-preference', { key: entry.prefKey, value: 'true' });
           if (this._userPrefs) this._userPrefs[entry.prefKey] = 'true';
-          // The Android promo's box retires the top-bar banner too (#5594).
-          if (entry.prefKey === 'promo_seen_android') this._syncAndroidBanner?.();
         }
         idx++;
         // Tiny delay so the close animation / focus shift completes before

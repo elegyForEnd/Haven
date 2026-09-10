@@ -415,7 +415,6 @@
     "reset_encryption": "Restablecer claves de cifrado",
     "search_placeholder": "Buscar mensajes...",
     "get_desktop_app": "Obtener la app de escritorio",
-    "android_beta": "Android Beta",
     "results": "Resultados",
     "pinned_count": "Mensajes fijados",
     "uploading": "Subiendo...",
@@ -1057,13 +1056,6 @@
       "confirm": "Confirmar",
       "dismiss": "Descartar",
       "ok": "OK"
-    },
-    "recovery_notice": {
-      "title": "Códigos de recuperación de cuenta",
-      "body": "Ahora puedes generar códigos de recuperación de un solo uso en <strong>Configuración → 🔑 Recuperación</strong>. Si alguna vez olvidas tu contraseña, estos códigos te permiten restablecerla sin necesidad de un admin.",
-      "warning": "<strong>Aviso:</strong> Usar un código de recuperación restablece tu contraseña <em>y</em> borra tus claves de cifrado E2E en otros dispositivos. Los DMs cifrados serán ilegibles en cualquier dispositivo que no hayas usado recientemente.",
-      "dsa": "No mostrar esto de nuevo",
-      "go_btn": "Ir a configuración de recuperación"
     },
     "wizard": {
       "title": "Bienvenido a Ciacord",
