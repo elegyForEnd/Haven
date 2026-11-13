@@ -33,7 +33,7 @@
       const raw = sessionStorage.getItem('haven_oidc_handoff');
       sessionStorage.removeItem('haven_oidc_handoff');
       if (raw) _oidcHandoff = JSON.parse(raw);
-    } catch { /* malformed handoff — fall through to the normal login page */ }
+    } catch { /* malformed handoff, fall through to the normal login page */ }
     history.replaceState({}, '', window.location.pathname);
   }
   const _oidcError = _urlParams.get('oidc_error') || '';
@@ -47,6 +47,23 @@
 
   // Initialise translations before rendering any UI text
   await window.i18n.init();
+
+  // Opens the app after a password sign-in, with the key that unlocks the
+  // encrypted-DM backup. An account with its own encryption passphrase is not
+  // unlocked from the password (the server receives that at every sign-in,
+  // which is what the passphrase avoids), so it asks for the passphrase.
+  async function enterApp(user, password) {
+    if (user && user.e2ePassphrase) {
+      sessionStorage.removeItem('haven_e2e_wrap');
+      showE2EPassStep(true, (wrapKey) => {
+        if (wrapKey) sessionStorage.setItem('haven_e2e_wrap', wrapKey);
+        window.location.href = _appUrl;
+      }, 'auth.e2e_pass.unlock_desc_own');
+      return;
+    }
+    sessionStorage.setItem('haven_e2e_wrap', await deriveE2EWrappingKey(password));
+    window.location.href = _appUrl;
+  }
 
   // ── E2E wrapping key derivation (mirrors HavenE2E.deriveWrappingKey) ───
   async function deriveE2EWrappingKey(password) {
@@ -92,7 +109,29 @@
   fetch('/api/version').then(r => r.json()).then(d => {
     const el = document.getElementById('auth-version');
     if (el && d.version) el.textContent = 'v' + d.version;
-  }).catch(() => {});
+  }).catch(() => { /* the version label is cosmetic: leave it blank */ });
+
+  // The login page's look (#5819), from Settings > Branding: the server icon
+  // as a logo, the banner as the background, a message, and the admin's CSS.
+  // Adding ?nocss to the address skips the CSS, for when a style has hidden
+  // the form. The CSS goes in as text, never markup, so it cannot add tags.
+  function applyLoginBranding(d) {
+    const skipCss = new URLSearchParams(location.search).has('nocss');
+    const logo = document.getElementById('auth-server-logo');
+    if (logo && d.login_logo) { logo.src = d.login_logo; logo.hidden = false; }
+    const msg = document.getElementById('auth-login-message');
+    if (msg && d.login_message) { msg.textContent = d.login_message; msg.hidden = false; }
+    if (d.login_background && /^\/uploads\//.test(d.login_background)) {
+      document.body.classList.add('auth-has-background');
+      document.body.style.setProperty('--auth-background', `url("${d.login_background.replace(/["\\]/g, '')}")`);
+    }
+    if (d.login_css && !skipCss) {
+      const style = document.createElement('style');
+      style.id = 'login-custom-css';
+      style.textContent = d.login_css;
+      document.head.appendChild(style);
+    }
+  }
 
   // ── Apply server default theme for first-time visitors ──
   // Only applies when the user has no personal theme preference stored locally.
@@ -120,6 +159,10 @@
       const titleEl = document.getElementById('server-title');
       if (titleEl) titleEl.textContent = d.server_title;
     }
+    applyLoginBranding(d);
+    // Tab branding for the login page (issue #5284). Mirrors what the
+    // authenticated app does so multi-server tabs stay distinguishable
+    // even before signing in.
     if (d.server_name && d.server_name.toLowerCase() !== 'haven') {
       document.title = `Ciacord: ${d.server_name} — Login`;
     }
@@ -144,7 +187,7 @@
         section.style.display = 'block';
       }
     }
-  }).catch(() => {});
+  }).catch((err) => { console.warn('[Auth] could not load the public config', err); });
 
   // ── EULA ─────────────────────────────────────────────
   const ageCheckbox  = document.getElementById('age-checkbox');
@@ -336,19 +379,24 @@
     const username = document.getElementById('login-username').value.trim();
     const password = document.getElementById('login-password').value;
     if (!username || !password) return showError(t('auth.errors.enter_admin_credentials'));
+    const codeInput = document.getElementById('admin-recover-code');
+    const code = codeInput ? codeInput.value.trim() : '';
     try {
       const res = await fetch('/api/auth/admin-recover', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password })
+        body: JSON.stringify({ username, password, ...(code ? { code } : {}) })
       });
       const data = await res.json();
+      // An account with two-factor on asks for its code here too.
+      if (data && data.needsCode && codeInput) {
+        codeInput.style.display = '';
+        codeInput.focus();
+      }
       if (!res.ok) return showError(data.error || t('auth.errors.recovery_failed'));
-      const e2eWrap = await deriveE2EWrappingKey(password);
-      sessionStorage.setItem('haven_e2e_wrap', e2eWrap);
       localStorage.setItem('haven_token', data.token);
       localStorage.setItem('haven_user', JSON.stringify(data.user));
-      window.location.href = _appUrl;
+      await enterApp(data.user, password);
     } catch {
       showError(t('auth.errors.connection_error'));
     }
@@ -404,7 +452,7 @@
       });
       const data = await res.json();
       if (!res.ok) return showError(data.error || t('auth.errors.recovery_failed'));
-      // Success — go back to login with a success message
+      // Success: go back to login with a success message
       hideRecoverForm();
       showError(t('auth.errors.password_reset_success'));
       document.getElementById('auth-error').style.color = 'var(--success, #2ecc71)';
@@ -459,14 +507,11 @@
         return;
       }
 
-      // Derive E2E wrapping key from password (client-side only, never sent to server)
-      const e2eWrap = await deriveE2EWrappingKey(password);
-      sessionStorage.setItem('haven_e2e_wrap', e2eWrap);
-
       localStorage.setItem('haven_token', data.token);
       localStorage.setItem('haven_user', JSON.stringify(data.user));
       localStorage.setItem('haven_eula_accepted', '2.0');
-      window.location.href = _appUrl;
+      // The E2E key is derived here, client-side, and never sent anywhere.
+      await enterApp(data.user, password);
     } catch (err) {
       showError(t('auth.errors.connection_error'));
     }
@@ -539,15 +584,13 @@
         return;
       }
 
-      // Derive E2E wrapping key from the original password
-      const e2eWrap = await deriveE2EWrappingKey(_pendingChallenge.password);
-      sessionStorage.setItem('haven_e2e_wrap', e2eWrap);
-
       localStorage.setItem('haven_token', data.token);
       localStorage.setItem('haven_user', JSON.stringify(data.user));
       localStorage.setItem('haven_eula_accepted', '2.0');
+      // The E2E key comes from the original password.
+      const password = _pendingChallenge.password;
       _pendingChallenge = null;
-      window.location.href = _appUrl;
+      await enterApp(data.user, password);
     } catch (err) {
       showError(t('auth.errors.connection_error'));
     }
@@ -634,14 +677,13 @@
       // password remains the wrap key source. preserved=false means the
       // new password is now the wrap key source (DMs unrecoverable).
       const wrapSource = data.preserved ? oldPw : newPw;
-      const e2eWrap = await deriveE2EWrappingKey(wrapSource);
-      sessionStorage.setItem('haven_e2e_wrap', e2eWrap);
 
       localStorage.setItem('haven_token', data.token);
       localStorage.setItem('haven_user', JSON.stringify(data.user));
       localStorage.setItem('haven_eula_accepted', '2.0');
       _pendingForcedChange = null;
-      window.location.href = _appUrl;
+      // A separate encryption passphrase is untouched by the password change.
+      await enterApp(data.user, wrapSource);
     } catch (err) {
       showError(t('auth.errors.connection_error'));
     }
@@ -663,7 +705,7 @@
           }
         }
       }
-    } catch { /* ignore */ }
+    } catch { /* corrupt or blocked storage: no recent servers to suggest */ }
 
     let ssoAuthCode = null;
     let ssoServerUrl = null;
@@ -680,6 +722,19 @@
     const ssoRegisterBtn  = document.getElementById('sso-register-btn');
     const ssoBackBtn      = document.getElementById('sso-back-btn');
     const ssoServerInput  = document.getElementById('sso-server-url');
+    const ssoUsernameInput = document.getElementById('sso-username');
+
+    // Haven usernames are letters, numbers and underscores. A legacy home
+    // server may send a display-name-like value, so fold it into that shape.
+    const normalizeSsoUsername = (value) => {
+      if (typeof value !== 'string') return '';
+      return value
+        .trim()
+        .replace(/[^a-zA-Z0-9_]/g, '_')
+        .replace(/_+/g, '_')
+        .replace(/^_+|_+$/g, '')
+        .slice(0, 20);
+    };
 
     const stopSsoPolling = () => {
       if (ssoPollTimer) {
@@ -707,17 +762,37 @@
       const profileUsername = (typeof ssoProfileData.username === 'string' ? ssoProfileData.username.trim() : '');
       const previewName = (typeof ssoProfileData.displayName === 'string' ? ssoProfileData.displayName.trim() : '') || profileUsername;
 
-      if (ssoProfileData.profilePicture) {
-        let src = ssoProfileData.profilePicture;
-        if (src.startsWith('/')) {
-          const base = sourceOrigin || getSsoOrigin();
-          src = base + src;
+      // The picture comes from the other server, so it is never trusted as
+      // markup: only an http(s) URL, or a path on that server, becomes an
+      // <img> built with createElement.
+      let avatarSrc = null;
+      const pic = ssoProfileData.profilePicture;
+      if (typeof pic === 'string' && pic) {
+        const isPath = pic.startsWith('/') && !pic.startsWith('//') && !pic.startsWith('/\\');
+        if (isPath || /^https?:\/\//i.test(pic)) {
+          try {
+            const u = isPath ? new URL(pic, sourceOrigin || getSsoOrigin()) : new URL(pic);
+            if (u.protocol === 'https:' || u.protocol === 'http:') avatarSrc = u.href;
+          } catch (err) {
+            console.warn('[SSO] ignoring unreadable profile picture URL:', err.message);
+          }
         }
-        ssoPreviewAvatar.innerHTML = `<img src="${src}" style="width:100%;height:100%;object-fit:cover" alt="">`;
+      }
+      if (avatarSrc) {
+        const img = document.createElement('img');
+        img.src = avatarSrc;
+        img.alt = '';
+        img.style.cssText = 'width:100%;height:100%;object-fit:cover';
+        ssoPreviewAvatar.replaceChildren(img);
       } else {
         ssoPreviewAvatar.textContent = (previewName || '?')[0].toUpperCase();
       }
-      ssoPreviewUsername.textContent = previewName || '—';
+      ssoPreviewUsername.textContent = previewName || '-';
+      // The imported name may already belong to someone here (#5734), so it
+      // is only a suggestion the person can change.
+      let suggested = normalizeSsoUsername(profileUsername);
+      if (suggested.length < 3) suggested = normalizeSsoUsername(ssoProfileData.displayName);
+      ssoUsernameInput.value = suggested;
 
       ssoStepServer.style.display = 'none';
       ssoStepRegister.style.display = '';
@@ -753,13 +828,14 @@
       ssoStepServer.style.display = '';
       ssoStepRegister.style.display = 'none';
       ssoPreviewAvatar.innerHTML = '?';
-      ssoPreviewUsername.textContent = '—';
+      ssoPreviewUsername.textContent = '-';
+      ssoUsernameInput.value = '';
       document.getElementById('sso-password').value = '';
       document.getElementById('sso-confirm').value = '';
       hideError();
     }
 
-    // Step 1 — Connect to home server
+    // Step 1: Connect to home server
     ssoConnectBtn.addEventListener('click', () => {
       hideError();
       let raw = ssoServerInput.value.trim();
@@ -821,13 +897,13 @@
       applySsoProfile(data.profile, data.serverOrigin || expectedOrigin);
     });
 
-    // Back button — return to step 1
+    // Back button: return to step 1
     ssoBackBtn.addEventListener('click', (e) => {
       e.preventDefault();
       ssoReset();
     });
 
-    // Step 2 — Register with imported profile
+    // Step 2: Register with imported profile
     ssoRegisterBtn.addEventListener('click', async () => {
       hideError();
       if (!checkEula()) return;
@@ -840,22 +916,9 @@
       if (password.length < 8) return showError(t('auth.errors.password_too_short'));
       if (password !== confirm) return showError(t('auth.errors.passwords_no_match'));
 
-      // Prefer canonical username from SSO payload. If a legacy server sends
-      // display-name-like values, normalize into a valid Haven username.
-      const normalizeUsername = (value) => {
-        if (typeof value !== 'string') return '';
-        return value
-          .trim()
-          .replace(/[^a-zA-Z0-9_]/g, '_')
-          .replace(/_+/g, '_')
-          .replace(/^_+|_+$/g, '')
-          .slice(0, 20);
-      };
-      let registerUsername = normalizeUsername(ssoProfileData.username);
-      if (registerUsername.length < 3) {
-        registerUsername = normalizeUsername(ssoProfileData.displayName);
-      }
-      if (registerUsername.length < 3) {
+      const registerUsername = ssoUsernameInput.value.trim();
+      if (!/^[a-zA-Z0-9_]{3,20}$/.test(registerUsername)) {
+        ssoUsernameInput.focus();
         return showError(t('auth.sso.invalid_username'));
       }
 
@@ -887,7 +950,15 @@
         });
 
         const data = await res.json();
-        if (!res.ok) { _resetCaptcha('sso'); return showError(data.error || t('auth.errors.registration_failed')); }
+        if (!res.ok) {
+          _resetCaptcha('sso');
+          if (data.code === 'username_unavailable') {
+            ssoUsernameInput.focus();
+            ssoUsernameInput.select();
+            return showError(t('auth.sso.username_unavailable'));
+          }
+          return showError(data.error || t('auth.errors.registration_failed'));
+        }
 
         // Derive E2E wrapping key from password
         const e2eWrap = await deriveE2EWrappingKey(password);
@@ -954,12 +1025,12 @@
   function _resetCaptcha(which) {
     if (!window.turnstile) return;
     const id = which === 'sso' ? _turnstileSso : _turnstileMain;
-    if (id !== null && id !== undefined) { try { window.turnstile.reset(id); } catch { /* noop */ } }
+    if (id !== null && id !== undefined) { try { window.turnstile.reset(id); } catch { /* widget already removed */ } }
   }
 
   // ── Register ──────────────────────────────────────────
   // (#5344) If the server requires a registration token, reveal the
-  // token field. Best-effort fetch — if it fails we just leave the
+  // token field. Best-effort fetch: if it fails we just leave the
   // field hidden and the server will reject without the token.
   // field is also hidden if an invite link is used and is allowed to override the token requirement.
   async function _initRegistrationForm() {
@@ -976,7 +1047,7 @@
       if (info && info.captchaEnabled && info.turnstileSiteKey) {
         _initRegistrationCaptcha(info.turnstileSiteKey);
       }
-    } catch { /* ignore */ }
+    } catch (err) { console.warn('[Auth] could not load registration info', err); }
   }
   _initRegistrationForm();
 
@@ -1053,10 +1124,10 @@
         const sec = document.getElementById('guest-login-section');
         if (sec) sec.style.display = '';
       }
-    } catch { /* ignore */ }
+    } catch (err) { console.warn('[Auth] could not check guest access', err); }
   })();
 
-  // ── (#12) SSO button — only when the server reports OIDC usable ──
+  // ── (#12) SSO button, only when the server reports OIDC usable ──
   (async () => {
     try {
       const r = await fetch('/api/public-config');
@@ -1067,7 +1138,7 @@
       const btn = document.getElementById('oidc-login-btn');
       if (btn && cfg.oidc_button_label) btn.textContent = cfg.oidc_button_label;
       if (sec) sec.style.display = '';
-    } catch { /* ignore */ }
+    } catch (err) { console.warn('[Auth] could not check single sign-on', err); }
   })();
 
   const guestShowBtn = document.getElementById('guest-login-show-btn');
@@ -1135,7 +1206,7 @@
      there is nothing to derive the private-key wrapping key from. We ask for
      a passphrase, stretch it exactly like a password (same PBKDF2 salt and
      iteration count), and drop the result into the same sessionStorage slot
-     the password path uses — so everything downstream is unchanged. */
+     the password path uses, so everything downstream is unchanged. */
 
   const OIDC_ERRORS = {
     cancelled: 'auth.oidc.errors.cancelled',
@@ -1155,7 +1226,10 @@
     });
   }
 
-  if (_oidcHandoff && _oidcHandoff.token) {
+  // The encryption passphrase step: a setup (with a confirm field) or, when
+  // the key already exists on the server, an unlock. finish(wrapKey) gets
+  // the derived key, or null when the user skips.
+  function showE2EPassStep(unlock, finish, unlockDescKey = 'auth.e2e_pass.unlock_desc') {
     const passForm = document.getElementById('e2e-pass-form');
     const passInput = document.getElementById('e2e-pass-input');
     const confirmGroup = document.getElementById('e2e-pass-confirm-group');
@@ -1164,14 +1238,6 @@
     const blurbEl = document.getElementById('e2e-pass-blurb');
     const hintEl = document.getElementById('e2e-pass-hint');
 
-    const finish = (wrapKey) => {
-      if (wrapKey) sessionStorage.setItem('haven_e2e_wrap', wrapKey);
-      else sessionStorage.removeItem('haven_e2e_wrap');
-      localStorage.setItem('haven_token', _oidcHandoff.token);
-      localStorage.setItem('haven_user', JSON.stringify(_oidcHandoff.user));
-      window.location.href = _appUrl;
-    };
-
     // Hide every other form and show the passphrase step.
     document.querySelectorAll('.auth-form').forEach(f => { f.style.display = 'none'; });
     document.querySelector('.auth-tabs')?.style.setProperty('display', 'none');
@@ -1179,9 +1245,9 @@
 
     // Returning on a second device: the key already exists on the server, so
     // this is an unlock, not a setup. No confirm field, different wording.
-    if (_oidcHandoff.e2eReady) {
+    if (unlock) {
       titleEl.textContent = t('auth.e2e_pass.unlock_title');
-      blurbEl.textContent = t('auth.e2e_pass.unlock_desc');
+      blurbEl.textContent = t(unlockDescKey);
       hintEl.textContent = t('auth.e2e_pass.unlock_hint');
       confirmGroup.style.display = 'none';
       confirmInput.removeAttribute('required');
@@ -1193,7 +1259,7 @@
       hideError();
       const pass = passInput.value;
       if (!pass || pass.length < 8) return showError(t('auth.e2e_pass.errors.too_short'));
-      if (!_oidcHandoff.e2eReady && pass !== confirmInput.value) {
+      if (!unlock && pass !== confirmInput.value) {
         return showError(t('auth.e2e_pass.errors.mismatch'));
       }
       // Only the derived key is kept. The passphrase itself never leaves this
@@ -1207,6 +1273,16 @@
       // stay locked on this device until the passphrase is supplied. Nothing
       // is generated or overwritten, so no history is lost by skipping.
       finish(null);
+    });
+  }
+
+  if (_oidcHandoff && _oidcHandoff.token) {
+    showE2EPassStep(!!_oidcHandoff.e2eReady, (wrapKey) => {
+      if (wrapKey) sessionStorage.setItem('haven_e2e_wrap', wrapKey);
+      else sessionStorage.removeItem('haven_e2e_wrap');
+      localStorage.setItem('haven_token', _oidcHandoff.token);
+      localStorage.setItem('haven_user', JSON.stringify(_oidcHandoff.user));
+      window.location.href = _appUrl;
     });
   }
 })();

@@ -4,6 +4,7 @@ export default {
 
 _renderOnlineUsers(users) {
   this._lastOnlineUsers = users;
+  try { this._restyleMessageAuthors?.(); this._syncBirthdayMarks?.(); } catch { /* cosmetic */ }
   this._refreshOpenProfileCard();
   if (this._activeDMPip) this._refreshDMPipHeader?.();   // (#5574)
   const el = document.getElementById('online-users');
@@ -75,6 +76,20 @@ _renderOnlineUsers(users) {
 
   el.innerHTML = html;
 
+  // Re-point the hover card at the rebuilt row. This list is redrawn on every
+  // presence update (someone talking in voice triggers one every few seconds)
+  // and the card's safety net reads a detached trigger as "pointer left", so
+  // without this the card closed by itself under a resting mouse (#5608).
+  const hovered = this._hoverTarget;
+  if (hovered && !hovered.isConnected && hovered.classList && hovered.classList.contains('user-item')) {
+    const uid = hovered.dataset.userId;
+    const fresh = uid ? el.querySelector(`.user-item[data-user-id="${uid}"]`) : null;
+    if (fresh) {
+      this._hoverTarget = fresh;
+      if (this._profilePopupAnchor === hovered) this._profilePopupAnchor = fresh;
+    }
+  }
+
   // Bind gear buttons: same unified menu as right-click, anchored to the gear
   el.querySelectorAll('.user-gear-btn').forEach(btn => {
     btn.addEventListener('click', (e) => {
@@ -100,57 +115,11 @@ _renderOnlineUsers(users) {
   });
 },
 
-// Lightweight channel picker for the user gear menu's "Add to Channel"
-// action. Lists every non-DM, non-private top-level channel the caller can
-// see (admins also see private). Server's `invite-to-channel` handler
-// validates membership/permissions and rejects already-members with a
-// toast, so no need to pre-filter by target's current memberships here.
-_openGearMenuChannelPicker(userId, username, channels) {
-  if (!channels || channels.length === 0) {
-    this._showToast?.(t('users.no_invite_channels'), 'info');
-    return;
-  }
-  const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay aml-channel-picker-overlay';
-  overlay.style.display = 'flex';
-  overlay.style.zIndex = '100002';
-  overlay.innerHTML = `
-    <div class="modal aml-ch-picker">
-      <div class="aml-ch-picker-header">
-        <h4 class="aml-ch-picker-title">${t('users.add_to_channel_title', { name: this._escapeHtml(username) })}</h4>
-      </div>
-      <div class="aml-channel-list">
-        ${channels.map(c => `
-          <button class="aml-channel-row gm-add-ch-btn" data-cid="${c.id}" data-cname="${this._escapeHtml(c.name)}">
-            <span class="aml-ch-hash">#</span>
-            <span class="aml-ch-name">${this._escapeHtml(c.name)}</span>
-          </button>
-        `).join('')}
-      </div>
-      <div class="modal-actions aml-ch-picker-actions">
-        <button class="btn-sm aml-ch-cancel">${t('modals.common.cancel')}</button>
-      </div>
-    </div>
-  `;
-  document.body.appendChild(overlay);
-  const close = () => overlay.remove();
-  overlay.querySelector('.aml-ch-cancel').addEventListener('click', close);
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
-  overlay.querySelectorAll('.gm-add-ch-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const channelId = parseInt(btn.dataset.cid);
-      if (!channelId) return;
-      this.socket.emit('invite-to-channel', { targetUserId: userId, channelId });
-      close();
-    });
-  });
-},
-
 _renderUserItem(u, scoreLookup) {
   const onlineClass = u.online === false ? ' offline' : '';
   const score = scoreLookup[u.id] || 0;
   // Per-device "hide other players' badges" preference. Only suppress badges
-  // for users other than self — own badge stays visible to me unless the
+  // for users other than self. Own badge stays visible to me unless the
   // server-side "hide own from server" preference also stripped it.
   const hideOthers = localStorage.getItem('haven_hide_other_scores') === 'true';
   const hideOwn    = localStorage.getItem('haven_hide_own_score')    === 'true';
@@ -170,13 +139,13 @@ _renderUserItem(u, scoreLookup) {
     ? `<span class="user-status-text" title="${this._escapeHtml(u.statusText)}">${this._escapeHtml(u.statusText)}</span>`
     : '';
 
-  // Rich presence — sidebar shows at most ONE activity to keep the list
+  // Rich presence: sidebar shows at most ONE activity to keep the list
   // scannable; a game outranks music. The profile card is where both show.
   const activityHtml = this._sidebarActivityHtml(u.activity);
 
   // Avatar: image or letter fallback
   const color = this._getUserColor(u.username);
-  const initial = u.username.charAt(0).toUpperCase();
+  const initial = this._escapeHtml(u.username.charAt(0).toUpperCase());
   const shapeClass = 'avatar-' + (u.avatarShape || 'circle');
   const avatarImg = u.avatar
     ? `<img class="user-item-avatar user-item-avatar-img ${shapeClass}"${this._animAttr(u.animateProfile)} src="${this._escapeHtml(u.avatar)}" alt="${initial}"><div class="user-item-avatar ${shapeClass}" style="background-color:${color};display:none">${initial}</div>`
@@ -197,17 +166,20 @@ _renderUserItem(u, scoreLookup) {
   const roleIconBefore = roleIconHtml && !iconAfterName ? roleIconHtml : '';
   const roleIconAfter = roleIconHtml && iconAfterName ? roleIconHtml : '';
   const roleDot = (roleDisplayMode === 'dot' && u.role)
-    ? `<span class="user-role-dot" style="background:${roleColor}" title="${this._escapeHtml(u.role.name)}"></span>`
+    ? `<span class="user-role-dot" style="background:${this._roleFill(u.role, roleColor)}" title="${this._escapeHtml(u.role.name)}"></span>`
     : '';
 
   // In colored-name mode, apply role color to the username
   const nameStyle = (roleDisplayMode === 'colored-name' && u.role && roleColor)
     ? ` style="color:${roleColor}"`
     : '';
+  // A gradient role paints the name itself (see _roleNameHtml).
+  const nameText = this._getNickname(u.id, u.username);
+  const nameHtml = nameStyle ? this._roleNameHtml(u.role, nameText) : this._escapeHtml(nameText);
 
   // Keep the old badge for message area (msg-role-badge) but hide in sidebar
   const roleBadge = u.role
-    ? `<span class="user-role-badge" style="color:${this._safeColor(u.role.color, 'var(--text-muted)')}" title="${this._escapeHtml(u.role.name)}">${this._escapeHtml(u.role.name)}</span>`
+    ? `<span class="user-role-badge" style="color:${this._safeColor(u.role.color, 'var(--text-muted)')}" title="${this._escapeHtml(u.role.name)}">${this._roleNameHtml(u.role, u.role.name)}</span>`
     : '';
   // (#5381) Mark guest accounts with a small badge so people know not to
   // expect long-term presence.
@@ -219,7 +191,7 @@ _renderUserItem(u, scoreLookup) {
   const tooltipRole = u.role ? `<div class="tooltip-role" style="color:${roleColor}">● ${this._escapeHtml(u.role.name)}</div>` : '';
   const tooltipStatus = u.statusText ? `<div class="tooltip-status">${this._escapeHtml(u.statusText)}</div>` : '';
   const tooltipOnline = u.online === false ? `<div class="tooltip-status">${t('app.profile.offline')}</div>` : '';
-  // Tooltip removed — the full profile popup (hover/click) provides this info.
+  // Tooltip removed: the full profile popup (hover/click) provides this info.
 
   const dmBtn = u.id === this.user.id
     ? `<button class="user-action-btn user-dm-btn" data-dm-uid="${u.id}" title="${t('users.notes_to_self_hint')}">📝</button>`
@@ -254,8 +226,8 @@ _renderUserItem(u, scoreLookup) {
       ${avatarHtml}
       <div class="user-item-text">
         <div class="user-item-line">
-          ${roleDot}${roleIconBefore}
-          <span class="user-item-name"${nameStyle}${this._nicknames[u.id] ? ` title="${this._escapeHtml(u.username)}"` : ''}>${this._escapeHtml(this._getNickname(u.id, u.username))}</span>
+          ${roleDot}${roleIconBefore}${this._birthdayMarkHtml(u.birthday)}
+          <span class="user-item-name"${nameStyle}${this._nicknames[u.id] ? ` title="${this._escapeHtml(u.username)}"` : ''}>${nameHtml}</span>
           ${roleIconAfter}
           ${roleBadge}
           ${guestBadge}
@@ -272,7 +244,7 @@ _renderUserItem(u, scoreLookup) {
 
 /**
  * Render the linked-account rows. Providers the server has no credentials for
- * are shown greyed out with the reason, rather than hidden — otherwise a user
+ * are shown greyed out with the reason, rather than hidden; otherwise a user
  * whose admin hasn't set up Spotify just sees an unexplained gap and files a
  * bug about the missing button.
  */
@@ -285,7 +257,7 @@ _renderConnections() {
   const available = data.available || {};
 
   // Steam and Spotify both require per-deployment credentials that cannot ship
-  // with Haven — a Steam key is tied to one person's Steam account, and a
+  // with Haven: a Steam key is tied to one person's Steam account, and a
   // bundled Spotify client secret would be extractable by anyone who downloads
   // the source. So "not configured" is the correct default state, and the admin
   // needs to know exactly which env vars fix it rather than just seeing a dead row.
@@ -331,7 +303,7 @@ _renderConnections() {
       // Two things trip people up here, both worth stating outright:
       //  1. developer.spotify.com is a SEPARATE site from Spotify account
       //     settings. "Manage apps" under your account lists apps you've
-      //     authorised and has no Create button — it is the wrong page, and
+      //     authorised and has no Create button. It is the wrong page, and
       //     it's the one people find first when they go looking themselves.
       //  2. "Create an app" sounds like software development. It isn't; it's
       //     registering a name so Spotify knows who is asking.
@@ -351,7 +323,7 @@ _renderConnections() {
 
   const isAdmin = !!this.user?.isAdmin;
 
-  // Placeholder is a hint, not a default — derive it from the viewer's own
+  // Placeholder is a hint, not a default, so derive it from the viewer's own
   // Haven name. It was hardcoded to a real username, which meant every user on
   // every Haven server was shown one specific person's handle as the example.
   const placeholderName = this._escapeHtml(
@@ -360,7 +332,7 @@ _renderConnections() {
       .slice(0, 15) || t('users.connections.username_placeholder')
   );
 
-  // Advanced providers stay collapsed unless already linked/configured —
+  // Advanced providers stay collapsed unless already linked/configured:
   // no point hiding something the user is actively using.
   const isAdvancedHidden = (p) => p.advanced && !linked.has(p.id) && !available[p.id];
 
@@ -370,7 +342,7 @@ _renderConnections() {
 
     let sub, btn = '';
     if (!configured) {
-      // Admins get an inline setup form — most self-hosters have no idea where
+      // Admins get an inline setup form. Most self-hosters have no idea where
       // .env lives, and telling them to "edit .env and restart" is a dead end.
       // Everyone else just learns the provider is off.
       sub = isAdmin ? t('users.connections.not_setup') : t('users.connections.not_enabled');
@@ -390,7 +362,7 @@ _renderConnections() {
         if (configured) btn += `<button class="btn-sm connection-forget" data-provider="${p.id}">${t('users.connections.remove_key')}</button>`;
       }
     } else if (p.linkType === 'username') {
-      // No OAuth for this provider — the whole link flow is one text field.
+      // No OAuth for this provider: the whole link flow is one text field.
       sub = p.blurb;
       btn += `<button class="btn-sm btn-accent connection-username-toggle" data-provider="${p.id}">${t('users.connections.connect')}</button>`;
       if (isAdmin) {
@@ -413,7 +385,7 @@ _renderConnections() {
     }
 
     // Rendered whenever an admin is looking, whether or not the provider is
-    // already configured — so an existing key can be rotated from here instead
+    // already configured, so an existing key can be rotated from here instead
     // of by editing .env by hand. Hidden until "Set up" (unconfigured) or
     // "Change key" (configured) reveals it. Non-admins never see it.
     const setupForm = isAdmin ? `
@@ -534,12 +506,12 @@ _renderConnections() {
   // clears every key the provider uses so Spotify cannot be left with an id
   // but no secret.
   host.querySelectorAll('.connection-forget').forEach(btn => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', async () => {
       const provider = PROVIDERS.find(x => x.id === btn.dataset.provider);
       if (!provider) return;
       const keys = provider.fields.map(f => f.key);
       const label = provider.name;
-      if (!confirm(t('users.connections.remove_key_confirm', { provider: label }))) return;
+      if (!await this._confirm(t('users.connections.remove_key_confirm', { provider: label }), { danger: true, confirmLabel: t('modals.common.remove') })) return;
       this.socket.emit('clear-integration-key', { keys });
     });
   });
@@ -563,7 +535,7 @@ _renderConnections() {
       }
       // Each key is saved independently; the server validates format and
       // replies with a refreshed 'connections' payload. Clear the fields
-      // immediately — these are secrets and shouldn't linger in the DOM.
+      // immediately; these are secrets and shouldn't linger in the DOM.
       inputs.forEach(i => {
         this.socket?.emit('set-integration-key', { key: i.dataset.envKey, value: i.value.trim() });
         i.value = '';
@@ -618,9 +590,18 @@ _activityMeta(act) {
   return {
     icon: isGame ? '🎮' : '🎵',
     verb: t(isGame ? 'users.activity_playing' : 'users.activity_listening'),
-    // "Track — Artist" reads better than two separate fields in one line.
-    label: act.details ? `${act.name} — ${act.details}` : act.name,
+    // "Track · Artist" reads better than two separate fields in one line.
+    label: act.details ? `${act.name} · ${act.details}` : act.name,
   };
+},
+
+// A Steam game's art address carries its app id, which is all the store page
+// needs, so the game on a profile card can link there (#5679).
+_activityLink(act) {
+  const m = act && act.type === 'playing' && typeof act.image === 'string'
+    ? act.image.match(/^https:\/\/[a-z0-9.-]*steamstatic\.com\/steam\/apps\/(\d+)\//)
+    : null;
+  return m ? `https://store.steampowered.com/app/${m[1]}/` : '';
 },
 
 /** Milliseconds → "m:ss". */
@@ -665,14 +646,14 @@ _profileStatusTextHtml(text) {
  * Re-render an open profile card from the latest presence, so status (online/
  * away/dnd), custom status text and activity (pause, resume, track change,
  * clear) all update live without reopening it. Driven by the online-users
- * broadcasts the client already receives — no new traffic.
+ * broadcasts the client already receives, so no new traffic.
  */
 _refreshOpenProfileCard() {
   if (this._openProfileUserId == null) return;
   const popup = document.getElementById('profile-popup');
   if (!popup) return;
   // The broadcast is scoped to the current channel and can be visibility-
-  // filtered, so absence does NOT reliably mean offline — the user may just be
+  // filtered, so absence does NOT reliably mean offline; the user may just be
   // in another channel. Only refresh from a record we actually have; otherwise
   // leave the card as-is rather than wrongly flipping it to offline.
   const u = (this._lastOnlineUsers || []).find(u => u.id === this._openProfileUserId);
@@ -767,8 +748,12 @@ _profileActivityHtml(activity) {
       const details = act.details
         ? `<span class="profile-activity-details">${this._scrollText(act.details)}</span>`
         : '';
+      const link = this._activityLink(act);
+      const open = link
+        ? `<a class="profile-activity-row profile-activity-link" href="${this._escapeHtml(link)}" target="_blank" rel="noopener noreferrer" title="${this._escapeHtml(t('users.activity_open_steam'))}">`
+        : '<div class="profile-activity-row">';
       return `
-        <div class="profile-activity-row">
+        ${open}
           ${art}
           <span class="profile-activity-text">
             <span class="profile-activity-verb">${act.type === 'listening' && act.paused ? `⏸ ${t('users.activity_paused')}` : meta.verb}</span>
@@ -776,7 +761,7 @@ _profileActivityHtml(activity) {
             ${details}
             ${this._activityProgressHtml(act)}
           </span>
-        </div>`;
+        ${link ? '</a>' : '</div>'}`;
     })
     .filter(Boolean);
 
@@ -805,12 +790,18 @@ _showProfilePopup(profile) {
   // If this was a hover-triggered popup but the mouse already left, abort
   if (this._isHoverPopup && !this._hoverTarget) return;
 
+  // Closing any earlier card clears the hover target. Keep it for the hover
+  // card about to be drawn: without it the next mouseover on the same name
+  // read as a switch to a new trigger, closed the card and reopened it 350ms
+  // later, so it flickered under a resting mouse (#5608).
+  const hoverTarget = this._isHoverPopup ? this._hoverTarget : null;
   this._closeProfilePopup();
+  if (hoverTarget) this._hoverTarget = hoverTarget;
 
   const isSelf = profile.id === this.user.id;
   const currentNick = !isSelf ? (this._nicknames[profile.id] || '') : '';
   const color = this._getUserColor(profile.username);
-  const initial = profile.username.charAt(0).toUpperCase();
+  const initial = this._escapeHtml(profile.username.charAt(0).toUpperCase());
   const shapeClass = 'avatar-' + (profile.avatarShape || 'circle');
 
   const avatarHtml = profile.avatar
@@ -824,8 +815,10 @@ _showProfilePopup(profile) {
   // Roles
   const rolesHtml = (profile.roles && profile.roles.length > 0)
     ? profile.roles.map(r => {
-        const rIcon = r.icon ? `<img class="role-icon" src="${this._escapeHtml(r.icon)}" alt="">` : `<span class="profile-role-dot" style="background:${this._safeColor(r.color, 'var(--text-muted)')}"></span>`;
-        return `<span class="profile-popup-role" style="border-color:${this._safeColor(r.color, 'var(--border-light)')}; color:${this._safeColor(r.color, 'var(--text-secondary)')}">${rIcon}${this._escapeHtml(r.name)}</span>`;
+        const rIcon = r.icon ? `<img class="role-icon" src="${this._escapeHtml(r.icon)}" alt="">` : `<span class="profile-role-dot" style="background:${this._roleFill(r, 'var(--text-muted)')}"></span>`;
+        // Shown only to role managers, dimmed, when the role is off for profiles (#5822).
+        const hidden = r.hiddenOnProfile ? ` profile-popup-role-hidden" title="${this._escapeHtml(t('settings.admin.role_form.hidden_on_profile_title'))}` : '';
+        return `<span class="profile-popup-role${hidden}" style="border-color:${this._safeColor(r.color, 'var(--border-light)')}; color:${this._safeColor(r.color, 'var(--text-secondary)')}">${rIcon}${this._roleNameHtml(r, r.name)}</span>`;
       }).join('')
     : '';
 
@@ -842,15 +835,17 @@ _showProfilePopup(profile) {
        </div>`
     : (isSelf ? `<div class="profile-popup-bio profile-bio-empty">${t('users.no_bio')}</div>` : '');
 
-  // Join date
-  const joinDate = profile.createdAt ? new Date(profile.createdAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '';
+  // Join date, with the birthday underneath it when the member has set one
+  const joinDate = profile.createdAt ? this._fmtDate(profile.createdAt, { year: 'numeric', month: 'short', day: 'numeric' }) : '';
+  const birthdayLabel = this._birthdayLabel(profile.birthday);
+  const birthdayHtml = birthdayLabel ? `<div class="profile-popup-birthday">🎂 ${this._escapeHtml(birthdayLabel)}</div>` : '';
 
   // Action buttons. Nickname lives in the unified menu; the gear opens that
   // menu for anyone with mod powers over this user.
   const canMod = this.user.isAdmin || this._canModerate();
   const canPromote = this._hasPerm('promote_user');
   const canBan = this.user.isAdmin || this._hasPerm('ban_user');
-  const gearVisible = !isSelf && (canMod || canPromote || canBan);
+  const gearVisible = !isSelf && (canMod || canPromote || canBan || this._canManageBadges());
   const gearBtnHtml = gearVisible
     ? `<button class="profile-popup-action-btn profile-gear-btn" title="${this._escapeHtml(t('users.more_actions'))}">⚙️ ${t('users.more_actions')}</button>`
     : '';
@@ -873,7 +868,7 @@ _showProfilePopup(profile) {
     <div class="profile-popup-body">
       <div class="profile-popup-names">
         ${currentNick ? `<span class="profile-popup-nickname">🏷️ ${this._escapeHtml(currentNick)}</span>` : ''}
-        <span class="profile-popup-displayname">${this._escapeHtml(profile.displayName)}</span>
+        <span class="profile-popup-displayname">${this._birthdayMarkHtml(profile.birthday)}${this._escapeHtml(profile.displayName)}</span>
         <span class="profile-popup-username">@${this._escapeHtml(profile.username)}</span>
       </div>
       <div id="profile-popup-status-slot">${statusTextHtml}</div>
@@ -881,7 +876,8 @@ _showProfilePopup(profile) {
       <div class="profile-popup-divider"></div>
       <div id="profile-popup-activity-slot">${this._profileActivityHtml(profile.activity)}</div>
       ${rolesHtml ? `<div class="profile-popup-section-label">${t('users.profile_roles_label')}</div><div class="profile-popup-roles">${rolesHtml}</div>` : ''}
-      ${joinDate ? `<div class="profile-popup-section-label">${t('users.member_since_label')}</div><div class="profile-popup-join-date">${joinDate}</div>` : ''}
+      ${this._badgeRowHtml(profile)}
+      ${joinDate ? `<div class="profile-popup-section-label">${t('users.member_since_label')}</div><div class="profile-popup-join-date">${joinDate}${birthdayHtml}</div>` : ''}
       <div class="profile-popup-actions">${actionsHtml}</div>
     </div>
   `;
@@ -898,6 +894,13 @@ _showProfilePopup(profile) {
   // Position near the anchor element
   this._positionProfilePopup(popup);
 
+  // On the member's birthday the card opens to a shower of 🎉. A hover preview
+  // holds it until it is clicked open (_promoteHoverPopup).
+  if (this._daysUntilBirthday(profile.birthday) === 0) {
+    popup.dataset.birthday = '1';
+    if (!this._isHoverPopup) this._rainBirthdayConfetti(popup);
+  }
+
   // Keep the music progress bar moving, and let presence updates refresh the
   // card live (pause, resume, track change, clear) while it's open.
   this._openProfileUserId = profile.id;
@@ -906,15 +909,28 @@ _showProfilePopup(profile) {
   this._startActivityProgress(popup);
 
   // Hover mode is closed by the mouseover/mouseleave handlers; this is a safety
-  // net in case one of them misses.
+  // net in case one of them misses. It only fires once the pointer has actually
+  // left the trigger. A fixed three-second timer closed the card while the
+  // mouse was still resting on the name, and the next nudge of the mouse opened
+  // it again, so it looked like it flickered on its own (#5608).
   if (this._isHoverPopup) {
-    this._hoverAutoCloseTimer = setTimeout(() => {
-      if (this._isHoverPopup) this._closeProfilePopup();
-    }, 3000);
+    const stillHovering = () => {
+      const el = this._hoverTarget;
+      try { return !!(el && el.isConnected && el.matches(':hover')); } catch { return false; }
+    };
+    const check = () => {
+      if (!this._isHoverPopup) return;
+      if (stillHovering()) { this._hoverAutoCloseTimer = setTimeout(check, 1000); return; }
+      this._closeProfilePopup();
+    };
+    this._hoverAutoCloseTimer = setTimeout(check, 3000);
   }
 
   // Close button
   popup.querySelector('.profile-popup-close').addEventListener('click', () => this._closeProfilePopup());
+
+  // Badges (#5632): click one to see what it is
+  this._bindBadgeRow(popup, profile);
 
   // Gear: the unified user menu, same as right-click, anchored to the button
   const gearBtnEl = popup.querySelector('.profile-gear-btn');
@@ -1009,6 +1025,7 @@ _promoteHoverPopup(popup) {
   popup.offsetHeight; // force reflow
   popup.style.animation = '';
   this._bindProfilePopupOutsideClose(popup);
+  if (popup.dataset.birthday) this._rainBirthdayConfetti(popup);
 },
 
 _positionProfilePopup(popup) {
@@ -1063,47 +1080,6 @@ _closeProfilePopup() {
   clearTimeout(this._hoverFadeTimeout);
 },
 
-_openEditProfileModal(profile) {
-  // Create a simple modal for editing bio and status
-  this._closeProfilePopup();
-  const existing = document.getElementById('edit-profile-modal');
-  if (existing) existing.remove();
-
-  const modal = document.createElement('div');
-  modal.id = 'edit-profile-modal';
-  modal.className = 'modal-overlay';
-  modal.style.display = 'flex';
-  modal.innerHTML = `
-    <div class="modal edit-profile-modal-box">
-      <h3>${t('users.edit_profile_modal_title')}</h3>
-      <label class="edit-profile-label">${t('users.bio_label')} <span class="muted-text">${t('users.bio_max_hint')}</span></label>
-      <textarea id="edit-profile-bio" class="edit-profile-textarea" maxlength="190" placeholder="${t('users.bio_placeholder')}">${this._escapeHtml(profile.bio || '')}</textarea>
-      <div class="edit-profile-char-count"><span id="edit-profile-chars">${(profile.bio || '').length}</span>/190</div>
-      <div class="modal-actions">
-        <button class="btn-sm" id="edit-profile-cancel">${t('modals.common.cancel')}</button>
-        <button class="btn-sm btn-accent" id="edit-profile-save">${t('modals.common.save')}</button>
-      </div>
-    </div>
-  `;
-  document.body.appendChild(modal);
-
-  const bioInput = document.getElementById('edit-profile-bio');
-  const charCount = document.getElementById('edit-profile-chars');
-
-  bioInput.addEventListener('input', () => {
-    charCount.textContent = bioInput.value.length;
-  });
-  bioInput.focus();
-
-  document.getElementById('edit-profile-cancel').addEventListener('click', () => modal.remove());
-  modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
-
-  document.getElementById('edit-profile-save').addEventListener('click', () => {
-    this.socket.emit('set-bio', { bio: bioInput.value });
-    modal.remove();
-  });
-},
-
 // ── Voice Users ───────────────────────────────────────
 
 _renderVoiceUsers(users, channelCode) {
@@ -1152,7 +1128,9 @@ _renderVoiceUsers(users, channelCode) {
     const isSelf = u.id === this.user.id;
     const talking = this.voice && ((isSelf && this.voice.talkingState.get('self')) || this.voice.talkingState.get(u.id));
     const dotColor = this._safeColor(u.roleColor);
-    const dotStyle = dotColor ? ` style="background:${dotColor};--voice-dot-color:${dotColor}"` : '';
+    // A gradient role fills the dot with its gradient; the talking glow
+    // keeps the role's first color.
+    const dotStyle = dotColor ? ` style="background:${this._roleFill(u, dotColor)};--voice-dot-color:${dotColor}"` : '';
 
     // Stream indicators: is this user streaming? watching?
     // We treat the user as streaming if EITHER the server-side `streams`
@@ -1181,7 +1159,9 @@ _renderVoiceUsers(users, channelCode) {
         ? t(viewerCount === 1 ? 'users.streaming_viewers_one' : 'users.streaming_viewers_other', { count: viewerCount })
         : t('users.streaming_no_viewers');
       const viewerNames = viewers.map(v => v.username).join(', ');
-      const liveTitle = this._escapeHtml(viewerNames ? `${liveLabel} — ${viewerNames}` : liveLabel);
+      // The badge is also the way back into a share you dismissed or did not
+      // auto-accept, so the tooltip says so (#5636).
+      const liveTitle = this._escapeHtml(`${viewerNames ? `${liveLabel}: ${viewerNames}` : liveLabel}. ${t('users.stream_click_to_watch')}`);
       streamBadge = `<span class="voice-stream-badge live" title="${liveTitle}">🔴${viewerCount ? ' ' + viewerCount : ''}</span>`;
     }
     if (hasWebcam) {
@@ -1193,25 +1173,27 @@ _renderVoiceUsers(users, channelCode) {
       streamBadge += `<span class="voice-stream-badge watching" title="${this._escapeHtml(t('users.watching_stream_title', { names: watchNames }))}">👁${watchCount > 1 ? ' ' + watchCount : ''}</span>`;
     }
 
-    // Only render mic/speaker icons when they actually signal something —
+    // Only render mic/speaker icons when they actually signal something,
     // i.e. the user is muted or deafened. An unmuted, listening user shows
     // no icons at all, so the roster stays legible instead of every row
-    // carrying two faded glyphs. The "you" tag is dropped too — people know
+    // carrying two faded glyphs. The "you" tag is dropped too; people know
     // who they are, and it was just more clutter. (#voice-declutter)
     const statusIcons = [];
     if (u.isMuted) statusIcons.push(`<span class="voice-status-icon is-muted" title="${t('voice.status_muted')}">🎙️</span>`);
     if (u.isDeafened) statusIcons.push(`<span class="voice-status-icon is-deafened" title="${t('voice.status_deafened')}">🔊</span>`);
-    const statusIconsHtml = statusIcons.length
-      ? `<span class="voice-status-icons">${statusIcons.join('')}</span>`
-      : '';
+    // Always rendered, even empty: its margin-left:auto is what pins the live
+    // badge to the right edge, so the badge stays put when the mute icon comes
+    // and goes and is not a moving target for someone on push to talk (#5636).
+    const statusIconsHtml = `<span class="voice-status-icons">${statusIcons.join('')}</span>`;
     const botBadge = u.isBot ? '<span class="bot-badge">BOT</span>' : '';
     return `
       <div class="user-item voice-user-item${talking ? ' talking' : ''}" data-user-id="${u.id}" data-is-bot="${u.isBot ? 'true' : 'false'}"${dotColor ? ` style="--voice-dot-color:${dotColor}"` : ''}>
         <span class="user-dot voice"${dotStyle}></span>
+        ${this._birthdayMarkHtml(this._memberById(u.id)?.birthday)}
         <span class="user-item-name"${this._nicknames[u.id] ? ` title="${this._escapeHtml(u.username)}"` : ''}>${this._escapeHtml(this._getNickname(u.id, u.username))}</span>
         ${botBadge}
-        ${streamBadge}
         ${statusIconsHtml}
+        ${streamBadge}
         ${isSelf || u.isBot ? '' : `<button class="voice-user-menu-btn" data-user-id="${u.id}" data-username="${this._escapeHtml(u.username)}" title="${t('users.more_actions')}">⋯</button>`}
       </div>
     `;
@@ -1254,33 +1236,51 @@ _renderVoiceUsers(users, channelCode) {
     });
   });
 
-  // Bind LIVE badges — clicking restores a hidden stream tile
+  // Bind LIVE badges: clicking restores a hidden stream tile
   el.querySelectorAll('.voice-stream-badge.live').forEach(badge => {
     badge.style.cursor = 'pointer';
     badge.addEventListener('click', (e) => {
       e.stopPropagation();
       const userId = parseInt(badge.closest('.voice-user-item')?.dataset.userId);
       if (isNaN(userId)) return;
-      const hiddenTile = document.querySelector(`#screen-tile-${userId}[data-hidden="true"]`);
-      if (hiddenTile) {
-        this._showStreamTile(`screen-tile-${userId}`, userId);
-      } else if (!document.getElementById(`screen-tile-${userId}`)) {
-        // No tile at all (e.g. we joined after they went live and their stream
-        // never reached us, or we closed our view and the sharer's tile was
-        // since torn down) — actively ask the sharer to (re)send. Arm the
-        // retry watchdog too: a single renegotiate request often loses the
-        // race (the sharer may be mid-signaling-change), which left the viewer
-        // stuck on "Requesting stream…" forever with no second attempt. The
-        // watchdog re-requests a few times until a live video track arrives.
-        // (#5426)
-        if (this.voice) {
-          this.voice.requestScreenStream(userId);
-          this.voice._watchForScreenStream(userId);
-        }
-        this._showToast?.(t('voice.requesting_stream'), 'info');
-      }
+      this._watchStream(userId);
     });
   });
+},
+
+// Open someone's live stream from the voice list: the red badge and the
+// Watch Stream menu entry both land here.
+_watchStream(userId) {
+  const hiddenTile = document.querySelector(`#screen-tile-${userId}[data-hidden="true"]`);
+  if (hiddenTile) { this._showStreamTile(`screen-tile-${userId}`, userId); return; }
+  if (document.getElementById(`screen-tile-${userId}`)) return;
+  // With auto-accept off the share arrived and waited on the Join prompt.
+  // Once that prompt was gone, asking the sharer to resend brought the same
+  // stream back to the same prompt check, so the click only ever produced
+  // "Requesting stream". Clicking here is the accept: open what already
+  // arrived, or take the next arrival without the prompt (#5636).
+  const offered = this._pendingStreamOffers && this._pendingStreamOffers.get(userId);
+  if (offered && offered.getVideoTracks().some(tr => tr.readyState === 'live')) {
+    this._handleScreenStream(userId, offered, { force: true });
+    return;
+  }
+  this._pendingStreamOffers?.delete(userId);
+  if (!this._acceptedStreams) this._acceptedStreams = new Set();
+  this._acceptedStreams.add(userId);
+  if (!this.voice) return;
+  // Media may already be flowing into a receiver nobody rendered.
+  if (this.voice._deliverScreenFromReceivers?.(userId)) return;
+  // No tile at all (e.g. we joined after they went live and their stream
+  // never reached us, or we closed our view and the sharer's tile was
+  // since torn down), actively ask the sharer to (re)send. Arm the
+  // retry watchdog too: a single renegotiate request often loses the
+  // race (the sharer may be mid-signaling-change), which left the viewer
+  // stuck on "Requesting stream…" forever with no second attempt. The
+  // watchdog re-requests a few times until a live video track arrives.
+  // (#5426)
+  this.voice.requestScreenStream(userId);
+  this.voice._watchForScreenStream(userId);
+  this._showToast?.(t('voice.requesting_stream'), 'info');
 },
 
 _showVoiceUserMenu(anchorEl, userId, username) {
@@ -1297,7 +1297,7 @@ _showVoiceUserMenu(anchorEl, userId, username) {
     || !!(this.voice && this.voice.screenSharers && this.voice.screenSharers.has(userId));
   const hiddenTile = isStreaming ? document.querySelector(`#screen-tile-${userId}[data-hidden="true"]`) : null;
   // Offer "Watch stream" whenever they're live and we don't already have a
-  // visible tile — this both restores a hidden tile and requests a stream we
+  // visible tile. This both restores a hidden tile and requests a stream we
   // never received (late joiner).
   const visibleTile = document.querySelector(`#screen-tile-${userId}:not([data-hidden="true"])`);
   const canWatchStream = isStreaming && !visibleTile;
@@ -1352,17 +1352,7 @@ _showVoiceUserMenu(anchorEl, userId, username) {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       if (btn.dataset.action === 'watch-stream') {
-        const hidden = document.querySelector(`#screen-tile-${userId}[data-hidden="true"]`);
-        if (hidden) {
-          this._showStreamTile(`screen-tile-${userId}`, userId);
-        } else if (this.voice) {
-          // No tile yet — ask the sharer to (re)send their stream, and arm the
-          // retry watchdog so a single dropped renegotiate doesn't strand the
-          // viewer on "Requesting stream…" with no follow-up attempt. (#5426)
-          this.voice.requestScreenStream(userId);
-          this.voice._watchForScreenStream(userId);
-          this._showToast?.(t('voice.requesting_stream'), 'info');
-        }
+        this._watchStream(userId);
         this._closeVoiceUserMenu();
       } else if (btn.dataset.action === 'request-control') {
         this.remoteControl?.request(userId, username, 'request');
@@ -1433,7 +1423,7 @@ _setVoiceVolume(userId, vol) {
     const vols = JSON.parse(localStorage.getItem('haven_voice_volumes') || '{}');
     vols[userId] = vol;
     localStorage.setItem('haven_voice_volumes', JSON.stringify(vols));
-  } catch { /* ignore */ }
+  } catch { /* storage blocked or corrupt: the volume holds for this session only */ }
 },
 
 // ── Nicknames ─────────────────────────────────────────────
@@ -1564,23 +1554,17 @@ _refreshNicknameDisplays() {
       const nick = this._getNickname(uid, realName);
       const authorEl = el.querySelector('.message-author');
       if (authorEl) {
-        authorEl.textContent = nick;
+        // A gradient role name keeps its span; only the words change, with
+        // any emoji in them kept out of the gradient (#5720).
+        const gradient = authorEl.querySelector('.role-gradient');
+        if (gradient) gradient.innerHTML = this._roleEmojiSafe(this._escapeHtml(nick));
+        else authorEl.textContent = nick;
         authorEl.title = nick !== realName ? realName : '';
       }
     }
   });
   // Close profile popup since data changed
   this._closeProfilePopup();
-},
-
-_showTyping(username) {
-  const el = document.getElementById('typing-indicator');
-  // Look up nickname by username from online users
-  const onlineUser = this._lastOnlineUsers && this._lastOnlineUsers.find(u => u.username === username);
-  const display = onlineUser ? this._getNickname(onlineUser.id, username) : username;
-  el.textContent = t('users.typing', { name: display });
-  clearTimeout(this.typingTimeout);
-  this.typingTimeout = setTimeout(() => { el.textContent = ''; }, 3000);
 },
 
 };

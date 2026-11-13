@@ -1,14 +1,14 @@
 /**
- * Haven — standard (Unicode) emoji list
+ * Haven: standard (Unicode) emoji list
  *
  * The picker's built-in list in public/js/app.js is hand-curated and misses
  * emoji. This builds the full, categorised list from Unicode's own
  * emoji-test.txt and serves it to the client, which renders the glyphs with
- * the OS font (no image set — they match whatever platform the user is on).
+ * the OS font (no image set; they match whatever platform the user is on).
  *
  * Two copies of the file exist:
- *   • src/emoji-test.txt        — committed fallback (16.0), always present
- *   • <DATA_DIR>/emoji-test.txt — runtime copy, refreshed from unicode.org
+ *   • src/emoji-test.txt:         committed fallback (16.0), always present
+ *   • <DATA_DIR>/emoji-test.txt:  runtime copy, refreshed from unicode.org
  * getEmojiData() prefers the runtime copy and falls back to the committed one.
  */
 const fs = require('fs');
@@ -72,7 +72,7 @@ function parseEmojiTest(text) {
     const toneIdx = codes.findIndex(c => SKIN_TONES.has(c));
     if (toneIdx !== -1) {
       // A skin-toned variant: record which base carries the tone, then drop the
-      // row — the client re-synthesises tones from the base glyph at render time.
+      // row; the client re-synthesises tones from the base glyph at render time.
       if (toneIdx > 0) modifierBase.add(codes[toneIdx - 1]);
       continue;
     }
@@ -87,10 +87,50 @@ function parseEmojiTest(text) {
     names[glyph] = name.toLowerCase();
   }
 
-  return { categories, names, modifierBase: [...modifierBase] };
+  // Haven offers people as a man or a woman. A gender-neutral person
+  // ("person shrugging", "technologist", "Mx Claus") is left out wherever
+  // Unicode has both a man and a woman version of it. People with no gendered
+  // version (baby, ninja, snowboarder) stay.
+  const known = new Set(Object.values(names));
+  const hidden = (categories.People || []).filter(glyph => LEFT_OUT.has(names[glyph]) || hasGenderedForms(names[glyph], known));
+  if (hidden.length) {
+    const drop = new Set(hidden);
+    categories.People = categories.People.filter(glyph => !drop.has(glyph));
+    for (const glyph of hidden) delete names[glyph];
+  }
+
+  return { categories, names, modifierBase: [...modifierBase], hidden };
 }
 
-/** Parse whichever file is active — runtime copy if present, else fallback. */
+// Left out by name as well.
+const LEFT_OUT = new Set(['pregnant man', 'woman: beard', 'man with veil', 'woman in tuxedo']);
+
+// Neutral names whose gendered versions don't follow the "man X" pattern.
+const GENDERED_FORMS = {
+  'child':             ['boy', 'girl'],
+  'older person':      ['old man', 'old woman'],
+  'deaf person':       ['deaf man', 'deaf woman'],
+  'mx claus':          ['santa claus', 'mrs. claus'],
+  'pregnant person':   ['pregnant man', 'pregnant woman'],
+  'person with crown': ['prince', 'princess'],
+  'merperson':         ['merman', 'mermaid'],
+  'kiss':              ['kiss: woman, man'],
+  'couple with heart': ['couple with heart: woman, man'],
+  'family':            ['family: man, woman, boy'],
+};
+
+/** True when `name` is a gender-neutral person that also comes as a man and a woman. */
+function hasGenderedForms(name, known) {
+  if (!name || /^(man|woman|men|women|boy|girl)\b/.test(name)) return false;
+  const all = (forms) => forms.every(f => known.has(f));
+  if (GENDERED_FORMS[name]) return all(GENDERED_FORMS[name]);
+  if (/^family: (adult|child)/.test(name)) return known.has('family: man, woman, boy');
+  if (/^person\b/.test(name) && all([name.replace(/^person/, 'man'), name.replace(/^person/, 'woman')])) return true;
+  if (/^people\b/.test(name) && all([name.replace(/^people/, 'men'), name.replace(/^people/, 'women')])) return true;
+  return all([`man ${name}`, `woman ${name}`]);
+}
+
+/** Parse whichever file is active: runtime copy if present, else fallback. */
 function buildFromDisk() {
   const file = fs.existsSync(EMOJI_FILE) ? EMOJI_FILE : FALLBACK_FILE;
   try { return parseEmojiTest(fs.readFileSync(file, 'utf8')); }
@@ -112,7 +152,7 @@ function fallbackVersion() {
  * Fetch the latest emoji-test.txt, validate it, and save it to the data dir.
  * Returns the Unicode version on success, or null on any failure (offline,
  * timeout, HTTP error, or a body that isn't emoji-test.txt). Emits no console
- * output and applies no fallback policy — the caller owns the messaging.
+ * output and applies no fallback policy; the caller owns the messaging.
  */
 async function downloadEmojiFile() {
   try {
@@ -136,7 +176,7 @@ async function downloadEmojiFile() {
  * again whenever an admin enables the feature.
  *
  * `autoUpdate` is resolved by the caller (env override → admin setting → off).
- * When false, Haven never reaches out and serves whatever is already on disk —
+ * When false, Haven never reaches out and serves whatever is already on disk:
  * the last downloaded copy, or the committed fallback if none was ever fetched.
  */
 async function ensureEmojiData(autoUpdate) {
@@ -174,4 +214,4 @@ function autoUpdateEnabled(settingValue) {
   return settingValue === 'true';
 }
 
-module.exports = { ensureEmojiData, getEmojiData, autoUpdateEnabled };
+module.exports = { ensureEmojiData, getEmojiData, autoUpdateEnabled, parseEmojiTest };

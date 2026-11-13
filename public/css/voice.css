@@ -256,7 +256,7 @@
 
 /* nowrap, not wrap: a wrapping flex line pushes whole items to a second row
    rather than shrinking them, so as soon as a user picked up a badge (LIVE,
-   📹, 👁) the status icons dropped onto a row of their own — and because they
+   📹, 👁) the status icons dropped onto a row of their own, and because they
    carry margin-left:auto they sat at the far right of it, reading as an empty
    second row. The name already ellipsises (flex:1 + min-width:0 in
    style.css), so keeping one line just truncates the name instead. */
@@ -569,6 +569,51 @@
 .voice-settings-row .voice-settings-select {
   margin-bottom: 2px;
 }
+.bitrate-stepper {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  min-width: 0;
+}
+.bitrate-step-btn {
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  padding: 0;
+}
+.bitrate-step-btn:hover {
+  border-color: var(--accent);
+}
+.bitrate-value {
+  min-width: 76px;
+  width: 86px;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: inherit;
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 2px 6px;
+  white-space: nowrap;
+  outline: none;
+}
+.bitrate-value:focus {
+  border-color: var(--accent);
+}
 
 /* ═══════════════════════════════════════════════════════════
    PERSISTENT VOICE BAR (sidebar bottom)
@@ -676,6 +721,16 @@
   font-size: 10px;
   font-weight: 700;
   line-height: 1.2;
+}
+
+/* Push to mute held in Haven Desktop: the muted mic gets a ring and the voice
+   bar says why, so a held key does not read as a mute that stays. */
+.voice-header-btn.ptm-held,
+.voice-panel-btn.ptm-held { box-shadow: 0 0 0 2px var(--danger, #e74c3c); }
+.voice-bar-badge-ptm {
+  background: var(--warning);
+  border-color: var(--warning);
+  color: var(--warning-text);
 }
 
 @media (max-width: 768px) {

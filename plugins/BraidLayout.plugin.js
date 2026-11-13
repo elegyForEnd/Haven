@@ -6,9 +6,9 @@
  */
 class BraidLayout {
   static _DENSITIES = [
-    { id: 'compact', label: 'Compact', hint: 'Tighter than stock — more messages on screen', tick: '3px' },
+    { id: 'compact', label: 'Compact', hint: 'Tighter than stock, more messages on screen', tick: '3px' },
     { id: 'cozy', label: 'Cozy', hint: 'The shipped Braid spacing', tick: '5px' },
-    { id: 'spacious', label: 'Spacious', hint: 'Roomier than stock — more air around each run', tick: '7px' },
+    { id: 'spacious', label: 'Spacious', hint: 'Roomier than stock, more air around each run', tick: '7px' },
   ];
 
   start() {
@@ -51,10 +51,17 @@ class BraidLayout {
     };
     document.addEventListener('haven:layout-editing', editingChanged);
     this._permListeners.push([document, 'haven:layout-editing', editingChanged]);
+    const fxChanged = (event) => {
+      if (typeof event.detail?.braid !== 'boolean') return;
+      if (event.detail.braid) this._engage();
+      else this._disengage();
+    };
+    document.addEventListener('haven:layout-effect', fxChanged);
+    this._permListeners.push([document, 'haven:layout-effect', fxChanged]);
     const layoutOn = HavenApi.Data.load('BraidLayout', 'layoutOn', '1') !== '0';
     if (layoutOn && !document.documentElement.hasAttribute('data-haven-layout-editing')) this._engage();
     else if (layoutOn) console.log('[BraidLayout] Waiting for Mod Mode to finish');
-    else console.log('[BraidLayout] Started dormant — classic layout (pill or Ctrl+Shift+B to re-engage)');
+    else console.log('[BraidLayout] Started dormant: classic layout (pill or Ctrl+Shift+B to re-engage)');
   }
 
   _toggleLayout() {
@@ -113,6 +120,7 @@ class BraidLayout {
       });
       this._obs.observe(document.getElementById('app-body') || document.body, { childList: true, subtree: true });
       console.log('[BraidLayout] Engaged');
+      document.dispatchEvent(new CustomEvent('haven:braid-layout', { detail: { on: true } }));
     } catch (error) {
       try { this._disengage(false); }
       catch (cleanupError) { console.error('[BraidLayout] Rollback error:', cleanupError); }
@@ -179,7 +187,7 @@ class BraidLayout {
       this._collapsedAdded = [];
       // Restore localStorage keys we introduced
       for (const [key, prev] of this._lsPrev) {
-        try { prev === null ? localStorage.removeItem(key) : localStorage.setItem(key, prev); } catch {}
+        try { prev === null ? localStorage.removeItem(key) : localStorage.setItem(key, prev); } catch { /* storage blocked: nothing was saved to restore */ }
       }
       this._lsPrev.clear();
       for (const [t, type, fn, opts] of this._listeners) t.removeEventListener(type, fn, opts);
@@ -187,6 +195,7 @@ class BraidLayout {
       document.documentElement.classList.remove('braid-people-open', 'braid-sound-open', 'braid-status-open');
       document.documentElement.removeAttribute('data-braid-layout');
       document.documentElement.removeAttribute('data-braid-form');
+      document.dispatchEvent(new CustomEvent('haven:braid-layout', { detail: { on: false } }));
       document.querySelectorAll('[data-braid-run]').forEach((el) => el.removeAttribute('data-braid-run'));
       HavenApi.DOM.removeStyle('BraidLayoutCSS');
       HavenApi.DOM.removeStyle('BraidMotionCSS');
@@ -196,7 +205,7 @@ class BraidLayout {
       HavenApi.DOM.removeStyle('BraidDensityCSS');
       this._suspended = false;
       if (persist) HavenApi.Data.save('BraidLayout', 'layoutOn', '0');
-      console.log('[BraidLayout] Disengaged — classic layout');
+      console.log('[BraidLayout] Disengaged: classic layout');
     } finally {
       HavenApi.Layout?.release('BraidLayout');
       this._transitioning = false;
@@ -204,7 +213,7 @@ class BraidLayout {
   }
 
   // The classic-mode switch lives INSIDE the stock bottom-left icon bar,
-  // right next to the theme button — a peer of the other settings, never
+  // right next to the theme button, a peer of the other settings, never
   // floating over them. Falls back to a fixed pill only if the bar is gone.
   _buildReturnPill() {
     if (document.getElementById('braid-return-pill')) return;
@@ -227,7 +236,7 @@ class BraidLayout {
     }
   }
 
-  // While Mod Mode edits the layout Braid steps aside — this is the one
+  // While Mod Mode edits the layout Braid steps aside. This is the one
   // unmissable way back out of the editor.
   _showModDone() {
     if (document.getElementById('braid-mod-done')) return;
@@ -252,12 +261,16 @@ class BraidLayout {
     try {
       if (!this._lsPrev.has(key)) this._lsPrev.set(key, localStorage.getItem(key));
       localStorage.setItem(key, value);
-    } catch {}
+    } catch { /* storage blocked (private mode): the layout still applies, it is just not remembered */ }
   }
 
   _hide(el) {
     if (!el) return;
-    if (!this._hidden.has(el)) this._hidden.set(el, { display: el.style.display === 'none' ? '' : el.style.display, hadHidden: el.hasAttribute('hidden') });
+    // Record the display exactly as found. A banner the user had already
+    // closed is hidden with display:none, and treating that as "visible"
+    // brought every dismissed banner back when the layout was switched off
+    // (#5671).
+    if (!this._hidden.has(el)) this._hidden.set(el, { display: el.style.display, hadHidden: el.hasAttribute('hidden') });
     if (el.style.display !== 'none') el.style.display = 'none';
     if (!el.hasAttribute('hidden')) el.setAttribute('hidden', '');
   }
@@ -281,7 +294,7 @@ class BraidLayout {
       if (header) sidebar.insertBefore(strip, header);
       else sidebar.prepend(strip);
     }
-    // Mod Mode's drag handles stay OUT of the strip — folding them in
+    // Mod Mode's drag handles stay OUT of the strip: folding them in
     // hides them from the editor's own cleanup and they leak, one per
     // edit session. Anything mod-owned rides in the (hidden) bar.
     strip.querySelectorAll('.mod-panel-handle').forEach((h) => bar.appendChild(h));
@@ -293,8 +306,8 @@ class BraidLayout {
   }
 
   // ── Voice dock ───────────────────────────────────────────
-  // Stock keeps every in-call control — camera, screen share, soundboard,
-  // listen-together, the settings panel with the stream quality pickers —
+  // Stock keeps every in-call control (camera, screen share, soundboard,
+  // listen-together, the settings panel with the stream quality pickers)
   // inside the right sidebar, which Braid hides. Relocate the real
   // elements (all voice JS is getElementById-based, and their CSS is
   // ancestor-free) into a dock above the bottom-left Menu, so a call has
@@ -316,7 +329,7 @@ class BraidLayout {
     adopt(document.getElementById('voice-settings-panel'), dock);
     adopt(panel, dock);
     // Both mute/deafen pairs (header pair is default, bottom-bar pair is
-    // the haven_sidebar_voice_controls opt-in — stock shows one at a time)
+    // the haven_sidebar_voice_controls opt-in; stock shows one at a time)
     const anchor = panel.firstChild;
     adopt(document.getElementById('voice-mute-btn-header'), panel, anchor);
     adopt(document.getElementById('voice-deafen-btn-header'), panel, anchor);
@@ -336,7 +349,7 @@ class BraidLayout {
   _unfoldVoiceDock() {
     document.getElementById('braid-voice-people-btn')?.remove();
     for (const [el, parent, next] of [...(this._moved || [])].reverse()) {
-      try { parent.insertBefore(el, next && next.parentNode === parent ? next : null); } catch {}
+      try { parent.insertBefore(el, next && next.parentNode === parent ? next : null); } catch { /* the old spot is gone: the next render rebuilds it */ }
     }
     this._moved = [];
     document.getElementById('braid-voice-dock')?.remove();
@@ -348,7 +361,7 @@ class BraidLayout {
     // Only the stock `.collapsed` class may drive visibility here. A second,
     // Braid-owned class used to hide the body as well, and because nothing ever
     // removed it, the stock toggle could flip `.collapsed` all it liked and the
-    // section stayed shut — Join a Channel and Create Channel were unreachable
+    // section stayed shut: Join a Channel and Create Channel were unreachable
     // for as long as the layout was on.
     document.querySelectorAll('#join-section-body, #create-section-body').forEach((el) => this._addClass(el, 'collapsed'));
     document.querySelectorAll('#join-section-arrow, #create-section-arrow').forEach((el) => this._addClass(el, 'collapsed'));
@@ -394,7 +407,7 @@ class BraidLayout {
   _buildMoreMenu() {
     if (document.querySelector('.braid-more-wrap')) return;
     // The hamburger lives bottom-left, where the icon bar it absorbed
-    // used to be — the popups it opens (themes, activities) anchor down
+    // used to be; the popups it opens (themes, activities) anchor down
     // there, so the menu and its children share a corner.
     const bar = document.querySelector('.sidebar-bottom-bar');
     const header = document.querySelector('.channel-header');
@@ -407,8 +420,8 @@ class BraidLayout {
       '<span class="braid-ham"><span class="braid-ham-line"></span><span class="braid-ham-line"></span><span class="braid-ham-line"></span></span>' +
       '<span class="braid-ham-label">Menu</span></button>';
     host.prepend(wrap);
-    // Themes and the layout switch keep first-class seats next to the Menu
-    // — always one click, never buried.
+    // Themes and the layout switch keep first-class seats next to the Menu,
+    // always one click, never buried.
     if (bar && !document.getElementById('braid-theme-btn')) {
       const mk = (id, title, paths, onClick) => {
         const b = document.createElement('button');
@@ -438,7 +451,7 @@ class BraidLayout {
     document.body.appendChild(menu);
     const btn = wrap.querySelector('#braid-more-btn');
     // One hamburger absorbs the header extras AND the old bottom-left
-    // icon bar — every Haven feature keeps a door, just behind one
+    // icon bar: every Haven feature keeps a door, just behind one
     // animated menu instead of chrome on two edges.
     let itemIndex = 0;
     const mi = (paths) =>
@@ -450,7 +463,7 @@ class BraidLayout {
       d.style.setProperty('--i', itemIndex++);
       menu.appendChild(d);
     };
-    // icon + short label; muted hints are reserved for shortcuts only —
+    // icon + short label; muted hints are reserved for shortcuts only;
     // the menu reads as a glanceable list, not a paragraph.
     const addItem = (icon, label, onClick, muted) => {
       const b = document.createElement('button');
@@ -498,7 +511,7 @@ class BraidLayout {
     addProxy('channel-code-settings-btn', I.code, 'Code settings');
     // Not `e2e-menu-btn`: that only opens a dropdown living inside the header
     // wrapper, which is display:none outside a DM and hidden by this layout
-    // inside one — so the entry did nothing at all. Proxy the three actions
+    // inside one, so the entry did nothing at all. Proxy the three actions
     // instead; each opens its own modal. They are marked so the open handler
     // can show them only where encryption applies.
     ['e2e-verify-btn::Verify encryption', 'e2e-recover-btn::Recover keys', 'e2e-reset-btn::Reset keys'].forEach((spec) => {
@@ -678,7 +691,7 @@ ${BraidLayout._DENSITIES.map((d) => `#braid-density-card .braid-density-btn[data
       </div>`;
     card.innerHTML = `
       <h5 class="settings-section-subtitle">🪢 Braid text size</h5>
-      <p style="font-size:.75rem;color:var(--text-muted);margin:.25rem 0 0">Continuous sliders, layered on top of Zoom — chat text and interface text scale independently.</p>
+      <p style="font-size:.75rem;color:var(--text-muted);margin:.25rem 0 0">Continuous sliders, layered on top of Zoom. Chat text and interface text scale independently.</p>
       ${row('braid-chat-scale', 'Chat text', 80, 160)}
       ${row('braid-ui-scale', 'Interface text', 85, 140)}`;
     anchor.after(card);
@@ -791,7 +804,7 @@ ${BraidLayout._DENSITIES.map((d) => `#braid-density-card .braid-density-btn[data
     };
     // voice mute/deafen deliberately absent: they live in the voice dock
     // now, where _syncMuteDeafenButtons rewrites textContent on every
-    // state change — an injected SVG would be clobbered mid-call anyway.
+    // state change; an injected SVG would be clobbered mid-call anyway.
     Object.entries(icons).forEach(([id, markup]) => {
       const btn = document.getElementById(id);
       if (!btn || btn.dataset.braidIcon === '1') return;
@@ -872,7 +885,7 @@ ${BraidLayout._DENSITIES.map((d) => `#braid-density-card .braid-density-btn[data
   }
 
   // Run position for the merged cards, desktop twin of Haven-Mobile's
-  // braidForm(). This is deliberately NOT :has(+ .message-compact) —
+  // braidForm(). This is deliberately NOT :has(+ .message-compact):
   // Chromium re-runs :has() invalidation on every sibling insert, which
   // made a 600-message channel load go quadratic (622ms vs 80ms).
   // Attribute marking here is O(n) per observer batch.
@@ -881,7 +894,7 @@ ${BraidLayout._DENSITIES.map((d) => `#braid-density-card .braid-density-btn[data
   // posts by the same user (same persona, no explicit break_chain, not a
   // system notice) merge into one card even when the app rendered them as
   // separate full .message elements. A continuing .message gets
-  // data-braid-cont="1" — its avatar/header hide and its timestamp
+  // data-braid-cont="1": its avatar/header hide and its timestamp
   // surfaces in the gutter on hover via data-time-short.
   _markRuns() {
     const runOf = (first, last) => (first ? (last ? 'solo' : 'start') : (last ? 'end' : 'mid'));
@@ -932,7 +945,7 @@ ${BraidLayout._DENSITIES.map((d) => `#braid-density-card .braid-density-btn[data
   // Own messages get an accent-tinted card, like mobile.
   _paintOwn() {
     let id = null;
-    try { id = (JSON.parse(localStorage.getItem('haven_user') || 'null') || {}).id; } catch {}
+    try { id = (JSON.parse(localStorage.getItem('haven_user') || 'null') || {}).id; } catch { /* corrupt or blocked storage: nothing to highlight */ }
     if (!id) { HavenApi.DOM.removeStyle('BraidFormOwn'); return; }
     const sel = `html[data-braid-form="1"] .message[data-user-id="${id}"]>.message-row>.message-body,` +
       `html[data-braid-form="1"] .message-compact[data-user-id="${id}"]>.message-body`;
@@ -961,13 +974,13 @@ html[data-braid-layout="1"] body,
 html[data-braid-layout="1"] #app{overflow:hidden}
 html[data-braid-layout="1"] #app-body{display:flex!important;flex-direction:row!important;min-height:0;height:100%}
 html[data-braid-layout="1"] .server-bar{display:none!important}
-/* width deliberately NOT !important — the stock resize handle writes an
+/* width deliberately NOT !important: the stock resize handle writes an
    inline style.width (persisted as haven_sidebar_width) and must win */
 html[data-braid-layout="1"] .sidebar{width:var(--sidebar-width);min-width:12.5rem;max-width:25rem;flex:0 0 auto!important;background:var(--bg-secondary)!important;border-right:1px solid var(--border)!important;display:flex!important;flex-direction:column!important;position:relative;z-index:5}
 html[data-braid-layout="1"] .braid-server-strip{display:flex;align-items:center;gap:.3125rem;padding:.625rem .625rem .5rem;overflow-x:auto;border-bottom:1px solid var(--border);flex-shrink:0;scrollbar-width:none}
 html[data-braid-layout="1"] .braid-server-strip::-webkit-scrollbar{display:none;width:0;height:0}
 html[data-braid-layout="1"] .braid-server-strip .server-icon{width:2.25rem!important;height:2.25rem!important;min-width:2.25rem;border-radius:.6875rem!important;flex-shrink:0;position:relative}
-/* #server-list is a plain block div — inside the horizontal strip its
+/* #server-list is a plain block div: inside the horizontal strip its
    children would stack vertically (exactly what broke multi-server
    setups). Flex it inline so every icon rides the same row. */
 html[data-braid-layout="1"] .braid-server-strip #server-list{display:flex;align-items:center;gap:.3125rem;min-width:0;flex-shrink:0}
@@ -992,7 +1005,7 @@ html[data-braid-layout="1"] .sidebar-header{order:0;padding:.625rem .75rem!impor
 html[data-braid-layout="1"] .brand{margin-bottom:.5rem!important;gap:.5rem!important}
 html[data-braid-layout="1"] .brand-text{font-size:.9375rem!important;font-weight:650!important;letter-spacing:-.03em!important;text-transform:none!important}
 html[data-braid-layout="1"] .user-bar{border-radius:.75rem!important;padding:.5rem .625rem!important;gap:.5rem!important;background:var(--braid-btn-bg)!important;border:1px solid var(--braid-btn-line)!important}
-html[data-braid-layout="1"] .sidebar-mod-container{order:1;flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column;padding:2px 0 .375rem}
+html[data-braid-layout="1"] .sidebar-mod-container{order:1;flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column;padding:2px 0 7px}
 html[data-braid-layout="1"] .sidebar-section[data-mod-id="join"],
 html[data-braid-layout="1"] .sidebar-section#admin-controls{border:0!important;padding:2px .625rem!important;margin:0!important}
 html:not([data-braid-layout="1"]) .braid-more-wrap,
@@ -1008,6 +1021,7 @@ html[data-braid-layout="1"] #create-section-body.collapsed{display:none!importan
 html[data-braid-layout="1"] .sidebar-split{flex:1;min-height:0;display:flex;flex-direction:column;border:0!important}
 html[data-braid-layout="1"] .channel-section{flex:1;min-height:0;padding:2px .375rem .375rem!important;border:0!important}
 html[data-braid-layout="1"] .dm-section-pane{flex:0 0 auto;max-height:28%;padding:2px .375rem .375rem!important;border-top:1px solid var(--border)!important}
+html[data-braid-layout="1"] .dm-section-pane[style*="flex"]{max-height:none}
 html[data-braid-layout="1"] .section-label.channels-toggle,
 html[data-braid-layout="1"] .section-label.dm-section-label{font-size:.625rem!important;font-weight:650!important;letter-spacing:.12em!important;text-transform:uppercase!important;color:var(--text-muted)!important;margin:.5rem .5rem .25rem!important}
 html[data-braid-layout="1"] .channel-item{margin:1px .375rem!important;padding:var(--braid-chan-pad-y) var(--braid-chan-pad-x)!important;border-radius:.625rem!important}
@@ -1039,7 +1053,7 @@ html[data-braid-layout="1"] .voice-controls div[style*="background"],
 html[data-braid-layout="1"] .voice-controls span[style*="background"]{background:var(--bg-tertiary)!important;color:var(--text-secondary)!important;border:1px solid var(--border)!important;border-radius:999px!important;box-shadow:none!important}
 /* ── Voice dock ── the relocated stock controls, bottom-left. Camera,
    screen share, soundboard, listen-together, settings (stream quality
-   lives in there), people, leave — every streaming option in reach. */
+   lives in there), people, leave: every streaming option in reach. */
 html[data-braid-layout="1"] #braid-voice-dock{flex-shrink:0;display:flex;flex-direction:column;min-width:0}
 html[data-braid-layout="1"] #braid-voice-dock .voice-panel{border-top:1px solid var(--border)!important;border-bottom:0!important;background:var(--bg-secondary)!important;padding:.4375rem .5rem!important;gap:.25rem!important;justify-content:flex-start!important;flex-wrap:wrap}
 html[data-braid-layout="1"] #braid-voice-dock .voice-panel-btn,
@@ -1059,7 +1073,7 @@ html[data-braid-layout="1"] #braid-voice-dock .voice-panel-leave:hover{backgroun
 html[data-braid-layout="1"] #braid-voice-dock .voice-settings-panel{border-top:1px solid var(--border)!important;border-bottom:0!important;background:var(--bg-secondary)!important;max-height:min(46vh,21rem);overflow:auto;padding:.625rem .75rem!important;scrollbar-width:thin}
 html[data-braid-layout="1"] #braid-voice-dock .voice-settings-select{border-radius:.5625rem!important;border:1px solid var(--border)!important;background:var(--bg-input,var(--bg-tertiary))!important}
 html[data-braid-layout="1"] #braid-voice-dock .voice-settings-section-label{font-size:.625rem;font-weight:650;letter-spacing:.12em;text-transform:uppercase;color:var(--text-muted)}
-/* The in-call status bar rides between dock and Menu — same quiet chrome */
+/* The in-call status bar rides between dock and Menu, same quiet chrome */
 html[data-braid-layout="1"] .sidebar-bottom .voice-bar{border-top:1px solid var(--border)!important;background:var(--bg-secondary)!important;padding:.375rem .625rem!important;box-shadow:none!important}
 html[data-braid-layout="1"] .sidebar-bottom .voice-bar-channel{font-size:.71875rem;color:var(--text-muted)}
 html[data-braid-layout="1"] .sidebar-bottom .voice-bar-badge{border-radius:999px!important;font-size:.59375rem;border:1px solid var(--braid-btn-line);background:var(--braid-btn-bg)}
@@ -1137,7 +1151,7 @@ html[data-braid-form="1"]{
 --braid-me:color-mix(in srgb,var(--accent) 8%,var(--bg-secondary));
 --braid-me-line:color-mix(in srgb,var(--accent) 26%,var(--border));
 /* Spacing scale. Every gap in a run card and a channel row reads one of
-   these, so a density level only has to restate the tokens — the corner
+   these, so a density level only has to restate the tokens. The corner
    radii are deliberately NOT in here, the cards stay equally rounded at
    all three levels. --braid-gutter must stay derived: a continuation
    indents by exactly the leader's inset + avatar + row gap, so shrinking
@@ -1182,7 +1196,7 @@ html[data-braid-form="1"] .message-avatar,
 html[data-braid-form="1"] .message-avatar-img{width:var(--braid-avatar)!important;height:var(--braid-avatar)!important;min-width:var(--braid-avatar)!important;box-sizing:border-box!important;border:0!important;margin:0!important}
 html[data-braid-form="1"] .message:hover,
 html[data-braid-form="1"] .message-compact:hover{background:transparent!important}
-/* No internal horizontal borders inside a run — every body keeps only its
+/* No internal horizontal borders inside a run: every body keeps only its
    side rails; the run's top and bottom edges are drawn by start/end alone.
    (The old base rule left border-bottom on every body, which stacked a
    solid line under the dotted seam and read as a full-width divider.) */
@@ -1196,7 +1210,7 @@ html[data-braid-form="1"] .message-compact[data-braid-run="end"]>.message-body{b
 /* the only separator inside a run: a small centered dotted seam */
 html[data-braid-form="1"] .message-compact>.message-body::before,
 html[data-braid-form="1"] .message[data-braid-cont="1"]>.message-row>.message-body::before{content:'';position:absolute;left:50%;transform:translateX(-50%);width:min(7rem,45%);top:0;border-top:1px dotted color-mix(in srgb,var(--braid-seam) 75%,transparent);pointer-events:none}
-/* a .message continuing another author-run: no repeated avatar/header —
+/* a .message continuing another author-run: no repeated avatar/header;
    the gutter keeps its width, and the post's own time shows there on hover */
 html[data-braid-form="1"] .message[data-braid-cont="1"]{position:relative}
 html[data-braid-form="1"] .message[data-braid-cont="1"] .message-avatar,
@@ -1307,7 +1321,7 @@ html[data-braid-layout="1"] .settings-nav{background:var(--bg-secondary)!importa
 html[data-braid-layout="1"] .settings-nav-group-label{font-size:.625rem!important;font-weight:650!important;letter-spacing:.12em!important;text-transform:uppercase!important;color:var(--text-muted)!important;margin:.875rem .375rem .25rem!important}
 /* Full-width pills. Stock uses a hanging-indent hack (padding-left
    1.625rem + negative text-indent) so wrapped lines clear the leading
-   emoji — with a real icon element that hack would push the first line
+   emoji. With a real icon element that hack would push the first line
    left OUT of the pill, which is why highlights never covered the row. */
 html[data-braid-layout="1"] .settings-nav-item{display:flex!important;align-items:center;gap:.5rem;width:100%;box-sizing:border-box;border-radius:.625rem!important;padding:.4375rem .625rem!important;text-indent:0!important;margin:1px 0!important;font-size:calc(.8125rem*var(--braid-ui-scale,1))!important;font-weight:550!important;border:1px solid transparent!important}
 html[data-braid-layout="1"] .settings-nav-item svg{flex:0 0 auto;opacity:.75}

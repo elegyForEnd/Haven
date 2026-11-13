@@ -15,7 +15,7 @@ const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 test('the server accepts an effects preference and allows a JSON array in it', () => {
   const src = read('src/socketHandlers/users.js');
   assert.match(src, /'effects',/);
-  assert.match(src, /key === 'effects' \? 400 : 50/);
+  assert.match(src, /key === 'effects' \? 400 : /);
 });
 
 test('every effects write in the picker goes through _persistEffects', () => {
@@ -24,11 +24,16 @@ test('every effects write in the picker goes through _persistEffects', () => {
   assert.equal(writes.length, 3, 'only the legacy migration, _persistEffects and the server sync write the key');
   assert.match(src, /function _persistEffects\(raw\)/);
   assert.match(src, /socket\.emit\('set-preference', \{ key: 'effects', value: raw \}\)/);
+  // The app page has no global `socket` (app.js is a module); the sync must use
+  // the socket the app publishes, or it silently never runs.
+  const persist = src.slice(src.indexOf('function _persistEffects(raw)'), src.indexOf('function syncEffectsFromServer(raw)'));
+  assert.match(persist, /const socket = window\.havenSocket;/);
+  assert.doesNotMatch(persist, /typeof socket !== 'undefined'/);
   assert.match(src, /function syncEffectsFromServer\(raw\)/);
 });
 
 test('the preferences handler restores effects before it applies the theme', () => {
-  const src = read('public/js/modules/app-socket.js');
+  const src = read('public/js/modules/app-socket-events.js');
   const sync = src.indexOf('syncEffectsFromServer(prefs.effects)');
   const theme = src.indexOf('applyThemeFromServer(prefs.theme, true, true)');
   assert.ok(sync > 0 && theme > sync, 'effects restored first, then theme applied');

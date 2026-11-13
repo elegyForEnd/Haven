@@ -225,6 +225,19 @@ test('a slower stale locale response cannot overwrite the latest load', async ()
   assert.equal(env.i18n.t('marker'), 'pt');
 });
 
+test('a locale fetch that fails once is tried again instead of leaving raw keys', async () => {
+  let failures = 0;
+  const env = await createI18n({
+    storedLocale: 'en',
+    fetchOverride: url => {
+      if (url === '/locales/en.json' && failures < 1) { failures++; throw new Error('server restarting'); }
+      return undefined;
+    }
+  });
+  assert.equal(failures, 1);
+  assert.equal(env.i18n.t('marker'), 'en');
+});
+
 test('language controls use bundled Brazilian artwork instead of OS flag emoji', () => {
   const indexHtml = fs.readFileSync(path.join(ROOT, 'public/index.html'), 'utf8');
   const appHtml = fs.readFileSync(path.join(ROOT, 'public/app.html'), 'utf8');
@@ -268,6 +281,29 @@ test('maintained locale catalogs do not contain duplicate object keys', () => {
   for (const locale of ['en', 'pt']) {
     const source = fs.readFileSync(path.join(localeDir, `${locale}.json`), 'utf8');
     assert.deepEqual(duplicateJsonKeys(source), [], `${locale}.json contains duplicate object keys`);
+  }
+});
+
+test('extension update controls are translated in every bundled locale', () => {
+  const localeDir = path.join(ROOT, 'public/locales');
+  const english = JSON.parse(fs.readFileSync(path.join(localeDir, 'en.json'), 'utf8'));
+  const expectedKeys = Object.keys(english.settings.extension_updates).sort();
+
+  for (const file of fs.readdirSync(localeDir).filter(name => name.endsWith('.json'))) {
+    const catalog = JSON.parse(fs.readFileSync(path.join(localeDir, file), 'utf8'));
+    assert.equal(typeof catalog.settings.nav.extension_updates, 'string', `${file} is missing the navigation label`);
+    assert.deepEqual(
+      Object.keys(catalog.settings.extension_updates || {}).sort(),
+      expectedKeys,
+      `${file} has incomplete extension update translations`,
+    );
+    for (const key of expectedKeys) {
+      assert.deepEqual(
+        placeholders(catalog.settings.extension_updates[key]),
+        placeholders(english.settings.extension_updates[key]),
+        `${file} has mismatched placeholders for settings.extension_updates.${key}`,
+      );
+    }
   }
 });
 
@@ -317,7 +353,7 @@ test('HTML translations preserve required code and emphasis markup', () => {
 });
 
 test('the custom language picker preserves visible focus and listbox keyboard navigation', () => {
-  const css = fs.readFileSync(path.join(ROOT, 'public/css/style.css'), 'utf8');
+  const css = require('./coreCss').readCoreCss();
   assert.match(css, /\.lang-picker-btn:focus-visible,[\s\S]*\.lang-picker-item:focus-visible/);
   for (const key of ['ArrowDown', 'ArrowUp', 'Home', 'End', 'Escape']) {
     assert.match(I18N_SOURCE, new RegExp(`event\\.key === '${key}'`));

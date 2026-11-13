@@ -56,6 +56,9 @@ test('native screen start is transactional when the helper returns invalid state
   const VoiceManager = loadVoiceManager({ window: { havenDesktop: { nativeScreen: api } } });
   const voice = Object.create(VoiceManager.prototype);
   Object.assign(voice, {
+    peers: new Map(),
+    screenStreamIds: new Map(),
+    webcamStreamIds: new Map(),
     screenResolution: 1080,
     screenFrameRate: 30,
     _screenBitrates: { 1080: 8_000_000, 0: 8_000_000 },
@@ -78,6 +81,9 @@ test('native picker cancellation does not fall through to another picker', async
   const VoiceManager = loadVoiceManager({ window: { havenDesktop: { nativeScreen: api } } });
   const voice = Object.create(VoiceManager.prototype);
   Object.assign(voice, {
+    peers: new Map(),
+    screenStreamIds: new Map(),
+    webcamStreamIds: new Map(),
     screenResolution: 1080,
     screenFrameRate: 30,
     _screenBitrates: { 1080: 8_000_000, 0: 8_000_000 },
@@ -97,6 +103,9 @@ test('native transport falls back when a viewer does not support the protocol', 
   const VoiceManager = loadVoiceManager({ window: { havenDesktop: { nativeScreen: api } } });
   const voice = Object.create(VoiceManager.prototype);
   Object.assign(voice, {
+    peers: new Map(),
+    screenStreamIds: new Map(),
+    webcamStreamIds: new Map(),
     inVoice: true,
     currentChannel: 'a1b2c3d4',
     _voiceSessionGeneration: 3,
@@ -123,6 +132,9 @@ test('voice bots do not participate in native screen codec negotiation', () => {
   const VoiceManager = loadVoiceManager({ window: {} });
   const voice = Object.create(VoiceManager.prototype);
   Object.assign(voice, {
+    peers: new Map(),
+    screenStreamIds: new Map(),
+    webcamStreamIds: new Map(),
     peers: new Map([[7, {}], [8, {}]]),
     _nativeScreenPeerCapabilities: new Map(),
     _nativeScreenCodecs: () => ['H264', 'AV1'],
@@ -148,6 +160,9 @@ test('screen sharing cannot start while signaling is disconnected', async () => 
   const VoiceManager = loadVoiceManager({ window: { havenDesktop: { nativeScreen: api } } });
   const voice = Object.create(VoiceManager.prototype);
   Object.assign(voice, {
+    peers: new Map(),
+    screenStreamIds: new Map(),
+    webcamStreamIds: new Map(),
     inVoice: true,
     isScreenSharing: false,
     _screenStartInFlight: false,
@@ -169,6 +184,9 @@ test('rebuilding a voice peer does not tear down its independent native screen p
   });
   const voice = Object.create(VoiceManager.prototype);
   Object.assign(voice, {
+    peers: new Map(),
+    screenStreamIds: new Map(),
+    webcamStreamIds: new Map(),
     peers: new Map([[7, { connection: { close: () => { closed++; } } }]]),
     gainNodes: new Map(),
     screenGainNodes: new Map(),
@@ -191,6 +209,9 @@ test('native recovery ignores video receivers on the voice connection', () => {
   const track = { kind: 'video', readyState: 'live', muted: false, id: 'camera-track' };
   const voice = Object.create(VoiceManager.prototype);
   Object.assign(voice, {
+    peers: new Map(),
+    screenStreamIds: new Map(),
+    webcamStreamIds: new Map(),
     _nativeScreenAnnouncements: new Map([[7, 'native-session-1234']]),
     _nativeScreenPeers: new Map(),
     peers: new Map([[7, {
@@ -231,6 +252,9 @@ test('native screen announcements keep voice video and audio on their own paths'
   });
   const voice = Object.create(VoiceManager.prototype);
   Object.assign(voice, {
+    peers: new Map(),
+    screenStreamIds: new Map(),
+    webcamStreamIds: new Map(),
     peers: new Map(),
     rtcConfig: {},
     localStream: null,
@@ -295,6 +319,9 @@ test('stale browser track callbacks cannot overwrite a native share', async () =
   const voice = Object.create(VoiceManager.prototype);
   Object.assign(voice, {
     peers: new Map(),
+    screenStreamIds: new Map(),
+    webcamStreamIds: new Map(),
+    peers: new Map(),
     rtcConfig: {},
     localStream: null,
     audioBitrate: 0,
@@ -355,6 +382,9 @@ test('native receiver drains ICE that arrives while applying the offer', async (
   });
   const voice = Object.create(VoiceManager.prototype);
   Object.assign(voice, {
+    peers: new Map(),
+    screenStreamIds: new Map(),
+    webcamStreamIds: new Map(),
     currentChannel: 'a1b2c3d4',
     rtcConfig: {},
     screenSharers: new Set([7]),
@@ -401,6 +431,9 @@ test('fatal helper errors without a peer stop the native share', async () => {
   const VoiceManager = loadVoiceManager({ window: { havenDesktop: { nativeScreen: api } } });
   const voice = Object.create(VoiceManager.prototype);
   Object.assign(voice, {
+    peers: new Map(),
+    screenStreamIds: new Map(),
+    webcamStreamIds: new Map(),
     _nativeScreenSharing: true,
     _nativeScreenSessionId: 'native-session-1234',
     currentChannel: 'a1b2c3d4',
@@ -437,6 +470,9 @@ test('sender queues native ICE until the browser answer is applied', async () =>
   const VoiceManager = loadVoiceManager({ window: { havenDesktop: { nativeScreen: api } } });
   const voice = Object.create(VoiceManager.prototype);
   Object.assign(voice, {
+    peers: new Map(),
+    screenStreamIds: new Map(),
+    webcamStreamIds: new Map(),
     _nativeScreenSharing: true,
     _nativeScreenSessionId: 'native-session-1234',
     _nativeScreenSenderStates: new Map([[
@@ -485,6 +521,9 @@ test('native start is stopped without announcement after leaving during the pick
   const VoiceManager = loadVoiceManager({ window: { havenDesktop: { nativeScreen: api } } });
   const voice = Object.create(VoiceManager.prototype);
   Object.assign(voice, {
+    peers: new Map(),
+    screenStreamIds: new Map(),
+    webcamStreamIds: new Map(),
     inVoice: true,
     currentChannel: 'a1b2c3d4',
     _voiceSessionGeneration: 3,
@@ -525,6 +564,9 @@ test('a stale rejected start cannot stop or clear a newer native session', async
   const VoiceManager = loadVoiceManager({ window: { havenDesktop: { nativeScreen: api } } });
   const voice = Object.create(VoiceManager.prototype);
   Object.assign(voice, {
+    peers: new Map(),
+    screenStreamIds: new Map(),
+    webcamStreamIds: new Map(),
     inVoice: true,
     currentChannel: 'a1b2c3d4',
     _voiceSessionGeneration: 3,
@@ -560,6 +602,9 @@ test('stale native answers cannot replace the current viewer negotiation', async
   const VoiceManager = loadVoiceManager({ window: { havenDesktop: { nativeScreen: api } } });
   const voice = Object.create(VoiceManager.prototype);
   Object.assign(voice, {
+    peers: new Map(),
+    screenStreamIds: new Map(),
+    webcamStreamIds: new Map(),
     _nativeScreenSharing: true,
     _nativeScreenSessionId: 'native-session-1234',
     _nativeScreenSenderStates: new Map([[
@@ -589,6 +634,9 @@ test('an empty screen snapshot removes stale local sharers', () => {
   });
   const voice = Object.create(VoiceManager.prototype);
   Object.assign(voice, {
+    peers: new Map(),
+    screenStreamIds: new Map(),
+    webcamStreamIds: new Map(),
     socket: { on: (event, handler) => handlers.set(event, handler) },
     currentChannel: 'a1b2c3d4',
     localUserId: 1,
@@ -619,6 +667,9 @@ test('an active screen snapshot preserves the authoritative no-audio state', () 
   });
   const voice = Object.create(VoiceManager.prototype);
   Object.assign(voice, {
+    peers: new Map(),
+    screenStreamIds: new Map(),
+    webcamStreamIds: new Map(),
     socket: { on: (event, handler) => handlers.set(event, handler) },
     currentChannel: 'a1b2c3d4',
     localUserId: 1,
@@ -658,6 +709,9 @@ test('an empty recovery snapshot preserves an active local share', () => {
   });
   const voice = Object.create(VoiceManager.prototype);
   Object.assign(voice, {
+    peers: new Map(),
+    screenStreamIds: new Map(),
+    webcamStreamIds: new Map(),
     socket: { on: (event, handler) => handlers.set(event, handler) },
     currentChannel: 'a1b2c3d4',
     localUserId: 1,
@@ -687,6 +741,9 @@ test('a stale server snapshot cannot restore a stopped local share', () => {
   });
   const voice = Object.create(VoiceManager.prototype);
   Object.assign(voice, {
+    peers: new Map(),
+    screenStreamIds: new Map(),
+    webcamStreamIds: new Map(),
     socket: { on: (event, handler) => handlers.set(event, handler) },
     currentChannel: 'a1b2c3d4',
     localUserId: 1,
@@ -721,6 +778,9 @@ test('browser screen sharing is reannounced after voice rejoin', async () => {
   const VoiceManager = loadVoiceManager({ window: {} });
   const voice = Object.create(VoiceManager.prototype);
   Object.assign(voice, {
+    peers: new Map(),
+    screenStreamIds: new Map(),
+    webcamStreamIds: new Map(),
     isScreenSharing: true,
     _nativeScreenSharing: false,
     currentChannel: 'a1b2c3d4',
@@ -746,6 +806,9 @@ test('screen reannouncement stops local sharing when the server rejects it', asy
   const VoiceManager = loadVoiceManager({ window: {} });
   const voice = Object.create(VoiceManager.prototype);
   Object.assign(voice, {
+    peers: new Map(),
+    screenStreamIds: new Map(),
+    webcamStreamIds: new Map(),
     isScreenSharing: true,
     _nativeScreenSharing: false,
     currentChannel: 'a1b2c3d4',
@@ -766,6 +829,9 @@ test('unknown native ICE negotiations are bounded per sharer session', async () 
   const VoiceManager = loadVoiceManager({ window: {} });
   const voice = Object.create(VoiceManager.prototype);
   Object.assign(voice, {
+    peers: new Map(),
+    screenStreamIds: new Map(),
+    webcamStreamIds: new Map(),
     _nativeScreenSharing: false,
     currentChannel: 'a1b2c3d4',
     _nativeScreenAnnouncements: new Map([[7, 'native-session-1234']]),
@@ -793,6 +859,9 @@ test('native peer recovery clears stale UI and rearms retries', () => {
   const VoiceManager = loadVoiceManager({ window: {} });
   const voice = Object.create(VoiceManager.prototype);
   Object.assign(voice, {
+    peers: new Map(),
+    screenStreamIds: new Map(),
+    webcamStreamIds: new Map(),
     screenSharers: new Set([7]),
     _screenDelivered: new Set([7]),
     _nativeScreenPeers: new Map(),
@@ -820,6 +889,9 @@ test('a no-op voice rejoin does not churn native screen peers', async () => {
   });
   const voice = Object.create(VoiceManager.prototype);
   Object.assign(voice, {
+    peers: new Map(),
+    screenStreamIds: new Map(),
+    webcamStreamIds: new Map(),
     socket: { on: (event, handler) => handlers.set(event, handler) },
     peers: new Map(),
     inVoice: true,
@@ -849,6 +921,9 @@ test('voice rejoin flushes a screen stop queued while disconnected', async () =>
   });
   const voice = Object.create(VoiceManager.prototype);
   Object.assign(voice, {
+    peers: new Map(),
+    screenStreamIds: new Map(),
+    webcamStreamIds: new Map(),
     socket: {
       connected: true,
       on: (event, handler) => handlers.set(event, handler),
@@ -891,6 +966,9 @@ test('native start revalidates voice ownership after attaching initial peers', a
   const VoiceManager = loadVoiceManager({ window: { havenDesktop: { nativeScreen: api } } });
   const voice = Object.create(VoiceManager.prototype);
   Object.assign(voice, {
+    peers: new Map(),
+    screenStreamIds: new Map(),
+    webcamStreamIds: new Map(),
     inVoice: true,
     currentChannel: 'a1b2c3d4',
     _voiceSessionGeneration: 3,
@@ -931,6 +1009,9 @@ test('native start cleanup follows a channel code rotation', async () => {
   const VoiceManager = loadVoiceManager({ window: { havenDesktop: { nativeScreen: api } } });
   const voice = Object.create(VoiceManager.prototype);
   Object.assign(voice, {
+    peers: new Map(),
+    screenStreamIds: new Map(),
+    webcamStreamIds: new Map(),
     inVoice: true,
     currentChannel: 'a1b2c3d4',
     _voiceSessionGeneration: 3,
@@ -967,6 +1048,9 @@ test('an active native share is reannounced after channel rotation', async () =>
   const VoiceManager = loadVoiceManager({ window: {} });
   const voice = Object.create(VoiceManager.prototype);
   Object.assign(voice, {
+    peers: new Map(),
+    screenStreamIds: new Map(),
+    webcamStreamIds: new Map(),
     peers: new Map(),
     inVoice: true,
     currentChannel: 'd4c3b2a1',
@@ -1005,6 +1089,9 @@ test('native stop signals the server even when the helper hangs', async () => {
   const VoiceManager = loadVoiceManager({ window: { havenDesktop: { nativeScreen: api } } });
   const voice = Object.create(VoiceManager.prototype);
   Object.assign(voice, {
+    peers: new Map(),
+    screenStreamIds: new Map(),
+    webcamStreamIds: new Map(),
     localUserId: 1,
     currentChannel: 'a1b2c3d4',
     _voiceSessionGeneration: 3,
@@ -1043,6 +1130,9 @@ test('native stop is queued until signaling reconnects', async () => {
   };
   const voice = Object.create(VoiceManager.prototype);
   Object.assign(voice, {
+    peers: new Map(),
+    screenStreamIds: new Map(),
+    webcamStreamIds: new Map(),
     localUserId: 1,
     currentChannel: 'a1b2c3d4',
     _voiceSessionGeneration: 3,
@@ -1093,6 +1183,9 @@ test('native start uses the gentler relay bitrate profile', async () => {
   });
   const voice = Object.create(VoiceManager.prototype);
   Object.assign(voice, {
+    peers: new Map(),
+    screenStreamIds: new Map(),
+    webcamStreamIds: new Map(),
     inVoice: true,
     currentChannel: 'a1b2c3d4',
     _voiceSessionGeneration: 3,
@@ -1123,6 +1216,9 @@ test('fatal helper failure invalidates a start waiting on initial peers', async 
   const VoiceManager = loadVoiceManager({ window: { havenDesktop: { nativeScreen: api } } });
   const voice = Object.create(VoiceManager.prototype);
   Object.assign(voice, {
+    peers: new Map(),
+    screenStreamIds: new Map(),
+    webcamStreamIds: new Map(),
     inVoice: true,
     currentChannel: 'a1b2c3d4',
     localUserId: 1,
@@ -1174,6 +1270,9 @@ test('an ended native track uses the retrying recovery path', async () => {
   const voice = Object.create(VoiceManager.prototype);
   let recoveries = 0;
   Object.assign(voice, {
+    peers: new Map(),
+    screenStreamIds: new Map(),
+    webcamStreamIds: new Map(),
     currentChannel: 'a1b2c3d4',
     rtcConfig: {},
     screenSharers: new Set([7]),
@@ -1203,6 +1302,9 @@ test('stopping a native share removes a local snapshot badge', async () => {
   const VoiceManager = loadVoiceManager({ window: { havenDesktop: { nativeScreen: api } } });
   const voice = Object.create(VoiceManager.prototype);
   Object.assign(voice, {
+    peers: new Map(),
+    screenStreamIds: new Map(),
+    webcamStreamIds: new Map(),
     localUserId: 1,
     currentChannel: 'a1b2c3d4',
     isScreenSharing: true,
@@ -1240,6 +1342,9 @@ test('browser fallback revalidates the voice operation after renegotiation', asy
   });
   const voice = Object.create(VoiceManager.prototype);
   Object.assign(voice, {
+    peers: new Map(),
+    screenStreamIds: new Map(),
+    webcamStreamIds: new Map(),
     inVoice: true,
     currentChannel: 'a1b2c3d4',
     _voiceSessionGeneration: 3,
@@ -1303,6 +1408,9 @@ test('browser capture is rolled back when the server rejects screen start', asyn
   });
   const voice = Object.create(VoiceManager.prototype);
   Object.assign(voice, {
+    peers: new Map(),
+    screenStreamIds: new Map(),
+    webcamStreamIds: new Map(),
     inVoice: true,
     currentChannel: 'a1b2c3d4',
     _voiceSessionGeneration: 3,
@@ -1334,6 +1442,9 @@ test('an incompatible late viewer stops an active native share', async () => {
   const VoiceManager = loadVoiceManager({ window: {} });
   const voice = Object.create(VoiceManager.prototype);
   Object.assign(voice, {
+    peers: new Map(),
+    screenStreamIds: new Map(),
+    webcamStreamIds: new Map(),
     socket: { on: (event, handler) => handlers.set(event, handler) },
     currentChannel: 'a1b2c3d4',
     _nativeScreenSharing: true,

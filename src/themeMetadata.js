@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const THEME_API_VERSION = 1;
+const BUILTIN_THEMES = ['', 'haven', 'discord', 'matrix', 'tron', 'halo', 'lotr', 'cyberpunk', 'nord', 'dracula', 'bloodborne', 'darksouls', 'eldenring', 'ice', 'abyss', 'minecraft', 'ffx', 'zelda', 'fallout', 'scripture', 'chapel', 'gospel', 'midnightpurple', 'crt', 'win95', 'rgb', 'daylight', 'cloudy'];
 const THEME_FILENAME_PATTERN = /^(?!\.)[a-zA-Z0-9_. -]+\.theme\.css$/;
 
 function metadataBlock(content) {
@@ -74,6 +75,22 @@ function classifyThemeApi(declared) {
   };
 }
 
+// The colours the theme picker draws a theme's preview card with, read from
+// the file's own palette tokens. Only plain colour literals are passed on,
+// since the client puts them in a style attribute.
+const SWATCH_TOKENS = { bg: '--bg-primary', panel: '--bg-secondary', accent: '--accent', text: '--text-primary' };
+const COLOR_LITERAL = /^(?:#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})|(?:rgba?|hsla?)\([\d\s.,%/+-]{1,60}\))$/i;
+
+function themeSwatch(content) {
+  if (typeof content !== 'string') return null;
+  const swatch = {};
+  for (const [key, token] of Object.entries(SWATCH_TOKENS)) {
+    const value = content.match(new RegExp(`(?<![\\w-])${token}\\s*:\\s*([^;}!]+)`))?.[1].trim();
+    if (value && COLOR_LITERAL.test(value)) swatch[key] = value;
+  }
+  return swatch.bg ? swatch : null;
+}
+
 function parseThemeMetadata(content) {
   const block = metadataBlock(content);
   const declarations = metadataDeclarations(block);
@@ -84,6 +101,8 @@ function parseThemeMetadata(content) {
     author: 'author',
     version: 'version',
     icon: 'icon',
+    category: 'category',
+    section: 'section',
   };
 
   for (const [property, tag] of Object.entries(fields)) {
@@ -100,6 +119,11 @@ function parseThemeMetadata(content) {
   return {
     ...meta,
     ...classifyThemeApi(declared === undefined ? null : declared),
+    // A file that sets the page background is a full palette, not a stackable
+    // tweak. Settings toggles for those used to keep injecting :root tokens
+    // after the picker moved to Matrix.
+    palette: typeof content === 'string' && /--bg-primary\s*:/.test(content),
+    swatch: themeSwatch(content),
   };
 }
 
@@ -171,15 +195,30 @@ function compatibleThemeFiles(directory, files) {
 }
 
 function validatedThemeDefault(directory, value, publishedFiles) {
-  if (typeof value !== 'string' || !value.startsWith('file:')) return value || '';
-  const file = value.slice(5);
-  return publishedFiles.includes(file) && readThemeMetadataFile(directory, file)?.compatible
-    ? value
-    : '';
+  if (typeof value !== 'string' || !value) return '';
+  const file = value.startsWith('file:') ? value.slice(5) : value;
+  const usable = publishedFiles.includes(file) && readThemeMetadataFile(directory, file)?.compatible;
+  if (usable) return `file:${file}`;
+  // A name that can only refer to a theme file, but does not resolve to one, never
+  // reaches the client as a theme name: it would apply no stylesheet and raise no
+  // error, so an admin would see a healthy setting and an unthemed page.
+  return isThemeFilename(file) ? '' : value;
+}
+
+// Whether an account may save `value` as its theme. Haven's own themes and
+// published theme files are open to everyone. An unpublished file is only for
+// people who manage the server, apart from the account's current theme and
+// the server's Default Theme, so saving again never takes a look away.
+function themePreferenceAllowed(value, { published = [], current = '', defaultTheme = '', canManage = false } = {}) {
+  if (typeof value !== 'string' || !value.startsWith('file:')) return true;
+  if (canManage === true) return true;
+  if (value === current || value === defaultTheme) return true;
+  return Array.isArray(published) && published.includes(value.slice(5));
 }
 
 module.exports = {
   THEME_API_VERSION,
+  BUILTIN_THEMES,
   classifyThemeApi,
   compatibleThemeFiles,
   createThemeFileMiddleware,
@@ -188,5 +227,7 @@ module.exports = {
   readThemeMetadataFile,
   readThemeMetadataSnapshot,
   themeFileFromRequestPath,
+  themePreferenceAllowed,
+  themeSwatch,
   validatedThemeDefault,
 };

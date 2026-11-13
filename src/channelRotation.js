@@ -1,5 +1,7 @@
 'use strict';
 
+const { protectedCount, keepChannel } = require('./protectedMessages');
+
 function persistChannelCodeRotation(db, channelId, oldCode, newCode) {
   if (oldCode === newCode) throw new Error('New channel code must differ from the current code');
   const rotate = db.transaction(() => {
@@ -63,10 +65,10 @@ function schedulePendingVoiceLeave({
     const entry = room.get(userId);
     if (!entry) return;
     if (entry.socketId !== oldSocketId) {
-      log(`[VoiceDiag] grace eviction skipped — ${socket.user.username} rebound to ${entry.socketId}`);
+      log(`[VoiceDiag] grace eviction skipped: ${socket.user.username} rebound to ${entry.socketId}`);
       return;
     }
-    log(`[VoiceDiag] grace eviction firing for ${socket.user.username} on ${pending.code} — never reconnected`);
+    log(`[VoiceDiag] grace eviction firing for ${socket.user.username} on ${pending.code}, never reconnected`);
     handleVoiceLeave(socket, pending.code, { softDisconnect: true });
   }, delay);
   pendingVoiceLeave.set(key, pending);
@@ -76,7 +78,7 @@ function schedulePendingVoiceLeave({
 function clearChannelRuntimeState(state, code) {
   for (const name of [
     'channelUsers', 'voiceUsers', 'activeMusic', 'musicQueues',
-    'activeScreenSharers', 'activeScreenSessions', 'activeWebcamUsers',
+    'activeScreenSharers', 'activeScreenSessions', 'activeWebcamUsers', 'activeWebcamStreamIds',
   ]) {
     state[name]?.delete(code);
   }
@@ -90,9 +92,6 @@ function clearChannelRuntimeState(state, code) {
     if (!key.endsWith(`:${code}`)) continue;
     if (pending?.timer) clearTimeout(pending.timer);
     state.pendingVoiceLeave.delete(key);
-  }
-  for (const key of state.nativeScreenOfferWindows?.keys() || []) {
-    if (key.endsWith(`:${code}`)) state.nativeScreenOfferWindows.delete(key);
   }
 }
 
@@ -111,6 +110,14 @@ function createTempChannelDeleteCallback({ db, io, state, channelId, log = conso
       const currentRoom = voiceUsers.get(code);
       if (currentRoom?.size > 0) {
         pendingTempDelete.delete(code);
+        return false;
+      }
+      if (protectedCount(db, [channel.id])) {
+        // Protected messages outlive the channel's timer: it stays as an
+        // ordinary channel and only the rest of its messages go.
+        pendingTempDelete.delete(code);
+        keepChannel(db, channel, 'temporary voice channel emptied');
+        io.to(`channel:${code}`).emit('channel-messages-cleared', { code, reason: 'auto-clear' });
         return false;
       }
       db.transaction(() => {
@@ -188,7 +195,8 @@ function rotateLiveChannelState(io, state, channelId, oldCode, newCode) {
     state.musicQueues,
     state.activeScreenSharers,
     state.activeScreenSessions,
-    state.activeWebcamUsers
+    state.activeWebcamUsers,
+    state.activeWebcamStreamIds
   ]) migrateMapKey(map, oldCode, newCode);
 
   for (const [key, viewers] of Array.from(state.streamViewers.entries())) {
@@ -210,15 +218,6 @@ function rotateLiveChannelState(io, state, channelId, oldCode, newCode) {
     state.pendingTempDelete.delete(oldCode);
     state.pendingTempDelete.set(newCode, timer);
   }
-  for (const [key, timestamps] of state.nativeScreenOfferWindows || []) {
-    if (!key.endsWith(`:${oldCode}`)) continue;
-    state.nativeScreenOfferWindows.delete(key);
-    state.nativeScreenOfferWindows.set(
-      `${key.slice(0, -(oldCode.length))}${newCode}`,
-      timestamps
-    );
-  }
-
   state.botAudioManager?.renameChannel(oldCode, newCode);
   io.to(newRoom).to(newVoiceRoom).emit('channel-code-rotated', rotation);
 }

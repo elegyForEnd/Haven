@@ -29,9 +29,14 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { DATA_DIR } = require('./paths');
+const { safeGet } = require('./safeFetch');
+const { sniffImageType } = require('./imageMetadata');
 
 const CACHE_DIR = path.join(DATA_DIR, 'media-cache');
-try { fs.mkdirSync(CACHE_DIR, { recursive: true }); } catch { /* created lazily below */ }
+try { fs.mkdirSync(CACHE_DIR, { recursive: true }); } catch (err) {
+  // Nothing creates it later, so proxied media will fail to cache until this is fixed.
+  console.warn('[media-proxy] Could not create cache folder:', err.message);
+}
 
 // ── Limits ──────────────────────────────────────────────────────────
 const MAX_BYTES        = 20 * 1024 * 1024;        // per item
@@ -61,17 +66,6 @@ function _isDiscordMediaHost(hostname) {
 
 // Discord (and a few CDNs) lie with application/octet-stream. Magic bytes
 // still prove it is raster data, which is what we actually serve.
-function sniffImageType(buf) {
-  if (!buf || buf.length < 12) return null;
-  if (buf[0] === 0xFF && buf[1] === 0xD8 && buf[2] === 0xFF) return 'image/jpeg';
-  if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47) return 'image/png';
-  if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46) return 'image/gif';
-  if (buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46 &&
-      buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50) {
-    return 'image/webp';
-  }
-  return null;
-}
 
 function _typeForBuffer(declared, buf) {
   const raw = (declared || '').split(';')[0].trim().toLowerCase();
@@ -90,31 +84,96 @@ function _secret() {
   return process.env.JWT_SECRET || 'haven-fallback-media-secret';
 }
 
-function _sign(userId, dayBucket) {
+// The password version is signed in too, so changing the password or signing
+// out other sessions ends the media tokens those sessions held.
+function _sign(userId, dayBucket, pwv) {
   return crypto.createHmac('sha256', _secret())
-    .update(`media:${userId}:${dayBucket}`)
+    .update(`media:${userId}:${pwv}:${dayBucket}`)
     .digest('base64url')
     .slice(0, 32);
 }
 
 function _today() { return Math.floor(Date.now() / 86400000); }
 
-function issueToken(userId) {
+function issueToken(userId, pwv = 1) {
   if (!Number.isInteger(userId)) return null;
-  return `${userId}.${_sign(userId, _today())}`;
+  return `${userId}.${_sign(userId, _today(), Number(pwv) || 1)}`;
 }
 
-// Returns the user id the token belongs to, or null.
-function verifyToken(token) {
+// A token outlives the session it came from by up to two days, so it is only
+// honoured while the account still exists and is not banned. Returns the
+// account's password version, or null. A failed check refuses the token
+// rather than serving a possibly banned account.
+let _accountCheckWarnedAt = 0;
+function _accountPwv(userId, db) {
+  try {
+    const conn = db || require('./database').getDb();
+    const row = conn.prepare('SELECT password_version FROM users WHERE id = ?').get(userId);
+    if (!row) return null;
+    if (conn.prepare('SELECT 1 FROM bans WHERE user_id = ?').get(userId)) return null;
+    return Number(row.password_version) || 1;
+  } catch (err) {
+    if (Date.now() - _accountCheckWarnedAt > 60000) {
+      _accountCheckWarnedAt = Date.now();
+      console.warn('[media-proxy] account check failed, refusing token:', err.message);
+    }
+    return null;
+  }
+}
+
+// Returns the user id the token belongs to, or null. `db` is for tests.
+function verifyToken(token, db = null) {
   if (typeof token !== 'string' || token.length > 128) return null;
   const dot = token.indexOf('.');
   if (dot <= 0) return null;
   const userId = parseInt(token.slice(0, dot), 10);
   const sig = token.slice(dot + 1);
   if (!Number.isInteger(userId)) return null;
+  const pwv = _accountPwv(userId, db);
+  if (pwv === null) return null;
 
   for (const bucket of [_today(), _today() - 1]) {
-    const expected = _sign(userId, bucket);
+    const expected = _sign(userId, bucket, pwv);
+    // Constant-time compare; lengths already match by construction.
+    if (sig.length === expected.length &&
+        crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) {
+      return userId;
+    }
+  }
+  return null;
+}
+
+async function _accountPwvAsync(userId, db) {
+  try {
+    const conn = db || require('./database').getAsyncDb();
+    const row = await conn.prepare('SELECT password_version FROM users WHERE id = ?').get(userId);
+    if (!row) return null;
+    if (await conn.prepare('SELECT 1 FROM bans WHERE user_id = ?').get(userId)) return null;
+    return Number(row.password_version) || 1;
+  } catch (err) {
+    if (Date.now() - _accountCheckWarnedAt > 60000) {
+      _accountCheckWarnedAt = Date.now();
+      console.warn('[media-proxy] account check failed, refusing token:', err.message);
+    }
+    return null;
+  }
+}
+
+async function verifyTokenAsync(token, db = null) {
+  if (typeof token !== 'string' || token.length > 128) return null;
+  const dot = token.indexOf('.');
+  if (dot <= 0) return null;
+  const userId = parseInt(token.slice(0, dot), 10);
+  const sig = token.slice(dot + 1);
+  if (!Number.isInteger(userId)) return null;
+  // HMAC tokens are base64url. Reject other bytes before timingSafeEqual,
+  // whose buffer-length error would otherwise reject this async handler.
+  if (!/^[A-Za-z0-9_-]{32}$/.test(sig)) return null;
+  const pwv = await _accountPwvAsync(userId, db);
+  if (pwv === null) return null;
+
+  for (const bucket of [_today(), _today() - 1]) {
+    const expected = _sign(userId, bucket, pwv);
     // Constant-time compare; lengths already match by construction.
     if (sig.length === expected.length &&
         crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) {
@@ -150,7 +209,7 @@ function loadIndex() {
       if (!fs.existsSync(path.join(CACHE_DIR, meta.file))) continue;
       index.set(f.slice(0, -5), meta);
       totalBytes += meta.size;
-    } catch { /* skip unreadable entry */ }
+    } catch { /* skip unreadable entry; a cache miss just fetches the media again */ }
   }
   if (index.size) {
     console.log(`🖼️  Media cache: ${index.size} item(s), ${(totalBytes / 1048576).toFixed(1)} MB`);
@@ -160,8 +219,9 @@ function loadIndex() {
 function _remove(key) {
   const meta = index.get(key);
   if (!meta) return;
-  try { fs.unlinkSync(path.join(CACHE_DIR, meta.file)); } catch {}
-  try { fs.unlinkSync(_metaPath(key)); } catch {}
+  // Cache files may already be gone; the entry is dropped from the index either way.
+  try { fs.unlinkSync(path.join(CACHE_DIR, meta.file)); } catch { /* already gone */ }
+  try { fs.unlinkSync(_metaPath(key)); } catch { /* already gone */ }
   totalBytes -= meta.size;
   index.delete(key);
 }
@@ -190,10 +250,11 @@ function get(url) {
   return { path: file, type: meta.type, size: meta.size };
 }
 
-// Fetch and cache. `validateUrlSafe` is injected from server.js so the proxy
-// reuses the exact SSRF guard the link-preview scraper already uses (protocol
-// check, private-range check, and a DNS resolve that defeats DNS rebinding).
-async function fetchAndCache(url, validateUrlSafe) {
+// Fetch and cache. The fetch goes through safeFetch, which checks every hop
+// of the redirect chain and connects to the exact address it checked, so a
+// member cannot point the proxy (or a redirect from it) at the server's own
+// network. `options.allowPrivate` mirrors ALLOW_PRIVATE_PREVIEWS.
+async function fetchAndCache(url, options = {}) {
   const key = _keyFor(url);
 
   const hit = get(url);
@@ -202,30 +263,28 @@ async function fetchAndCache(url, validateUrlSafe) {
   if (inFlight.has(key)) return inFlight.get(key);
 
   const job = (async () => {
-    await validateUrlSafe(url);
-
     const headers = { 'User-Agent': UA, 'Accept': 'image/*,*/*;q=0.8' };
     try {
       const host = new URL(url).hostname;
       if (_isDiscordMediaHost(host)) headers.Referer = 'https://discord.com/';
-    } catch { /* malformed URL — validateUrlSafe already ran */ }
+    } catch { throw new Error('Invalid URL'); }
 
-    const res = await fetch(url, {
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    const res = await safeGet(url, {
+      allowPrivate: options.allowPrivate === true,
+      timeoutMs: FETCH_TIMEOUT_MS,
+      maxBytes: MAX_BYTES,
+      maxRedirects: 5,
       headers,
-      redirect: 'follow'
+      resolve: options.resolve,
     });
-    if (!res.ok) throw new Error(`upstream ${res.status}`);
+    if (res.status < 200 || res.status >= 300) throw new Error(`upstream ${res.status}`);
 
-    const declared = parseInt(res.headers.get('content-length') || '0', 10);
-    if (Number.isFinite(declared) && declared > MAX_BYTES) throw new Error('too large');
-
-    const buf = Buffer.from(await res.arrayBuffer());
-    if (buf.length > MAX_BYTES) throw new Error('too large');
+    const buf = res.body;
     if (buf.length === 0) throw new Error('empty response');
 
-    const rawType = _typeForBuffer(res.headers.get('content-type'), buf);
-    if (!rawType) throw new Error(`unsupported content-type: ${(res.headers.get('content-type') || '').split(';')[0].trim().toLowerCase() || 'none'}`);
+    const contentType = String(res.headers['content-type'] || '');
+    const rawType = _typeForBuffer(contentType, buf);
+    if (!rawType) throw new Error(`unsupported content-type: ${contentType.split(';')[0].trim().toLowerCase() || 'none'}`);
 
     const file = `${key}.${EXT_FOR_TYPE[rawType] || 'bin'}`;
     const meta = { file, size: buf.length, type: rawType, ts: Date.now(), url };
@@ -256,7 +315,7 @@ function clear() {
 }
 
 module.exports = {
-  issueToken, verifyToken,
+  issueToken, verifyToken, verifyTokenAsync,
   get, fetchAndCache, loadIndex, stats, clear,
   sniffImageType,
   CACHE_DIR, MAX_BYTES, ALLOWED_TYPES

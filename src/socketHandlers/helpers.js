@@ -23,7 +23,7 @@ function isInt(v) {
 function sanitizeText(str) {
   if (typeof str !== 'string') return '';
   // Strip dangerous HTML tags/attributes as defense-in-depth.
-  // Do NOT entity-encode here — the client handles its own escaping when
+  // Do NOT entity-encode here; the client handles its own escaping when
   // rendering via _escapeHtml(). Entity-encoding on the server would cause
   // double-encoding (e.g. ' → &#39; stored → &amp;#39; after client escape).
   return str
@@ -183,12 +183,17 @@ const VALID_ROLE_PERMS = [
   'rename_channel', 'rename_sub_channel', 'set_channel_topic', 'manage_sub_channels',
   'manage_channel_settings',
   'create_channel', 'create_temp_channel', 'invite_users',
-  'upload_files', 'use_voice', 'use_tts', 'manage_webhooks', 'mention_everyone', 'view_history',
+  'upload_files', 'use_voice', 'use_tts', 'send_self_destruct', 'manage_webhooks', 'mention_everyone', 'view_history',
   'use_ferry',
   'view_all_members', 'view_all_channels', 'view_channel_members', 'manage_emojis', 'manage_stickers', 'manage_soundboard', 'manage_music_queue',
+  'manage_tags', 'manage_badges',
   'promote_user', 'transfer_admin', 'manage_roles', 'manage_server', 'delete_channel', 'read_only_override',
-  'view_audit_log', 'manage_display_names'
+  'view_audit_log', 'manage_display_names', 'highlight_messages'
 ];
+// Permissions only the server admin may hand out: the socket handlers keep
+// them out of reach of non-admins, and server templates never import them.
+// Mirrors ADMIN_ONLY_PERMS in public/js/modules/perm-catalog.js.
+const ADMIN_ONLY_PERMS = ['transfer_admin', 'manage_roles', 'manage_server', 'delete_channel', 'view_all_channels'];
 
 // ── Idle-online decision (pure, so it can be unit-tested) ──
 // Given each online user's timing and live status, return those that have been
@@ -238,6 +243,12 @@ function toReplyContext(row) {
   };
 }
 
+// A spoiler stays hidden in a notification. The same pattern the client's
+// renderer uses, which also leaves `||` inside code alone.
+function maskSpoilers(text) {
+  return String(text ?? '').replace(/(```[\s\S]*?```|`[^`\n]+`)|\|\|.+?\|\|/g, (m, code) => code || '▒▒▒');
+}
+
 // ── Role mentions (#5579) ────────────────────────────────────────
 // "@Moderators" pings everyone holding that role, which is @everyone in a
 // smaller hat, so a sender without mention_everyone gets the treatment they
@@ -252,8 +263,88 @@ function stripRoleMentions(content, roleNames) {
   return content.replace(re, '@\u200B$1');
 }
 
+// ── Files that go with a deleted message ─────────────────────────
+// Deleting a message (or a whole DM) takes the files it attached with it,
+// but only files one of `ownerIds` uploaded as an attachment, and only when
+// nothing else still points at them. The paths come from the message text
+// or, for an encrypted DM, from the client, so without these checks anyone
+// could name someone else's avatar, emoji or attachment in a message of their
+// own, delete it, and have that file purged for good. Call it after the
+// message rows are gone, so they do not count as a reference.
+// With `ignoreMessagesAfter` (a message id), only messages older than that
+// one keep a file: a link pasted after a self destructing message cannot keep
+// its file alive, but a file the sender had already shared in the open stays.
+function releasableUploads(db, relPaths, ownerIds, { ignoreMessagesAfter = null } = {}) {
+  const owners = new Set((ownerIds || []).filter(id => Number.isInteger(id)));
+  if (!owners.size) return [];
+  const ownership = db.prepare('SELECT user_id, scope FROM upload_ownership WHERE rel_path = ?');
+  const before = Number.isInteger(ignoreMessagesAfter) ? ignoreMessagesAfter : Number.MAX_SAFE_INTEGER;
+  // A protected message keeps its files whenever it was posted.
+  const inMessages = db.prepare('SELECT 1 FROM messages WHERE instr(content, ?) > 0 AND (id < ? OR is_archived = 1) LIMIT 1');
+  const inProfiles = db.prepare(`
+    SELECT 1 WHERE
+         EXISTS(SELECT 1 FROM users WHERE instr(COALESCE(avatar, ''), @p) > 0 OR instr(COALESCE(border, ''), @p) > 0)
+      OR EXISTS(SELECT 1 FROM user_personas WHERE instr(COALESCE(avatar, ''), @p) > 0)
+      OR EXISTS(SELECT 1 FROM webhooks WHERE instr(COALESCE(avatar_url, ''), @p) > 0)
+      OR EXISTS(SELECT 1 FROM roles WHERE instr(COALESCE(icon, ''), @p) > 0)
+      OR EXISTS(SELECT 1 FROM server_settings WHERE instr(COALESCE(value, ''), @p) > 0)
+      OR EXISTS(SELECT 1 FROM custom_sounds WHERE filename = @f)
+      OR EXISTS(SELECT 1 FROM custom_emojis WHERE filename = @f)
+      OR EXISTS(SELECT 1 FROM stickers WHERE filename = @f)
+      OR EXISTS(SELECT 1 FROM scheduled_messages WHERE instr(content, @p) > 0)
+  `);
+  const out = [];
+  for (const relPath of new Set(relPaths || [])) {
+    if (typeof relPath !== 'string' || !relPath || out.length >= 200) continue;
+    const own = ownership.get(relPath);
+    if (!own || !owners.has(own.user_id) || (own.scope !== 'channel' && own.scope !== 'dm')) continue;
+    const ref = '/uploads/' + relPath;
+    try {
+      if (inMessages.get(ref, before)) continue;
+      if (inProfiles.get({ p: ref, f: relPath })) continue;
+    } catch { continue; }
+    out.push(relPath);
+  }
+  return out;
+}
+
+function normalizeWordGroups(raw) {
+  let groups;
+  try { groups = JSON.parse(raw); } catch { return null; }
+  if (!Array.isArray(groups) || groups.length > 50) return null;
+  const clean = [];
+  for (const g of groups) {
+    if (!g || typeof g !== 'object') return null;
+    const name = String(g.name || '').trim().slice(0, 40);
+    const strikes = Math.min(100, Math.max(1, parseInt(g.strikes, 10) || 1));
+    const words = [...new Set((Array.isArray(g.words) ? g.words : []).map(w => String(w || '').trim().replace(/\s+/g, ' ').slice(0, 60)).filter(Boolean))].slice(0, 300);
+    if (words.length) clean.push({ name: name || `group ${clean.length + 1}`, strikes, words });
+  }
+  return JSON.stringify(clean);
+}
+function validEscalation(raw) {
+  try {
+    const c = JSON.parse(raw);
+    const num = (v, lo, hi) => Number.isFinite(Number(v)) && Number(v) >= lo && Number(v) <= hi;
+    return !!c && num(c.windowHours, 1, 8760) && num(c.muteMinutes, 1, 43200) && ['warnAt', 'muteAt', 'banAt'].every(k => num(c[k], 0, 1000))
+      && !(c.muteAt && c.warnAt && Number(c.muteAt) < Number(c.warnAt)) && !(c.banAt && c.muteAt && Number(c.banAt) < Number(c.muteAt));
+  } catch { return false; }
+}
+// New conversations (one to one or group) a member may start per hour. A new
+// DM or group invite lands in other people's lists, so without a cap one
+// account could reach every member of a server in minutes. Admins are not
+// limited.
+const NEW_DMS_PER_HOUR = 20;
+const CHANNEL_NAME_RE = /^[\w\s\-!?.,'&+\p{L}\p{M}\p{Emoji_Presentation}\p{Extended_Pictographic}\p{Emoji}\uFE0F\u200D]+$/u;
+// A role menu (self-assign roles): the message text it is posted with. Its
+// emoji are checked in src/builtinEmojis.js.
+function roleMenuContent(title, entries) {
+  return [title ? `🎭 ${title}` : '🎭 Pick your roles', ...entries.map(e => `${e.emoji}  ${e.name}`)].join('\n');
+}
 module.exports = {
   utcStamp, isString, isInt, sanitizeText, sanitizeSoundName, isValidUploadPath, normalizeDisplayName,
-  sanitizeBorderTransform, parseBorderTransform, VALID_ROLE_PERMS, filterIdleOnline,
-  replyAuthorUsername, toReplyContext, stripRoleMentions,
+  sanitizeBorderTransform, parseBorderTransform, VALID_ROLE_PERMS, ADMIN_ONLY_PERMS, CHANNEL_NAME_RE, roleMenuContent,
+  normalizeWordGroups, validEscalation, filterIdleOnline,
+  replyAuthorUsername, toReplyContext, stripRoleMentions, releasableUploads, maskSpoilers,
+  NEW_DMS_PER_HOUR,
 };

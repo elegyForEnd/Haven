@@ -45,11 +45,26 @@ _showUserContextMenu(e, targetUserId, targetNameOverride) {
     this.socket.emit('get-user-profile', { userId: targetUserId });
   });
 
+  // Only the admin can open this menu on themselves, and all it offers them
+  // besides their profile is their own roles. The rest targets other people.
+  if (targetUserId === this.user?.id) {
+    addBtn(`👑 ${t('users.gear_menu.role_management')}`, () => {
+      this._hideUserContextMenu();
+      this._openRoleAssignCenter(targetUserId);
+    });
+    addBtn(`🏅 ${t('badges.menu')}`, () => {
+      this._hideUserContextMenu();
+      this._openMemberBadges(targetUserId, targetName);
+    });
+    this._placeUserContextMenu(menu, e);
+    return;
+  }
+
   // Direct Message
   addBtn(`💬 ${t('users.direct_message')}`, () => {
     this._hideUserContextMenu();
     this.socket.emit('start-dm', { targetUserId });
-    this._showToast(t('users.opening_dm', { name: this._escapeHtml(targetName) }), 'info');
+    this._showToast(t('users.opening_dm', { name: targetName }), 'info');
   });
 
   // Remote assistance is channel-scoped. The server performs the final
@@ -141,23 +156,39 @@ _showUserContextMenu(e, targetUserId, targetNameOverride) {
   // "Add to Channel" mirrors the invite filter but also skips sub-channels and
   // never targets yourself. Its own picker validates membership server-side.
   // It used to live inside the mod-only gear menu, so it stays gated on the same
-  // mod-ish powers — regular members use "Invite to Channel" above instead.
+  // mod-ish powers; regular members use "Invite to Channel" above instead.
   const addToChannelList = (this.channels || []).filter(ch =>
     !ch.is_dm && ch.name && !ch.parent_channel_id &&
     ((!ch.is_private && ch.code_visibility !== 'private') || isAdmin || ch.canInvitePrivate)
   );
   const canAddToChannel = (canMod || canPromote || canBan) && addToChannelList.length > 0 && targetUserId !== this.user?.id;
 
+  // Hand-given badges (#5632); the server checks rank.
+  const canBadge = this._canManageBadges();
+
   // ── Section 2: role / channel management ──
-  if (canPromote || canAddToChannel) {
+  if (canPromote || canAddToChannel || canBadge) {
     addDivider();
     if (canPromote) addBtn(`👑 ${t('users.gear_menu.role_management')}`, () => {
       this._hideUserContextMenu();
       this._openRoleAssignCenter(targetUserId);
     });
+    if (canBadge) addBtn(`🏅 ${t('badges.menu')}`, () => {
+      this._hideUserContextMenu();
+      this._openMemberBadges(targetUserId, targetName);
+    });
     if (canAddToChannel) addBtn(`➕ ${t('users.gear_menu.add_to_channel')}`, () => {
       this._hideUserContextMenu();
-      this._openGearMenuChannelPicker(targetUserId, targetName, addToChannelList);
+      this._openMemberChannelPicker(targetUserId, targetName, 'add', addToChannelList);
+    });
+  }
+
+  // Mute for me: their messages stop notifying you (app-server-mute.js).
+  if (targetUserId !== this.user?.id) {
+    const _mutedForMe = this._mutedUserIds?.().has(Number(targetUserId));
+    addBtn(`${_mutedForMe ? '🔔' : '🔕'} ${t(_mutedForMe ? 'mute.unmute_member' : 'mute.mute_member')}`, () => {
+      this._hideUserContextMenu();
+      this._toggleUserMute(targetUserId, targetName);
     });
   }
 
@@ -171,9 +202,23 @@ _showUserContextMenu(e, targetUserId, targetNameOverride) {
       this._hideUserContextMenu();
       this._showAdminActionModal('kick', targetUserId, targetName);
     });
-    if (canMod) addBtn(`🔇 ${t('users.gear_menu.mute')}`, () => {
+    if (canMod) addBtn(`⏳ ${t('users.gear_menu.mute')}`, () => {
       this._hideUserContextMenu();
       this._showAdminActionModal('mute', targetUserId, targetName);
+    });
+    if (canMod) addBtn(`⌛ ${t('users.gear_menu.unmute')}`, () => {
+      this._hideUserContextMenu();
+      this.socket.emit('unmute-user', { userId: targetUserId });
+    });
+    // Moderation history (#5759): a warning with a reason, notes, and the
+    // record of everything done to this member.
+    if ((canMod || canBan) && targetUserId !== this.user?.id) addBtn(`⚠️ ${t('mod_cases.warn')}`, () => {
+      this._hideUserContextMenu();
+      this._openWarnDialog(targetUserId, targetName);
+    });
+    if ((canMod || canBan || this._hasPerm('view_audit_log')) && targetUserId !== this.user?.id) addBtn(`📋 ${t('mod_cases.history')}`, () => {
+      this._hideUserContextMenu();
+      this._openModHistory(targetUserId, targetName);
     });
     if (canBan) addBtn(`⛔ ${t('users.gear_menu.ban')}`, () => {
       this._hideUserContextMenu();
@@ -187,12 +232,13 @@ _showUserContextMenu(e, targetUserId, targetNameOverride) {
       this._hideUserContextMenu();
       this._confirmAdminResetPassword(targetUserId, targetName);
     }, true);
-    if (isAdmin) addBtn(`🔑 ${t('users.gear_menu.transfer_admin')}`, () => {
-      this._hideUserContextMenu();
-      this._confirmTransferAdmin(targetUserId, targetName);
-    }, true);
   }
+  this._addGroupMemberActions(targetUserId, targetName, addBtn, addDivider);
 
+  this._placeUserContextMenu(menu, e);
+},
+
+_placeUserContextMenu(menu, e) {
   menu.style.left = e.clientX + 'px';
   menu.style.top = e.clientY + 'px';
   document.body.appendChild(menu);
@@ -287,16 +333,20 @@ _renderOnlineOverlay() {
 },
 
 _renderOverlayUserItem(u) {
-  const initial = (u.username || '?')[0].toUpperCase();
-  const color = this._safeColor(u.roleColor || u.avatarColor, '#7c5cfc');
+  const initial = this._escapeHtml((u.username || '?')[0].toUpperCase());
+  // Member list entries carry their role as `role`; roleColor is the flat
+  // shape some older callers used.
+  const role = u.role || (u.roleColor ? u : null);
+  const roleColor = role ? (role.color !== undefined ? role.color : role.roleColor) : null;
+  const color = this._safeColor(roleColor || u.avatarColor, '#7c5cfc');
   const statusClass = u.online !== false ? 'online' : 'offline';
   const avatar = u.avatarUrl
     ? `<img src="${this._escapeHtml(u.avatarUrl)}" class="online-overlay-avatar-img" alt="">`
     : `<div class="online-overlay-avatar" style="background:${color}">${initial}</div>`;
-  const nameColor = u.roleColor ? ` style="color:${this._safeColor(u.roleColor)}"` : '';
+  const nameColor = this._safeColor(roleColor) ? ` style="color:${this._safeColor(roleColor)}"` : '';
   return `<div class="online-overlay-user ${statusClass}">
     ${avatar}
-    <span class="online-overlay-username"${nameColor}>${this._escapeHtml(this._getNickname(u.id, u.username))}</span>
+    <span class="online-overlay-username"${nameColor}>${this._roleNameHtml(role, this._getNickname(u.id, u.username))}</span>
     <span class="online-overlay-status-dot ${statusClass}"></span>
   </div>`;
 },
@@ -338,13 +388,7 @@ _setupNotifications() {
   const mentionsToggle = document.getElementById('notif-mentions-enabled');
   const repliesToggle = document.getElementById('notif-replies-enabled');
   const dmToggle = document.getElementById('notif-dm-enabled');
-  const serverMutedToggle = document.getElementById('notif-server-muted');
-  if (serverMutedToggle) {
-    serverMutedToggle.checked = localStorage.getItem('haven_server_muted') === '1';
-    serverMutedToggle.addEventListener('change', () => {
-      localStorage.setItem('haven_server_muted', serverMutedToggle.checked ? '1' : '0');
-    });
-  }
+  // Mute this server: app-server-mute.js wires the choice.
   if (mentionsToggle) { mentionsToggle.checked = this.notifications.mentionsEnabled; mentionsToggle.addEventListener('change', () => { this.notifications.mentionsEnabled = mentionsToggle.checked; this.notifications._savePref('haven_notif_mentions_enabled', mentionsToggle.checked); }); }
   const roleMentionsToggle = document.getElementById('notif-role-mentions-enabled');
   if (roleMentionsToggle) { roleMentionsToggle.checked = this.notifications.roleMentionsEnabled !== false; roleMentionsToggle.addEventListener('change', () => { this.notifications.roleMentionsEnabled = roleMentionsToggle.checked; this.notifications._savePref('haven_notif_role_mentions_enabled', roleMentionsToggle.checked); }); }
@@ -353,14 +397,44 @@ _setupNotifications() {
 
   const popupCooldownSel = document.getElementById('notif-popup-cooldown');
   if (popupCooldownSel) {
-    popupCooldownSel.value = String(this.notifications.popupCooldownMs || 0);
+    // Presets, Never, or a number of minutes typed in (#5619). A stored gap
+    // that matches no preset shows as Custom with its minutes filled in.
+    const customRow = document.getElementById('notif-popup-custom-row');
+    const customMin = document.getElementById('notif-popup-custom-minutes');
+    const current = this.notifications.popupCooldownMs || 0;
+    if ([...popupCooldownSel.options].some(o => o.value === String(current))) {
+      popupCooldownSel.value = String(current);
+    } else {
+      popupCooldownSel.value = 'custom';
+      if (customMin) customMin.value = String(Math.max(1, Math.round(current / 60000)));
+    }
+    const syncRow = () => { if (customRow) customRow.style.display = popupCooldownSel.value === 'custom' ? '' : 'none'; };
+    const applyCustom = () => {
+      const mins = Math.min(1440, Math.max(1, parseInt(customMin && customMin.value, 10) || 0));
+      if (customMin) customMin.value = String(mins);
+      this.notifications.setPopupCooldownMs(mins * 60000);
+    };
+    syncRow();
     popupCooldownSel.addEventListener('change', () => {
-      this.notifications.setPopupCooldownMs(popupCooldownSel.value);
+      syncRow();
+      // A push from the server always shows as a pop-up, so Never has to turn
+      // push off on this device too, or DMs kept popping up anyway (#5693).
+      if (popupCooldownSel.value === '-1' && this._pushSubscription) {
+        this._unsubscribePush().then(() => {
+          const pushToggle = document.getElementById('push-notif-enabled');
+          if (pushToggle) pushToggle.checked = false;
+        });
+      }
+      if (popupCooldownSel.value !== 'custom') { this.notifications.setPopupCooldownMs(popupCooldownSel.value); return; }
+      if (customMin) { if (!customMin.value) customMin.value = '10'; applyCustom(); customMin.focus(); }
     });
+    if (customMin) customMin.addEventListener('change', applyCustom);
   }
 
   toggle.addEventListener('change', () => {
     this.notifications.setEnabled(toggle.checked);
+    // Push on this device follows the same choice.
+    this._syncPushScope();
   });
 
   if (voiceActionCuesToggle) {
@@ -490,7 +564,7 @@ _setupNotifications() {
     });
   }
 
-  // DM single-click default — open fullscreen DM instead of PiP. (#5295)
+  // DM single-click default: open fullscreen DM instead of PiP. (#5295)
   const dmFsToggle = document.getElementById('dm-fullscreen-default');
   if (dmFsToggle) {
     dmFsToggle.checked = localStorage.getItem('haven_dm_fullscreen_default') === 'true';
@@ -499,17 +573,15 @@ _setupNotifications() {
     });
   }
 
-  // Show status bar (opt-in — hidden by default, but the Desktop app always
-  // shows it: there it is the app's footer, not a debug extra.)
+  // Show status bar. Off by default in a browser, on by default in the
+  // Desktop app, where it is the window's footer; the toggle is honoured in
+  // both. It used to be ignored on Desktop, so the switch sat unticked while
+  // the bar stayed up (#5647).
   const showStatusBarToggle = document.getElementById('show-status-bar');
   const statusBarToggleTab = document.getElementById('status-bar-toggle');
-  const _isDesktopApp = !!(window.havenDesktop?.isDesktopApp ||
-                           navigator.userAgent.includes('Electron'));
   if (showStatusBarToggle) {
-    showStatusBarToggle.checked = localStorage.getItem('haven_show_statusbar') === 'true';
+    showStatusBarToggle.checked = this._statusBarWanted();
     const applyStatusBar = () => {
-      // Desktop keeps the bar on regardless — _startStatusBar pins it there.
-      if (_isDesktopApp) return;
       const show = showStatusBarToggle.checked;
       const sb = document.getElementById('status-bar');
       if (show) {
@@ -520,7 +592,7 @@ _setupNotifications() {
         // The show branch sets an INLINE `display: flex !important`, and inline
         // !important outranks the stylesheet's `[data-hide-statusbar] .status-bar
         // { display: none !important }`. Leaving it in place meant the bar could
-        // be shown once and then never hidden again — the attribute flipped, the
+        // be shown once and then never hidden again: the attribute flipped, the
         // checkbox unchecked, and the bar stayed on screen regardless.
         if (sb) sb.style.removeProperty('display');
       }
@@ -531,7 +603,7 @@ _setupNotifications() {
     });
     applyStatusBar();
   }
-  // Toggle tab (visible when bar is hidden) — click to show bar
+  // Toggle tab (visible when bar is hidden): click to show bar
   if (statusBarToggleTab) {
     statusBarToggleTab.addEventListener('click', () => {
       if (showStatusBarToggle) {
@@ -545,6 +617,33 @@ _setupNotifications() {
         localStorage.setItem('haven_show_statusbar', 'true');
       }
     });
+  }
+
+  // Hide the Send button for people who only ever press Enter (#5654).
+  const hideSendToggle = document.getElementById('hide-send-btn');
+  if (hideSendToggle) {
+    const applyHideSend = () => document.documentElement.toggleAttribute('data-hide-send-btn', hideSendToggle.checked);
+    hideSendToggle.checked = localStorage.getItem('haven_hide_send_btn') === 'true';
+    hideSendToggle.addEventListener('change', () => {
+      localStorage.setItem('haven_hide_send_btn', String(hideSendToggle.checked));
+      applyHideSend();
+    });
+    applyHideSend();
+  }
+
+  // Fold the toolbar into one + button (#5654).
+  const compactToggle = document.getElementById('compact-composer');
+  if (compactToggle) {
+    const applyCompact = () => {
+      document.documentElement.toggleAttribute('data-compact-composer', compactToggle.checked);
+      if (!compactToggle.checked) this._closeComposerMenu?.();
+    };
+    compactToggle.checked = localStorage.getItem('haven_compact_composer') === 'true';
+    compactToggle.addEventListener('change', () => {
+      localStorage.setItem('haven_compact_composer', String(compactToggle.checked));
+      applyCompact();
+    });
+    applyCompact();
   }
 
   // ── Score badge visibility ──
@@ -563,6 +662,15 @@ _setupNotifications() {
   if (hideNsfwToggle) {
     hideNsfwToggle.checked = localStorage.getItem('haven_hide_nsfw') === 'true';
     hideNsfwToggle.addEventListener('change', () => this._setHideNsfw?.(hideNsfwToggle.checked));
+  }
+  // The blur on an NSFW topic is on unless switched off (#5633).
+  const blurNsfwToggle = document.getElementById('blur-nsfw-topics');
+  if (blurNsfwToggle) {
+    blurNsfwToggle.checked = localStorage.getItem('haven_blur_nsfw') !== 'false';
+    blurNsfwToggle.addEventListener('change', () => {
+      try { localStorage.setItem('haven_blur_nsfw', blurNsfwToggle.checked ? 'true' : 'false'); } catch { /* storage blocked (private mode): nothing is remembered, nothing else breaks */ }
+      if (this._forumActive && this._forumReload) this._forumReload();
+    });
   }
   this._setupSettingsSearch?.();
   const hideOwnScoreToggle = document.getElementById('hide-own-score');
@@ -597,7 +705,7 @@ _setupNotifications() {
     // Mirrors the server's read in activity.js prefsFor(): absent = on.
     const master = prefs.share_activity !== 'false';
     if (shareActivityToggle) shareActivityToggle.checked = master;
-    // Absent sub-preference means "on" — matches the server's read of it.
+    // Absent sub-preference means "on", which matches the server's read of it.
     if (shareGameToggle)  shareGameToggle.checked  = prefs.share_game_activity  !== 'false';
     if (shareMusicToggle) shareMusicToggle.checked = prefs.share_music_activity !== 'false';
     if (activitySubOptions) activitySubOptions.style.display = master ? '' : 'none';
@@ -660,7 +768,7 @@ _setupNotifications() {
 
     const isLoopback = (u) => /^https?:\/\/(localhost|127\.0\.0\.1|\[?::1\]?)(:|$)/i.test(u || '');
 
-    // Always start hidden each session — the address is only revealed after
+    // Always start hidden each session; the address is only revealed after
     // an explicit click, and that choice is intentionally NOT persisted so it
     // resets to hidden every time the app (re)loads. (privacy default)
     let urlVisible = false;
@@ -683,29 +791,24 @@ _setupNotifications() {
     // Swap in the shareable address once the server reports it. `origin` is
     // read at call time by both the toggle and the copy handler, so they pick
     // this up without rewiring anything.
-    fetch('/api/connection-address', {
-      headers: { Authorization: `Bearer ${localStorage.getItem('haven_token') || ''}` }
-    })
-      .then(r => (r.ok ? r.json() : null))
-      .then(data => {
-        if (data && data.url) {
-          origin = data.url;
-          applyUrlVis();
-        } else if (isLoopback(origin) && urlItem) {
-          // Nothing shareable exists and the local address is no use to
-          // anyone else, so hide the widget rather than offer to copy
-          // localhost.
-          urlItem.style.display = 'none';
-        }
-      })
-      .catch(() => { /* keep the local origin; the bar still works */ });
+    this._fetchShareOrigin().then(url => {
+      if (url) {
+        origin = url;
+        applyUrlVis();
+      } else if (isLoopback(origin) && urlItem) {
+        // Nothing shareable exists and the local address is no use to
+        // anyone else, so hide the widget rather than offer to copy
+        // localhost.
+        urlItem.style.display = 'none';
+      }
+    });
 
     statusUrlToggle.addEventListener('click', () => {
       urlVisible = !urlVisible;
       applyUrlVis();
     });
 
-    // Click to copy — works even when URL is hidden.
+    // Click to copy: works even when URL is hidden.
     // navigator.clipboard.writeText() fails silently in Electron's BrowserView,
     // so fall back to a hidden-textarea execCommand('copy') like the other
     // copy buttons do. (#182)
@@ -723,7 +826,7 @@ _setupNotifications() {
         document.execCommand('copy');
         ta.remove();
         _flashCopied();
-      } catch {}
+      } catch { /* could not copy: the Copied flash simply does not show */ }
     };
     statusUrlEl.addEventListener('click', () => {
       if (navigator.clipboard?.writeText) {
@@ -741,7 +844,7 @@ async _setupPushNotifications() {
   const toggle = document.getElementById('push-notif-enabled');
   const statusEl = document.getElementById('push-notif-status');
 
-  // Haven Desktop provides native OS notifications via app-preload.js — hide the web-push section entirely
+  // Haven Desktop provides native OS notifications via app-preload.js, so hide the web-push section entirely
   if (window.havenDesktop?.isDesktopApp) {
     const section = document.getElementById('section-push');
     if (section) section.style.display = 'none';
@@ -798,10 +901,12 @@ async _setupPushNotifications() {
     if (toggle) toggle.disabled = true;
     let reason = t('context.push_error.service_worker', { error: err.message });
     let helpType = '';
-    const host = location.hostname;
-    const isSelfSigned = location.protocol === 'https:' && host !== 'localhost' && host !== '127.0.0.1' && !host.endsWith('.trycloudflare.com');
-    if (err.name === 'SecurityError' || (err.message && err.message.includes('SSL')) || isSelfSigned) {
-      reason = t('context.push_error.ssl_required');
+    if (err.name === 'SecurityError' || /SSL|certificate/i.test(err.message || '')) {
+      const issue = await fetch('/api/public-config').then(r => r.json()).then(d => d.tls_issue).catch(err => {
+        console.warn('[push] could not ask the server about its certificate:', err.message);
+        return null;
+      });
+      reason = t(issue === 'missing_chain' ? 'context.push_error.ssl_chain' : issue === 'untrusted' ? 'context.push_error.ssl_untrusted' : issue === 'expired' ? 'context.push_error.ssl_expired' : 'context.push_error.ssl_required');
     }
     if (isBrave) {
       reason = t('context.push_error.brave_setup');
@@ -826,7 +931,7 @@ async _setupPushNotifications() {
     existingSub = await this._swRegistration.pushManager.getSubscription();
   } catch (err) {
     console.warn('Push getSubscription failed (non-fatal, will retry on subscribe):', err.message || err);
-    // Don't bail out — let the user attempt to subscribe via the toggle.
+    // Don't bail out; let the user attempt to subscribe via the toggle.
     // The actual subscribe() call in _subscribePush will surface the real error.
   }
 
@@ -840,7 +945,8 @@ async _setupPushNotifications() {
     const subJson = existingSub.toJSON();
     this.socket.emit('push-subscribe', {
       endpoint: subJson.endpoint,
-      keys: { p256dh: subJson.keys.p256dh, auth: subJson.keys.auth }
+      keys: { p256dh: subJson.keys.p256dh, auth: subJson.keys.auth },
+      scope: this._pushScope()
     });
   }
 
@@ -895,36 +1001,55 @@ async _openActivitiesModal() {
       for (const rom of data.roms) flashStatus[rom.file] = rom.installed;
       this._flashAllInstalled = data.allInstalled;
     }
-  } catch {}
+  } catch (err) { console.warn('[Games] could not read the Flash ROM status', err); }
 
   // If any flash games are not installed, show a download banner at top
   const hasFlashGames = this._gamesRegistry.some(g => g.type === 'flash');
   if (hasFlashGames && !this._flashAllInstalled) {
     const banner = document.createElement('div');
     banner.className = 'flash-install-banner';
+    // Only an admin can install them, so everyone else gets a note instead
+    // of a button that always fails.
+    const canInstall = !!this.user?.isAdmin;
     banner.innerHTML = `
       <span>🎮 ${t('context.flash_not_installed')}</span>
-      <button class="btn-sm btn-accent" id="install-flash-btn">${t('context.flash_download_btn')}</button>
+      ${canInstall
+        ? `<button class="btn-sm btn-accent" id="install-flash-btn">${t('context.flash_download_btn')}</button>`
+        : `<span class="flash-install-note">${t('context.flash_ask_admin')}</span>`}
     `;
     grid.appendChild(banner);
-    banner.querySelector('#install-flash-btn').addEventListener('click', async (e) => {
+    banner.querySelector('#install-flash-btn')?.addEventListener('click', async (e) => {
       const btn = e.target;
       btn.disabled = true;
       btn.textContent = t('context.flash_downloading');
       try {
-        const res = await fetch('/api/install-flash-roms', {
-          method: 'POST',
-          headers: { Authorization: 'Bearer ' + this.token }
-        });
-        if (!res.ok) {
-          const data = await res.json().catch(() => ({}));
-          throw new Error(data.error || t('context.flash_download_failed'));
+        // The server downloads in the background; ask how it is going until
+        // it is done. A page in front of the server (a proxy's error page)
+        // is not JSON, so its HTTP status is what gets reported.
+        const auth = { Authorization: 'Bearer ' + this.token };
+        const ask = async (opts) => {
+          const res = await fetch('/api/install-flash-roms', { headers: auth, ...opts });
+          const data = await res.json().catch(() => null);
+          if (!res.ok || !data) throw new Error((data && data.error) || t('context.flash_download_http', { status: res.status }));
+          return data;
+        };
+        let state = await ask({ method: 'POST' });
+        const giveUpAt = Date.now() + 15 * 60 * 1000;
+        while (state.running) {
+          if (Date.now() > giveUpAt) throw new Error(t('context.flash_still_running'));
+          await new Promise(r => setTimeout(r, 3000));
+          state = await ask();
         }
-        const data = await res.json();
-        const installed = data.results.filter(r => r.status === 'installed').length;
-        const already = data.results.filter(r => r.status === 'already-installed').length;
-        const errors = data.results.filter(r => r.status === 'error');
-        this._showToast(t('context.flash_install_result', { installed, already, errors: errors.length }), installed > 0 ? 'success' : 'error');
+        const results = state.results || [];
+        const installed = results.filter(r => r.status === 'installed').length;
+        const already = results.filter(r => r.status === 'already-installed').length;
+        const errors = results.filter(r => r.status === 'error');
+        if (errors.length) {
+          console.warn('[Games] Flash download problems:', errors);
+          this._showToast(t('context.flash_install_failed', { installed, errors: errors.length, reason: errors[0].error || '' }), 'error');
+        } else {
+          this._showToast(t('context.flash_install_result', { installed, already, errors: 0 }), 'success');
+        }
         this._flashAllInstalled = errors.length === 0;
         // Refresh modal
         this._openActivitiesModal();
@@ -991,6 +1116,7 @@ _launchGame(game) {
 
   // Request leaderboard for this game
   this.socket.emit('get-high-scores', { game: game.id });
+  this._setGameActivity(game.id);
 },
 
 _closeGameIframe() {
@@ -1000,6 +1126,25 @@ _closeGameIframe() {
   if (iframe) iframe.src = 'about:blank';
   this._currentGame = null;
   this._gameIframe = null;
+  if (!this._gameWindow || this._gameWindow.closed) this._setGameActivity('');
+},
+
+// "Playing Shippy Container" in the member list while a game is open. A game
+// in its own window is checked every few seconds, since a closed window sends
+// nothing back.
+_setGameActivity(gameId) {
+  clearInterval(this._gameWindowWatch);
+  this._gameWindowWatch = null;
+  this.socket?.emit('set-game-activity', { game: gameId });
+  if (!gameId || !this._gameWindow || this._gameWindow.closed) return;
+  const win = this._gameWindow;
+  this._gameWindowWatch = setInterval(() => {
+    if (!win.closed) return;
+    clearInterval(this._gameWindowWatch);
+    this._gameWindowWatch = null;
+    if (this._gameWindow === win) this._gameWindow = null;
+    if (!this._currentGame || !this._gameIframe) this._setGameActivity('');
+  }, 3000);
 },
 
 _popoutGame() {
@@ -1009,8 +1154,10 @@ _popoutGame() {
   const win = window.open(url, '_blank', 'width=740,height=860');
   // Only close the inline iframe if the popup actually opened
   if (win && !win.closed) {
+    const game = this._currentGame;
     this._gameWindow = win;
     this._closeGameIframe();
+    this._setGameActivity(game.id);
   } else {
     this._showToast?.(t('toasts.popup_blocked'), 'error');
   }
@@ -1115,7 +1262,8 @@ async _subscribePush() {
       keys: {
         p256dh: subJson.keys.p256dh,
         auth: subJson.keys.auth
-      }
+      },
+      scope: this._pushScope()
     });
 
     if (statusEl) statusEl.textContent = t('context.push_subscribing');
@@ -1199,7 +1347,7 @@ async _refreshTunnelStatus() {
       headers: { 'Authorization': `Bearer ${this.token}` }
     });
     if (!res.ok && res.status !== 304) throw new Error(`HTTP ${res.status}`);
-    if (res.status === 304) return;  // Not Modified — nothing to update
+    if (res.status === 304) return;  // Not Modified: nothing to update
     const data = await res.json();
     this._updateTunnelStatusUI(data);
     // If still starting, poll again in 2 s
@@ -1269,9 +1417,20 @@ _setupThemes() {
 
 // ── Status Bar ────────────────────────────────────────
 
+// Whether the status bar should be on screen: the saved preference, or the
+// platform default when none is saved (on in the Desktop app, off in a
+// browser) (#5647).
+_statusBarWanted() {
+  const isDesktop = !!(window.havenDesktop?.isDesktopApp ||
+                       navigator.userAgent.includes('Electron'));
+  const saved = localStorage.getItem('haven_show_statusbar');
+  return saved === null ? isDesktop : saved === 'true';
+},
+
 _startStatusBar() {
-  // In the Electron desktop shell, always show the status bar regardless of
-  // CSS responsive breakpoints or DPI-scaled viewport width.
+  // In the Electron desktop shell, show the status bar regardless of CSS
+  // responsive breakpoints or DPI-scaled viewport width, unless the user
+  // switched it off in Settings (#5647).
   const isDesktop = !!(window.havenDesktop?.isDesktopApp ||
                        navigator.userAgent.includes('Electron'));
 
@@ -1301,9 +1460,11 @@ _startStatusBar() {
     document.documentElement.setAttribute('data-desktop-app', '1');
     // The status bar is the desktop app's only footer. Pre-v1.4.26 builds
     // inject one of their own from the preload, which used to make us stand
-    // down here to avoid two stacked bars — but that legacy bar is now hidden
-    // in CSS, so standing down would leave no footer at all. Always show ours.
-    _forceWebStatusBar();
+    // down here to avoid two stacked bars, but that legacy bar is now hidden
+    // in CSS, so standing down would leave no footer at all. Show ours unless
+    // the Settings toggle is off (#5647).
+    if (this._statusBarWanted()) _forceWebStatusBar();
+    else document.documentElement.setAttribute('data-hide-statusbar', '1');
   } else {
     // Browser / mobile: respect the user's opt-in preference (default hidden).
     // The settings toggle in _initSettings applies the attribute + display;
@@ -1313,36 +1474,61 @@ _startStatusBar() {
       sb.style.setProperty('display', 'flex', 'important');
     }
   }
+  // The docked thread panel stops at the top of the status bar. It used a
+  // fixed 35px, taller than the bar, so a strip of the member list and its
+  // resize edge showed under the panel. It follows the bar's real height now.
+  const sb = document.getElementById('status-bar');
+  if (sb && typeof ResizeObserver === 'function' && !this._statusBarObserver) {
+    const follow = () => {
+      // 0 while the bar is hidden.
+      const h = sb.getBoundingClientRect().height;
+      document.documentElement.style.setProperty('--thread-footer-offset', `${h}px`);
+    };
+    this._statusBarObserver = new ResizeObserver(follow);
+    this._statusBarObserver.observe(sb);
+    follow();
+  }
   this._updateClock();
   if (this._clockInterval) clearInterval(this._clockInterval);
   this._clockInterval = setInterval(() => this._updateClock(), 1000);
 },
 
 _updateClock() {
+  const el = document.getElementById('status-clock');
+  if (!el) return;
   const now = new Date();
+  // Honour a confirmed timezone / clock preference. With nothing confirmed the
+  // clock keeps its original device-local 24-hour HH:MM:SS look, so Skip and
+  // "Remind later" change nothing here.
+  if (this._userTimeZone?.() || this._userHour12?.() !== undefined) {
+    try {
+      el.textContent = this._fmtTime(now, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      return;
+    } catch { /* fall through to the device-local default */ }
+  }
   const h = now.getHours().toString().padStart(2, '0');
   const m = now.getMinutes().toString().padStart(2, '0');
   const s = now.getSeconds().toString().padStart(2, '0');
-  document.getElementById('status-clock').textContent = `${h}:${m}:${s}`;
+  el.textContent = `${h}:${m}:${s}`;
 },
 
 /**
  * Emit a latency probe, recording when it went out.
  *
  * Timestamps go in a FIFO rather than a single `_pingStart` field because
- * more than one place emits 'ping-check' — the 15 s monitor below and the
+ * more than one place emits 'ping-check' (the 15 s monitor below and the
  * window-focus zombie-socket probe in app-socket.js. The server replies with
  * a bare 'pong-check' carrying no correlation id, so a shared field meant the
  * focus probe's pong was measured against the *previous scheduled ping's*
  * timestamp. That reported "time since the last 15 s tick" as latency: a
- * uniformly random 0–15000 ms, which is where multi-second readings on a
+ * uniformly random 0 to 15000 ms, which is where multi-second readings on a
  * localhost server came from. Socket.IO preserves ordering, so pongs come
  * back in send order and the queue pairs them up correctly.
  */
 _pingSend() {
   if (!this.socket || !this.socket.connected) return;
   if (!this._pingQueue) this._pingQueue = [];
-  // If pongs stop coming back, don't accumulate — a stale head would later be
+  // If pongs stop coming back, don't accumulate: a stale head would later be
   // paired with an unrelated pong and produce exactly the bogus reading this
   // is meant to prevent.
   if (this._pingQueue.length >= 4) this._pingQueue.shift();
@@ -1396,7 +1582,7 @@ _startPerfDiagnostics() {
   const SAMPLE_INTERVAL = 1000;   // measure one FPS reading every 1 s
   const REPORT_INTERVAL = 15000;  // evaluate + log every 15 s
   const FPS_WARN        = 30;     // warn below this average
-  const FPS_CRITICAL    = 12;     // critical — user is seeing freeze
+  const FPS_CRITICAL    = 12;     // critical: user is seeing freeze
 
   const samples = [];             // rolling window of {fps, ts}
   const MAX_SAMPLES = 60;         // keep last 60 s of FPS readings
@@ -1405,7 +1591,7 @@ _startPerfDiagnostics() {
   let rafId = null;
   let reportTimer = null;
 
-  // Count frames via rAF — skip sampling when the window is hidden/backgrounded
+  // Count frames via rAF; skip sampling when the window is hidden/backgrounded
   // because Chromium throttles rAF to ~1 FPS in background tabs, which would
   // cause false CRITICAL alerts even when the app is perfectly healthy.
   //
@@ -1414,7 +1600,7 @@ _startPerfDiagnostics() {
   // vsync for the whole session, so the compositor and GPU never get to go
   // idle and any running CSS animation is re-evaluated on every one of those
   // frames. Measuring the frame rate does need rAF, but it does not need it
-  // 100% of the time — three seconds out of every fifteen is plenty for an
+  // 100% of the time. Three seconds out of every fifteen is plenty for an
   // average and a trend, and leaves the renderer alone the rest of the time.
   const BURST_MS = 3000;
   let burstStart = 0;
@@ -1436,7 +1622,7 @@ _startPerfDiagnostics() {
       lastSampleTime = now;
     }
     if (now - burstStart >= BURST_MS) {
-      rafId = null;   // burst over — stop asking for frames until the next one
+      rafId = null;   // burst over, stop asking for frames until the next one
       return;
     }
     rafId = requestAnimationFrame(countFrame);
@@ -1498,7 +1684,7 @@ _startPerfDiagnostics() {
     }
   }, REPORT_INTERVAL);
 
-  // Take the next reading (#5456) — the frame loop is idle between bursts.
+  // Take the next reading (#5456); the frame loop is idle between bursts.
   const burstTimer = setInterval(startBurst, REPORT_INTERVAL);
 
   this._perfDiag = { reportTimer, burstTimer, samples, stop: () => {

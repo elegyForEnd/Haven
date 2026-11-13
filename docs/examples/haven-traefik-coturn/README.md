@@ -12,7 +12,7 @@
 | 443 | TCP | HTTPS (Traefik) |
 | 3478 | TCP/UDP | TURN relay |
 | 5349 | TCP/UDP | TURN over TLS |
-| 49152–65535 | UDP | TURN media relay range |
+| 49152-65535 | UDP | TURN media relay range |
 
 ## Setup
 - SSH to your server
@@ -53,6 +53,24 @@ docker compose up -d
 - WebRTC tries to connect clients peer-to-peer first
 - If that fails (NAT, firewalls, etc.), traffic flows through coturn instead
 - This is why coturn runs with `network_mode: host` as it needs direct access to the UDP port range for media relay
+
+## Optional EasyTier node for Windows GameStream
+
+Set `HAVEN_EASYTIER_HOST` to the public address of this node, and generate the
+independent values in `.env.example`. Open the configured port (11010 by
+default) for TCP and UDP and start the node with
+`docker compose --profile easytier up -d easytier haven`.
+
+Windows desktop clients join a private EasyTier network when the Haven server
+admits them to a voice room. Automatic GameStream can use that network for its
+TCP and UDP ports. Voice and browser shares keep their existing WebRTC paths.
+The EasyTier shared node only forwards traffic for the configured Haven network
+prefix.
+
+The Network panel below the channel member list also lets Windows users join a
+separate channel network with a virtual adapter. Windows requests administrator
+approval for that adapter. Channel members can view the online participants and
+their assigned virtual addresses from the panel.
 
 ## Updating
 - Note that specific versions of each container have been hard-coded for this example

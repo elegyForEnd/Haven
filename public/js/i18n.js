@@ -13,14 +13,14 @@ const I18n = (() => {
   let _fallback = null;   // English base map for per-key fallback (#5451)
   let _locale = 'en';
   let _preference = 'auto';
-  let _ready = null;  // shared init promise — ensures init() is only run once
+  let _ready = null;  // shared init promise, ensures init() is only run once
   let _loadVersion = 0;
   let _languageChangeBound = false;
 
-  // Locales available — add entries here as you create new locale files
-  const SUPPORTED = ['en', 'fr', 'de', 'es', 'pl', 'ru', 'zh', 'pt'];
+  // Locales available: add entries here as you create new locale files
+  const SUPPORTED = ['en', 'fr', 'de', 'es', 'pl', 'ru', 'uk', 'zh', 'pt', 'fa', 'ja', 'ko'];
   const DEFAULT   = 'en';
-  const FLAGS = { en: 'gb', fr: 'fr', de: 'de', es: 'es', pl: 'pl', ru: 'ru', zh: 'cn', pt: 'br' };
+  const FLAGS = { en: 'gb', fr: 'fr', de: 'de', es: 'es', pl: 'pl', ru: 'ru', uk: 'ua', zh: 'cn', pt: 'br', ja: 'jp', ko: 'kr' };
 
   function _browserLocale() {
     const languages = Array.isArray(navigator.languages) && navigator.languages.length
@@ -41,13 +41,13 @@ const I18n = (() => {
   //   4. DEFAULT ('en')
   async function _detect() {
     let stored = null;
-    try { stored = localStorage.getItem('haven_locale'); } catch {}
+    try { stored = localStorage.getItem('haven_locale'); } catch { /* storage blocked (private mode): keep the default */ }
     if (stored && SUPPORTED.includes(stored)) {
       _preference = stored;
       return stored;
     }
     _preference = 'auto';
-    // Try server default — only blocks for first-time visitors with no stored
+    // Try server default. This only blocks for first-time visitors with no stored
     // choice (or an explicit Automatic choice), and uses a short timeout so a
     // slow/offline server can't hang init.
     try {
@@ -61,8 +61,46 @@ const I18n = (() => {
           return cfg.default_locale;
         }
       }
-    } catch { /* offline / not ready — fall through to browser detection */ }
+    } catch { /* offline / not ready, fall through to browser detection */ }
     return _browserLocale();
+  }
+
+  // A locale file that failed to load once (the server restarting for an
+  // update, a proxy or mobile network hiccup) left every t() showing its raw
+  // key for the whole visit, timestamps reading "utils.today_at" most of all.
+  // So each fetch gets a few tries.
+  async function _fetchLocale(locale) {
+    let lastErr = null;
+    for (const wait of [0, 700, 2000]) {
+      if (wait) await new Promise(r => setTimeout(r, wait));
+      try {
+        const res = await fetch(`/locales/${locale}.json`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return await res.json();
+      } catch (err) {
+        lastErr = err;
+      }
+    }
+    throw lastErr;
+  }
+
+  // English could not be loaded at all: keep trying in the background, and
+  // once it arrives redo the page text and every timestamp already drawn.
+  // (load() calls this again on each failure, up to 8 tries in all.)
+  let _lateRetryTimer = null;
+  let _lateRetries = 0;
+  function _retryLater() {
+    if (_lateRetryTimer || _lateRetries >= 8) return;
+    _lateRetries++;
+    _lateRetryTimer = setTimeout(async () => {
+      _lateRetryTimer = null;
+      if (Object.keys(_translations).length) return;
+      if (await load(DEFAULT)) {
+        applyDOM();
+        window.app?._refreshTimeLabels?.();
+        document.dispatchEvent(new CustomEvent('haven:localechange', { detail: { locale: DEFAULT, preference: _preference } }));
+      }
+    }, 15000 * _lateRetries);
   }
 
   // ── Load a locale JSON file ──────────────────────────────────────────
@@ -70,15 +108,14 @@ const I18n = (() => {
     if (!SUPPORTED.includes(locale)) locale = DEFAULT;
     const version = ++_loadVersion;
     try {
-      const res = await fetch(`/locales/${locale}.json`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const translations = await res.json();
+      const translations = await _fetchLocale(locale);
       let fallback = _fallback;
       if (locale !== DEFAULT && !fallback) {
         try {
-          const fb = await fetch(`/locales/${DEFAULT}.json`);
-          if (fb.ok) fallback = await fb.json();
-        } catch { /* no fallback available — t() shows raw keys as before */ }
+          fallback = await _fetchLocale(DEFAULT);
+        } catch (err) {
+          console.warn('[i18n] English fallback unavailable, missing keys show as keys:', err.message);
+        }
       }
       // A slower earlier request must never overwrite a newer language choice.
       if (version !== _loadVersion) return false;
@@ -100,6 +137,7 @@ const I18n = (() => {
         console.info(`[i18n] Falling back to "${DEFAULT}"`);
         return load(DEFAULT);
       }
+      _retryLater();
       return false;
     }
   }
@@ -118,13 +156,13 @@ const I18n = (() => {
     let val = _lookup(_translations, key);
     // Fall back to English for keys the active locale is missing, so the UI
     // shows real text instead of a raw dotted key like "modals.foo.title"
-    // (#5451). The raw key is only returned when English lacks it too — a
+    // (#5451). The raw key is only returned when English lacks it too, a
     // genuine gap worth surfacing.
     if ((val === null || val === undefined) && _fallback && _fallback !== _translations) {
       val = _lookup(_fallback, key);
     }
     if (val === null || val === undefined) {
-      // Key not found anywhere — return the raw key so the gap is visible.
+      // Key not found anywhere: return the raw key so the gap is visible.
       return key;
     }
     let str = String(val);
@@ -190,7 +228,7 @@ const I18n = (() => {
         _languageChangeBound = true;
         window.addEventListener('languagechange', () => {
           if (_preference === 'auto') {
-            try { window.location.reload(); } catch {}
+            try { window.location.reload(); } catch { /* non-browser test harness or embedded view without reload */ }
           }
         });
       }
@@ -205,7 +243,7 @@ const I18n = (() => {
   async function setLocale(locale) {
     const preference = locale === 'auto' ? 'auto' : (SUPPORTED.includes(locale) ? locale : DEFAULT);
     _preference = preference;
-    try { localStorage.setItem('haven_locale', preference); } catch {}
+    try { localStorage.setItem('haven_locale', preference); } catch { /* storage blocked (private mode): nothing is remembered, nothing else breaks */ }
     try {
       window.location.reload();
       return;
@@ -390,6 +428,6 @@ window.t = (key, params) => I18n.t(key, params);
 // <script>i18n.init()</script> call. The page CSP forbids inline scripts
 // (no 'unsafe-inline' in script-src), and the inline tag was being refused on
 // strict clients (e.g. Haven Desktop preload), leaving the page stuck on
-// "Loading Haven…". init() is idempotent — auth.js's await still resolves
+// "Loading Haven…". init() is idempotent, so auth.js's await still resolves
 // against the same shared promise.
 I18n.init();

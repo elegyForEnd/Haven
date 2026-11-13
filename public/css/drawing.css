@@ -331,9 +331,7 @@
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .drawing-tool-btn,
-  .drawing-mode-btn {
-    transition: none;
-  }
+html.reduce-motion .drawing-tool-btn,
+html.reduce-motion .drawing-mode-btn {
+  transition: none;
 }

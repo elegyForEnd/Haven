@@ -836,12 +836,7 @@ export default {
     if (!this._drawing?.channelId || !this.user?.isAdmin) return;
     const title = getDrawingText('drawing.clear_confirm_title', 'Clear channel drawing?');
     const message = getDrawingText('drawing.clear_confirm_message', 'This removes every stroke for everyone currently viewing this board.');
-    let confirmed = false;
-    if (typeof this._showConfirmModal === 'function') {
-      confirmed = await this._showConfirmModal(title, message, { danger: true });
-    } else {
-      confirmed = window.confirm(`${title}\n\n${message}`);
-    }
+    const confirmed = await this._showConfirmModal(title, message, { danger: true });
     if (confirmed && this.socket?.connected) this.socket.emit('drawing-clear');
   },
 };

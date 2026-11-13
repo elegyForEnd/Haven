@@ -6,18 +6,20 @@
 <meta property="og:title" content="Haven, a chat server you run yourself">
 <meta property="og:description" content="Haven is a free, open source alternative to Discord that you host on your own computer. Channels, voice, screen sharing, threads and encrypted DMs. Friends join with a link, the desktop app or the Android app.">
 <meta property="og:type" content="website">
-<meta property="og:url" content="https://ancsemi.github.io/Haven/">
-<meta property="og:image" content="https://ancsemi.github.io/Haven/img/haven-4-5-default.jpg">
+<meta property="og:url" content="https://haven-app.com/">
+<meta property="og:image" content="https://haven-app.com/img/haven-4-6-default.jpg">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Haven, a chat server you run yourself">
 <meta name="twitter:description" content="Haven is a free, open source alternative to Discord that you host on your own computer. Channels, voice, screen sharing, threads and encrypted DMs. Friends join with a link, the desktop app or the Android app.">
-<meta name="twitter:image" content="https://ancsemi.github.io/Haven/img/haven-4-5-default.jpg">
+<meta name="twitter:image" content="https://haven-app.com/img/haven-4-6-default.jpg">
 <meta name="twitter:site" content="@ancsemi">
-<link rel="canonical" href="https://ancsemi.github.io/Haven/">
+<link rel="canonical" href="https://haven-app.com/">
 <meta name="theme-color" content="#F6F5F9">
 <title>Ciacord, a chat server you run yourself</title>
 <meta name="description" content="Haven is a free, open source alternative to Discord that you host on your own computer. Channels, voice, screen sharing, threads and encrypted DMs. Friends join with a link, the desktop app or the Android app.">
-<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cpolygon points='50,3 93,28 93,72 50,97 7,72 7,28' fill='none' stroke='%236b4fdb' stroke-width='8' stroke-linejoin='round'/%3E%3Ctext x='50' y='63' text-anchor='middle' font-family='Arial,Helvetica,sans-serif' font-weight='bold' font-size='38' fill='%236b4fdb' opacity='0.95'%3EH%3C/text%3E%3C/svg%3E">
+<link rel="icon" href="/favicon.ico" sizes="48x48">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/favicon-192.png">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
   :root {
@@ -127,23 +129,39 @@
   .btn.pulse { border-color: var(--accent); background: var(--accent-soft); animation: pulse-ring 1.2s ease-out 3; }
 
   /* ── Sections ────────────────────────────────────── */
-  section { padding: clamp(56px, 8vw, 96px) 0; border-top: 1px solid var(--rule); scroll-margin-top: var(--topbar); }
+  section { padding: clamp(28px, 4vw, 48px) 0; border-top: 1px solid var(--rule); scroll-margin-top: var(--topbar); }
   section:first-of-type { border-top: 0; }
   .section-head { margin-bottom: 28px; }
   .section-head p { margin-top: 12px; color: var(--muted); max-width: var(--measure); }
 
   /* ── Hero ────────────────────────────────────────── */
-  .hero { padding-top: clamp(40px, 6vw, 72px); }
+  .hero { padding-top: clamp(20px, 3vw, 36px); }
   .hero-grid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr); gap: clamp(28px, 5vw, 64px); align-items: start; }
-  .hero .lead { font-size: 20px; line-height: 1.5; margin-top: 22px; max-width: 34em; }
+  .hero-brand { display: inline-flex; align-items: center; gap: 0.32em; color: var(--ink); font-weight: 600; font-size: clamp(48px, 7vw, 76px); letter-spacing: 0.01em; line-height: 1; }
+  .hero-brand svg { width: 1.05em; height: 1.05em; flex: none; }
+  .hero-title { font-size: clamp(20px, 2.4vw, 25px); font-weight: 700; letter-spacing: -0.01em; margin-top: 30px; }
+  .hero .lead { font-size: 20px; line-height: 1.5; margin-top: 10px; max-width: 34em; }
   .actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-top: 30px; }
   .btn { display: inline-flex; align-items: center; gap: 8px; padding: 11px 18px; border-radius: 4px; font-weight: 600; font-size: 16px; text-decoration: none; border: 1px solid transparent; line-height: 1.2; }
   .btn-primary { background: var(--accent); color: var(--accent-ink); }
   .btn-primary:hover { filter: brightness(1.08); text-decoration: none; }
   .btn-secondary { background: transparent; color: var(--ink); border-color: var(--rule-strong); }
   .btn-secondary:hover { border-color: var(--ink); text-decoration: none; }
+  .btn .ico { width: 1.1em; height: 1.1em; flex: none; fill: currentColor; }
+  .btn .ico-line { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
   .btn .ver { font-family: var(--mono); font-weight: 500; font-size: 14px; opacity: 0.85; }
   .actions .plain { font-size: 15px; }
+  /* The community server's status, under the join button. */
+  .server-status { display: grid; grid-template-columns: 9px 1fr; column-gap: 10px; row-gap: 2px; margin: 16px 0 0; font-size: 14px; color: var(--muted); }
+  .server-status .dot { align-self: start; margin-top: 6px; width: 9px; height: 9px; border-radius: 50%; background: var(--rule-strong); }
+  .server-status .status-when { grid-column: 2; }
+  .server-status .status-when:empty { display: none; }
+  .server-status[data-state="ok"] .dot { background: #2E9E5B; box-shadow: 0 0 0 3px rgba(46, 158, 91, 0.18); }
+  .server-status[data-state="warn"] .dot { background: #D19A1C; box-shadow: 0 0 0 3px rgba(209, 154, 28, 0.2); }
+  .server-status[data-state="down"] .dot { background: #D2463C; box-shadow: 0 0 0 3px rgba(210, 70, 60, 0.2); }
+  .server-status[data-state="down"] .status-text,
+  .server-status[data-state="warn"] .status-text { color: var(--ink); }
+  .server-status .status-when { font-size: 13px; }
 
   .term { background: var(--term-bg); color: var(--term-ink); border-radius: 6px; padding: 18px 20px; font-family: var(--mono); font-size: 13.5px; line-height: 1.5; overflow-x: auto; border: 1px solid var(--rule-strong); }
   .term pre { margin: 0; white-space: pre-wrap; }
@@ -166,8 +184,9 @@
   .cols > div:first-child { padding-left: 0; border-left: 0; }
   .cols > div:last-child { padding-right: 0; }
   .cols h3 { margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid var(--rule); }
-  .cols ul { list-style: none; padding: 0; }
-  .cols li { padding-left: 0; font-size: 16px; }
+  .cols ul { list-style: disc; padding-left: 1.1em; }
+  .cols li { font-size: 16px; }
+  .cols li::marker { color: var(--accent); }
   .cols li + li { margin-top: 0.5em; }
 
   /* ── Steps ───────────────────────────────────────── */
@@ -205,6 +224,11 @@
   .lightbox { position: fixed; inset: 0; z-index: 50; background: rgba(10, 8, 16, 0.92); display: flex; align-items: center; justify-content: center; padding: 24px; cursor: zoom-out; }
   .lightbox[hidden] { display: none; }
   .lightbox img { max-width: 100%; max-height: 100%; border-radius: 6px; box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5); }
+  .lb-nav { position: absolute; top: 50%; transform: translateY(-50%); width: 44px; height: 44px; border: 0; border-radius: 50%; background: rgba(255, 255, 255, 0.14); color: #fff; font-size: 30px; line-height: 1; cursor: pointer; display: grid; place-items: center; padding: 0 0 4px; }
+  .lb-nav:hover { background: rgba(255, 255, 255, 0.26); }
+  .lb-prev { left: 18px; }
+  .lb-next { right: 18px; }
+  @media (max-width: 700px) { .lb-nav { width: 36px; height: 36px; font-size: 24px; } .lb-prev { left: 8px; } .lb-next { right: 8px; } }
 
   /* ── Facts ───────────────────────────────────────── */
   .facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0; border-top: 1px solid var(--rule-strong); border-bottom: 1px solid var(--rule-strong); }
@@ -247,7 +271,32 @@
     :root { --topbar: 96px; }
   }
   @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } * { transition: none !important; } .btn.pulse { animation: none; box-shadow: 0 0 0 3px var(--accent); } }
+  html.i18n-wait body { opacity: 0; }
+  .lang-pick { display: inline-flex; align-items: center; gap: 4px; font-size: 14px; color: var(--muted); }
+  .lang-pick select { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--rule-strong); border-radius: 4px; padding: 5px 6px; }
 </style>
+<script>
+// Pick the page language before anything is drawn: the visitor's earlier
+// choice, else the first browser language the page has, else English.
+(() => {
+  const LANGS = ['en', 'fr', 'de', 'es', 'pl', 'ru', 'uk', 'zh', 'pt', 'fa', 'ja', 'ko'];
+  let lang = null;
+  try { lang = localStorage.getItem('haven_site_lang'); } catch { /* storage blocked: detect instead */ }
+  if (!LANGS.includes(lang)) {
+    lang = 'en';
+    for (const l of navigator.languages || [navigator.language || 'en']) {
+      const code = String(l || '').split('-')[0].toLowerCase();
+      if (LANGS.includes(code)) { lang = code; break; }
+    }
+  }
+  window.SITE_LANG = lang;
+  if (lang !== 'en') {
+    document.documentElement.classList.add('i18n-wait');
+    // Never stay hidden if the translation is slow or missing.
+    setTimeout(() => document.documentElement.classList.remove('i18n-wait'), 1500);
+  }
+})();
+</script>
 </head>
 <body>
 
@@ -262,10 +311,28 @@
       <a href="#features">Features</a>
       <a href="#compare">Compare</a>
       <a href="#setup">Setup</a>
+      <a href="tutorials.html">Tutorials</a>
       <a href="#security">Security</a>
+      <a href="#screenshots">Gallery</a>
       <a href="#download">Download</a>
       <a href="https://github.com/ancsemi/Haven">GitHub</a>
       <a class="btn-try" id="try-now" href="#top">Try it now</a>
+      <label class="lang-pick"><span aria-hidden="true">🌐</span>
+        <select id="site-lang" aria-label="Language">
+          <option value="en">English</option>
+          <option value="fr">Français</option>
+          <option value="de">Deutsch</option>
+          <option value="es">Español</option>
+          <option value="pl">Polski</option>
+          <option value="ru">Русский</option>
+          <option value="uk">Українська</option>
+          <option value="zh">中文</option>
+          <option value="pt">Português</option>
+          <option value="fa">فارسی</option>
+          <option value="ja">日本語</option>
+          <option value="ko">한국어</option>
+        </select>
+      </label>
     </nav>
   </div>
 </header>
@@ -275,13 +342,18 @@
     <div class="wrap">
       <div class="hero-grid">
         <div>
-          <h1>A chat server you run yourself.</h1>
+          <div class="hero-brand" aria-hidden="true">
+            <svg viewBox="0 0 100 100"><polygon points="50,3 93,28 93,72 50,97 7,72 7,28" fill="none" stroke="currentColor" stroke-width="8" stroke-linejoin="round"/></svg>
+            Haven
+          </div>
+          <h1 class="hero-title">A chat server you run yourself.</h1>
           <p class="lead">Haven is a free, open source alternative to Discord. It runs on your own computer, your friends join with a link, and there's no company in the middle.</p>
           <div class="actions">
-            <a class="btn btn-primary" href="https://github.com/ancsemi/Haven/archive/refs/tags/v4.6.0.zip">Download Haven <span class="ver">4.6.0</span></a>
+            <a class="btn btn-primary" href="#download"><svg class="ico ico-line" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M4 20h16"/></svg>Download Haven</a>
             <a class="btn btn-secondary" id="try-server" href="https://haven.moviethingy.xyz/?invite=da0b9be7">Join the community server</a>
             <a class="plain" href="https://github.com/ancsemi/Haven">Source on GitHub</a>
           </div>
+          <p class="server-status" id="server-status" data-state="unknown" role="status" aria-live="polite"><span class="dot" aria-hidden="true"></span><span class="status-text">Checking the community server…</span><span class="status-when"></span></p>
         </div>
         <div>
           <div class="term" role="img" aria-label="Haven's start-up message in a terminal: HAVEN is running, with the local and network addresses">
@@ -300,27 +372,21 @@
         </div>
       </div>
       <figure class="shot">
-        <img class="zoomable" src="img/haven-4-5-default.jpg" width="1600" height="760" alt="Haven's default theme with a voice call going, channels on the left and the member list on the right">
+        <img class="zoomable" src="img/haven-4-6-default.jpg" width="1918" height="1010" alt="Haven's default theme: channels and DMs on the left, the member list on the right">
       </figure>
     </div>
   </section>
 
   <section id="about">
     <div class="wrap">
-      <div class="split">
-        <div class="prose">
+      <div class="prose">
           <div class="section-head">
             <h2>About</h2>
           </div>
-          <p>Haven works like a Discord server, but you host it yourself. Download the zip, run it, and it gives you a link your friends can use from a browser, the desktop app or the Android app.</p>
+          <p>Haven works like a Discord server, but you host it yourself. Download the zip, run it, and it gives you a link your friends can use from a browser, the desktop app or the Android and iOS apps.</p>
           <p>There's no company in the middle. No account with us, no email or phone number, and nothing to pay for. Your messages, files and voice calls stay on your own server.</p>
           <p>Haven has been in development since February 2026. It's a spare-time project and it'll always be free.</p>
           <p>Many helpful people with a shared passion for free, unfiltered and private chat have come together to improve it. Every change is public, with a <a href="https://github.com/ancsemi/Haven/blob/main/CHANGELOG.md">changelog</a> updated every release.</p>
-        </div>
-        <figure class="fig">
-          <img class="zoomable" src="img/haven-phone-welcome.jpg" width="480" height="1040" alt="Haven's welcome screen in a phone browser">
-          <figcaption>Joining from a phone browser. No app needed.</figcaption>
-        </figure>
       </div>
     </div>
   </section>
@@ -354,12 +420,11 @@
         <div>
           <h3>Customization</h3>
           <ul>
-            <li>26 themes, or write your own CSS</li>
+            <li>26 themes with customizable effects, or write your own CSS</li>
             <li>Bots and webhooks</li>
             <li>Sign in with your own identity provider</li>
-            <li>Backups and updates from the settings page</li>
             <li>Guest access, invite links and channel codes</li>
-            <li>Available in 8 languages</li>
+            <li>Available in 12 languages: English, Français, Deutsch, Español, Polski, Русский, Українська, 中文, Português, فارسی, 日本語 and 한국어</li>
           </ul>
         </div>
         <div>
@@ -368,9 +433,13 @@
             <li>Rich Presence: show what you're playing or listening to</li>
             <li>Built-in games with leaderboards</li>
             <li>Flash games, through Ruffle</li>
+            <li>Backups and updates from the settings page</li>
           </ul>
         </div>
       </div>
+      <figure class="shot">
+        <img class="zoomable" src="img/haven-features.jpg" width="1915" height="1005" alt="A community channel in the Braid theme with the member list open" loading="lazy">
+      </figure>
     </div>
   </section>
 
@@ -415,9 +484,11 @@
       <ol class="steps">
         <li><strong>Download the zip</strong> and unzip it anywhere.</li>
         <li><strong>Double-click <code>Start Haven.bat</code></strong> (<code>start.sh</code> on Mac and Linux). It sets everything up and prints your link. If Node.js isn't installed yet, it offers to install it for you.</li>
-        <li><strong>Send the link to your friends.</strong> They can use a browser, the desktop app or the Android app.</li>
+        <li><strong>Send the link to your friends.</strong> They can use a browser, the desktop app or the Android and iOS apps.</li>
       </ol>
       <p class="prose muted" style="margin-top: 26px;">To reach friends outside your home network you'll need to open a port or use a tunnel. The guide covers both, and there's a one-click tunnel in the admin settings.</p>
+      <p class="prose muted" style="margin-top: 12px;">Prefer to watch? There are <a href="tutorials.html">short video tutorials</a> for installing Haven and running your server.</p>
+      <p class="prose muted" style="margin-top: 12px;">It doesn't need much: about 100 MB of memory for a group of friends, and a Raspberry Pi will do. Here are the <a href="https://haven-app.com/hardware.html">measured numbers</a> for every size of server.</p>
     </div>
   </section>
 
@@ -427,7 +498,8 @@
         <h2>Security and privacy</h2>
         <p>How it actually works.</p>
       </div>
-      <div class="prose">
+      <div class="split">
+        <div class="prose">
         <ul>
           <li><strong>Your data lives on the computer running the server,</strong> in one folder. Back it up, move it or delete it whenever you want.</li>
           <li><strong>Direct messages are end-to-end encrypted.</strong> The server stores them but can't read them, and neither can the admin.</li>
@@ -436,6 +508,13 @@
           <li><strong>No telemetry.</strong> The server doesn't send usage data or crash reports anywhere.</li>
           <li><strong>There's no central Haven server and no Haven account.</strong> Nothing to leak.</li>
         </ul>
+        </div>
+        <figure class="fig">
+          <img class="zoomable" src="img/haven-phone-welcome.jpg" width="480" height="1040" alt="Haven's welcome screen in a phone browser" loading="lazy">
+          <figcaption>Joining from a phone browser. No app needed.</figcaption>
+        </figure>
+      </div>
+      <div class="prose">
         <h3 style="margin-top: 36px;">What the server connects to</h3>
         <p class="muted small" style="margin-top: 6px;">Every outside service a Haven server contacts, and when.</p>
       </div>
@@ -447,12 +526,14 @@
           <tbody>
             <tr><td>api.github.com</td><td>When an admin clicks Check for updates</td><td>To see the latest version</td><td>Don't click it</td></tr>
             <tr><td>Google Firebase, through the Haven push relay</td><td>When someone uses the Android app with push notifications on</td><td>To deliver the notification. The message title and text pass through it</td><td>Settings, Security</td></tr>
-            <tr><td>tenor.googleapis.com, api.giphy.com</td><td>When someone searches for a GIF</td><td>The search goes through your server, not the person's browser</td><td>Only when used</td></tr>
+            <tr><td>tenor.googleapis.com, api.giphy.com, api.klipy.com</td><td>When someone searches for a GIF</td><td>The search goes through your server, not the person's browser</td><td>Only when used</td></tr>
             <tr><td>The site behind a posted link</td><td>When a message contains a link</td><td>Your server fetches the preview and the image, so your friends' browsers never touch that site</td><td>Per link</td></tr>
             <tr><td>discord.com</td><td>Only if you set up Import or Ferry</td><td>To copy or bridge your Discord server</td><td>Off until you set it up</td></tr>
             <tr><td>Spotify, Last.fm, Steam</td><td>Only for people who link an account</td><td>To show what they're playing or listening to</td><td>Per person</td></tr>
             <tr><td>unicode.org</td><td>Monthly, only if you turn on emoji updates</td><td>New emoji</td><td>Off by default</td></tr>
             <tr><td>ipify.org, portchecker.io</td><td>When you run the connectivity test or use dynamic DNS</td><td>To find your public address</td><td>Only when used</td></tr>
+            <tr><td>registry.npmjs.org</td><td>When an admin installs the voice relay in Large Server Setup</td><td>To download the relay</td><td>Only when used</td></tr>
+            <tr><td>stun.l.google.com, stun.cloudflare.com</td><td>When the voice relay starts without a public address filled in, or an admin clicks Detect</td><td>To find the address callers reach the relay on</td><td>Fill in the address yourself</td></tr>
           </tbody>
         </table>
       </div>
@@ -463,14 +544,14 @@
     <div class="wrap">
       <div class="section-head">
         <h2>By the numbers</h2>
-        <p id="stats-caption">As of 9 September 2026.</p>
+        <p id="stats-caption">As of 29 September 2026.</p>
       </div>
       <dl class="facts">
         <div><dt>Started</dt><dd data-stat="started">Feb 2026</dd></div>
-        <div><dt>Releases</dt><dd class="num" data-stat="releases">156</dd></div>
-        <div><dt>Commits</dt><dd class="num" data-stat="commits">1,228</dd></div>
-        <div><dt>Contributors</dt><dd class="num" data-stat="contributors">20</dd></div>
-        <div><dt>GitHub stars</dt><dd class="num" data-stat="stars">542</dd></div>
+        <div><dt>Releases</dt><dd class="num" data-stat="releases">166</dd></div>
+        <div><dt>Commits</dt><dd class="num" data-stat="commits">1,479</dd></div>
+        <div><dt>Contributors</dt><dd class="num" data-stat="contributors">21</dd></div>
+        <div><dt>GitHub stars</dt><dd class="num" data-stat="stars">557</dd></div>
         <div><dt>License</dt><dd>AGPL-3.0</dd></div>
       </dl>
     </div>
@@ -480,28 +561,28 @@
     <div class="wrap">
       <div class="section-head">
         <h2>Download</h2>
-        <p>Only the host needs the server. Everyone else can join from the app or any browser.</p>
+        <p>Most people only need the app. The server download is just for whoever hosts one.</p>
       </div>
       <div class="dl">
         <div class="dl-row">
           <div>
-            <h3>Haven Server <span class="ver">4.6.0</span></h3>
-            <p>Windows, macOS and Linux. Needs Node.js. About 5 MB.</p>
+            <h3>Haven Desktop <span class="ver">1.8.3</span></h3>
+            <p>The app for joining a server. Adds per-app audio sharing, mid-call device switching and a system tray. It can run a server too.</p>
+            <p class="muted small">The installer isn't code-signed yet, so Windows may say "Windows protected your PC" the first time. Click <b>More info</b>, then <b>Run anyway</b>.</p>
           </div>
           <div class="dl-links">
-            <a class="btn btn-primary" href="https://github.com/ancsemi/Haven/archive/refs/tags/v4.6.0.zip">Download .zip</a>
-            <a class="btn btn-secondary" href="https://github.com/ancsemi/Haven/blob/main/GUIDE.md">Setup guide</a>
+            <a class="btn btn-primary" href="https://github.com/ancsemi/Haven-Desktop/releases/download/v1.8.3/Haven-Setup-1.8.3.exe"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M0 0h11.4v11.4H0zM12.6 0H24v11.4H12.6zM0 12.6h11.4V24H0zM12.6 12.6H24V24H12.6z"/></svg>Windows installer</a>
+            <a class="btn btn-secondary" href="https://github.com/ancsemi/Haven-Desktop/releases/download/v1.8.3/Haven-1.8.3.AppImage"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12.504 0c-.155 0-.315.008-.48.021-4.226.333-3.105 4.807-3.17 6.298-.076 1.092-.3 1.953-1.05 3.02-.885 1.051-2.127 2.75-2.716 4.521-.278.832-.41 1.684-.287 2.489a.424.424 0 00-.11.135c-.26.268-.45.6-.663.839-.199.199-.485.267-.797.4-.313.136-.658.269-.864.68-.09.189-.136.394-.132.602 0 .199.027.4.055.536.058.399.116.728.04.97-.249.68-.28 1.145-.106 1.484.174.334.535.47.94.601.81.2 1.91.135 2.774.6.926.466 1.866.67 2.616.47.526-.116.97-.464 1.208-.946.587-.003 1.23-.269 2.26-.334.699-.058 1.574.267 2.577.2.025.134.063.198.114.333l.003.003c.391.778 1.113 1.132 1.884 1.071.771-.06 1.592-.536 2.257-1.306.631-.765 1.683-1.084 2.378-1.503.348-.199.629-.469.649-.853.023-.4-.2-.811-.714-1.376v-.097l-.003-.003c-.17-.2-.25-.535-.338-.926-.085-.401-.182-.786-.492-1.046h-.003c-.059-.054-.123-.067-.188-.135a.357.357 0 00-.19-.064c.431-1.278.264-2.55-.173-3.694-.533-1.41-1.465-2.638-2.175-3.483-.796-1.005-1.576-1.957-1.56-3.368.026-2.152.236-6.133-3.544-6.139zm.529 3.405h.013c.213 0 .396.062.584.198.19.135.33.332.438.533.105.259.158.459.166.724 0-.02.006-.04.006-.06v.105a.086.086 0 01-.004-.021l-.004-.024a1.807 1.807 0 01-.15.706.953.953 0 01-.213.335.71.71 0 00-.088-.042c-.104-.045-.198-.064-.284-.133a1.312 1.312 0 00-.22-.066c.05-.06.146-.133.183-.198.053-.128.082-.264.088-.402v-.02a1.21 1.21 0 00-.061-.4c-.045-.134-.101-.2-.183-.333-.084-.066-.167-.132-.267-.132h-.016c-.093 0-.176.03-.262.132a.8.8 0 00-.205.334 1.18 1.18 0 00-.09.4v.019c.002.089.008.179.02.267-.193-.067-.438-.135-.607-.202a1.635 1.635 0 01-.018-.2v-.02a1.772 1.772 0 01.15-.768c.082-.22.232-.406.43-.533a.985.985 0 01.594-.2zm-2.962.059h.036c.142 0 .27.048.399.135.146.129.264.288.344.465.09.199.14.4.153.667v.004c.007.134.006.2-.002.266v.08c-.03.007-.056.018-.083.024-.152.055-.274.135-.393.2.012-.09.013-.18.003-.267v-.015c-.012-.133-.04-.2-.082-.333a.613.613 0 00-.166-.267.248.248 0 00-.183-.064h-.021c-.071.006-.13.04-.186.132a.552.552 0 00-.12.27.944.944 0 00-.023.33v.015c.012.135.037.2.08.334.046.134.098.2.166.268.01.009.02.018.034.024-.07.057-.117.07-.176.136a.304.304 0 01-.131.068 2.62 2.62 0 01-.275-.402 1.772 1.772 0 01-.155-.667 1.759 1.759 0 01.08-.668 1.43 1.43 0 01.283-.535c.128-.133.26-.2.418-.2zm1.37 1.706c.332 0 .733.065 1.216.399.293.2.523.269 1.052.468h.003c.255.136.405.266.478.399v-.131a.571.571 0 01.016.47c-.123.31-.516.643-1.063.842v.002c-.268.135-.501.333-.775.465-.276.135-.588.292-1.012.267a1.139 1.139 0 01-.448-.067 3.566 3.566 0 01-.322-.198c-.195-.135-.363-.332-.612-.465v-.005h-.005c-.4-.246-.616-.512-.686-.71-.07-.268-.005-.47.193-.6.224-.135.38-.271.483-.336.104-.074.143-.102.176-.131h.002v-.003c.169-.202.436-.47.839-.601.139-.036.294-.065.466-.065zm2.8 2.142c.358 1.417 1.196 3.475 1.735 4.473.286.534.855 1.659 1.102 3.024.156-.005.33.018.513.064.646-1.671-.546-3.467-1.089-3.966-.22-.2-.232-.335-.123-.335.59.534 1.365 1.572 1.646 2.757.13.535.16 1.104.021 1.67.067.028.135.06.205.067 1.032.534 1.413.938 1.23 1.537v-.043c-.06-.003-.12 0-.18 0h-.016c.151-.467-.182-.825-1.065-1.224-.915-.4-1.646-.336-1.77.465-.008.043-.013.066-.018.135-.068.023-.139.053-.209.064-.43.268-.662.669-.793 1.187-.13.533-.17 1.156-.205 1.869v.003c-.02.334-.17.838-.319 1.35-1.5 1.072-3.58 1.538-5.348.334a2.645 2.645 0 00-.402-.533 1.45 1.45 0 00-.275-.333c.182 0 .338-.03.465-.067a.615.615 0 00.314-.334c.108-.267 0-.697-.345-1.163-.345-.467-.931-.995-1.788-1.521-.63-.4-.986-.87-1.15-1.396-.165-.534-.143-1.085-.015-1.645.245-1.07.873-2.11 1.274-2.763.107-.065.037.135-.408.974-.396.751-1.14 2.497-.122 3.854a8.123 8.123 0 01.647-2.876c.564-1.278 1.743-3.504 1.836-5.268.048.036.217.135.289.202.218.133.38.333.59.465.21.201.477.335.876.335.039.003.075.006.11.006.412 0 .73-.134.997-.268.29-.134.52-.334.74-.4h.005c.467-.135.835-.402 1.044-.7zm2.185 8.958c.037.6.343 1.245.882 1.377.588.134 1.434-.333 1.791-.765l.211-.01c.315-.007.577.01.847.268l.003.003c.208.199.305.53.391.876.085.4.154.78.409 1.066.486.527.645.906.636 1.14l.003-.007v.018l-.003-.012c-.015.262-.185.396-.498.595-.63.401-1.746.712-2.457 1.57-.618.737-1.37 1.14-2.036 1.191-.664.053-1.237-.2-1.574-.898l-.005-.003c-.21-.4-.12-1.025.056-1.69.176-.668.428-1.344.463-1.897.037-.714.076-1.335.195-1.814.12-.465.308-.797.641-.984l.045-.022zm-10.814.049h.01c.053 0 .105.005.157.014.376.055.706.333 1.023.752l.91 1.664.003.003c.243.533.754 1.064 1.189 1.637.434.598.77 1.131.729 1.57v.006c-.057.744-.48 1.148-1.125 1.294-.645.135-1.52.002-2.395-.464-.968-.536-2.118-.469-2.857-.602-.369-.066-.61-.2-.723-.4-.11-.2-.113-.602.123-1.23v-.004l.002-.003c.117-.334.03-.752-.027-1.118-.055-.401-.083-.71.043-.94.16-.334.396-.4.69-.533.294-.135.64-.202.915-.47h.002v-.002c.256-.268.445-.601.668-.838.19-.201.38-.336.663-.336zm7.159-9.074c-.435.201-.945.535-1.488.535-.542 0-.97-.267-1.28-.466-.154-.134-.28-.268-.373-.335-.164-.134-.144-.333-.074-.333.109.016.129.134.199.2.096.066.215.2.36.333.292.2.68.467 1.167.467.485 0 1.053-.267 1.398-.466.195-.135.445-.334.648-.467.156-.136.149-.267.279-.267.128.016.034.134-.147.332a8.097 8.097 0 01-.69.468zm-1.082-1.583V5.64c-.006-.02.013-.042.029-.05.074-.043.18-.027.26.004.063 0 .16.067.15.135-.006.049-.085.066-.135.066-.055 0-.092-.043-.141-.068-.052-.018-.146-.008-.163-.065zm-.551 0c-.02.058-.113.049-.166.066-.047.025-.086.068-.14.068-.05 0-.13-.02-.136-.068-.01-.066.088-.133.15-.133.08-.031.184-.047.259-.005.019.009.036.03.03.05v.02h.003z"/></svg>Linux AppImage</a>
+            <a class="btn btn-secondary" href="https://github.com/ancsemi/Haven-Desktop/releases/download/v1.8.3/haven-desktop_1.8.3_amd64.deb"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12.504 0c-.155 0-.315.008-.48.021-4.226.333-3.105 4.807-3.17 6.298-.076 1.092-.3 1.953-1.05 3.02-.885 1.051-2.127 2.75-2.716 4.521-.278.832-.41 1.684-.287 2.489a.424.424 0 00-.11.135c-.26.268-.45.6-.663.839-.199.199-.485.267-.797.4-.313.136-.658.269-.864.68-.09.189-.136.394-.132.602 0 .199.027.4.055.536.058.399.116.728.04.97-.249.68-.28 1.145-.106 1.484.174.334.535.47.94.601.81.2 1.91.135 2.774.6.926.466 1.866.67 2.616.47.526-.116.97-.464 1.208-.946.587-.003 1.23-.269 2.26-.334.699-.058 1.574.267 2.577.2.025.134.063.198.114.333l.003.003c.391.778 1.113 1.132 1.884 1.071.771-.06 1.592-.536 2.257-1.306.631-.765 1.683-1.084 2.378-1.503.348-.199.629-.469.649-.853.023-.4-.2-.811-.714-1.376v-.097l-.003-.003c-.17-.2-.25-.535-.338-.926-.085-.401-.182-.786-.492-1.046h-.003c-.059-.054-.123-.067-.188-.135a.357.357 0 00-.19-.064c.431-1.278.264-2.55-.173-3.694-.533-1.41-1.465-2.638-2.175-3.483-.796-1.005-1.576-1.957-1.56-3.368.026-2.152.236-6.133-3.544-6.139zm.529 3.405h.013c.213 0 .396.062.584.198.19.135.33.332.438.533.105.259.158.459.166.724 0-.02.006-.04.006-.06v.105a.086.086 0 01-.004-.021l-.004-.024a1.807 1.807 0 01-.15.706.953.953 0 01-.213.335.71.71 0 00-.088-.042c-.104-.045-.198-.064-.284-.133a1.312 1.312 0 00-.22-.066c.05-.06.146-.133.183-.198.053-.128.082-.264.088-.402v-.02a1.21 1.21 0 00-.061-.4c-.045-.134-.101-.2-.183-.333-.084-.066-.167-.132-.267-.132h-.016c-.093 0-.176.03-.262.132a.8.8 0 00-.205.334 1.18 1.18 0 00-.09.4v.019c.002.089.008.179.02.267-.193-.067-.438-.135-.607-.202a1.635 1.635 0 01-.018-.2v-.02a1.772 1.772 0 01.15-.768c.082-.22.232-.406.43-.533a.985.985 0 01.594-.2zm-2.962.059h.036c.142 0 .27.048.399.135.146.129.264.288.344.465.09.199.14.4.153.667v.004c.007.134.006.2-.002.266v.08c-.03.007-.056.018-.083.024-.152.055-.274.135-.393.2.012-.09.013-.18.003-.267v-.015c-.012-.133-.04-.2-.082-.333a.613.613 0 00-.166-.267.248.248 0 00-.183-.064h-.021c-.071.006-.13.04-.186.132a.552.552 0 00-.12.27.944.944 0 00-.023.33v.015c.012.135.037.2.08.334.046.134.098.2.166.268.01.009.02.018.034.024-.07.057-.117.07-.176.136a.304.304 0 01-.131.068 2.62 2.62 0 01-.275-.402 1.772 1.772 0 01-.155-.667 1.759 1.759 0 01.08-.668 1.43 1.43 0 01.283-.535c.128-.133.26-.2.418-.2zm1.37 1.706c.332 0 .733.065 1.216.399.293.2.523.269 1.052.468h.003c.255.136.405.266.478.399v-.131a.571.571 0 01.016.47c-.123.31-.516.643-1.063.842v.002c-.268.135-.501.333-.775.465-.276.135-.588.292-1.012.267a1.139 1.139 0 01-.448-.067 3.566 3.566 0 01-.322-.198c-.195-.135-.363-.332-.612-.465v-.005h-.005c-.4-.246-.616-.512-.686-.71-.07-.268-.005-.47.193-.6.224-.135.38-.271.483-.336.104-.074.143-.102.176-.131h.002v-.003c.169-.202.436-.47.839-.601.139-.036.294-.065.466-.065zm2.8 2.142c.358 1.417 1.196 3.475 1.735 4.473.286.534.855 1.659 1.102 3.024.156-.005.33.018.513.064.646-1.671-.546-3.467-1.089-3.966-.22-.2-.232-.335-.123-.335.59.534 1.365 1.572 1.646 2.757.13.535.16 1.104.021 1.67.067.028.135.06.205.067 1.032.534 1.413.938 1.23 1.537v-.043c-.06-.003-.12 0-.18 0h-.016c.151-.467-.182-.825-1.065-1.224-.915-.4-1.646-.336-1.77.465-.008.043-.013.066-.018.135-.068.023-.139.053-.209.064-.43.268-.662.669-.793 1.187-.13.533-.17 1.156-.205 1.869v.003c-.02.334-.17.838-.319 1.35-1.5 1.072-3.58 1.538-5.348.334a2.645 2.645 0 00-.402-.533 1.45 1.45 0 00-.275-.333c.182 0 .338-.03.465-.067a.615.615 0 00.314-.334c.108-.267 0-.697-.345-1.163-.345-.467-.931-.995-1.788-1.521-.63-.4-.986-.87-1.15-1.396-.165-.534-.143-1.085-.015-1.645.245-1.07.873-2.11 1.274-2.763.107-.065.037.135-.408.974-.396.751-1.14 2.497-.122 3.854a8.123 8.123 0 01.647-2.876c.564-1.278 1.743-3.504 1.836-5.268.048.036.217.135.289.202.218.133.38.333.59.465.21.201.477.335.876.335.039.003.075.006.11.006.412 0 .73-.134.997-.268.29-.134.52-.334.74-.4h.005c.467-.135.835-.402 1.044-.7zm2.185 8.958c.037.6.343 1.245.882 1.377.588.134 1.434-.333 1.791-.765l.211-.01c.315-.007.577.01.847.268l.003.003c.208.199.305.53.391.876.085.4.154.78.409 1.066.486.527.645.906.636 1.14l.003-.007v.018l-.003-.012c-.015.262-.185.396-.498.595-.63.401-1.746.712-2.457 1.57-.618.737-1.37 1.14-2.036 1.191-.664.053-1.237-.2-1.574-.898l-.005-.003c-.21-.4-.12-1.025.056-1.69.176-.668.428-1.344.463-1.897.037-.714.076-1.335.195-1.814.12-.465.308-.797.641-.984l.045-.022zm-10.814.049h.01c.053 0 .105.005.157.014.376.055.706.333 1.023.752l.91 1.664.003.003c.243.533.754 1.064 1.189 1.637.434.598.77 1.131.729 1.57v.006c-.057.744-.48 1.148-1.125 1.294-.645.135-1.52.002-2.395-.464-.968-.536-2.118-.469-2.857-.602-.369-.066-.61-.2-.723-.4-.11-.2-.113-.602.123-1.23v-.004l.002-.003c.117-.334.03-.752-.027-1.118-.055-.401-.083-.71.043-.94.16-.334.396-.4.69-.533.294-.135.64-.202.915-.47h.002v-.002c.256-.268.445-.601.668-.838.19-.201.38-.336.663-.336zm7.159-9.074c-.435.201-.945.535-1.488.535-.542 0-.97-.267-1.28-.466-.154-.134-.28-.268-.373-.335-.164-.134-.144-.333-.074-.333.109.016.129.134.199.2.096.066.215.2.36.333.292.2.68.467 1.167.467.485 0 1.053-.267 1.398-.466.195-.135.445-.334.648-.467.156-.136.149-.267.279-.267.128.016.034.134-.147.332a8.097 8.097 0 01-.69.468zm-1.082-1.583V5.64c-.006-.02.013-.042.029-.05.074-.043.18-.027.26.004.063 0 .16.067.15.135-.006.049-.085.066-.135.066-.055 0-.092-.043-.141-.068-.052-.018-.146-.008-.163-.065zm-.551 0c-.02.058-.113.049-.166.066-.047.025-.086.068-.14.068-.05 0-.13-.02-.136-.068-.01-.066.088-.133.15-.133.08-.031.184-.047.259-.005.019.009.036.03.03.05v.02h.003z"/></svg>Linux .deb</a>
           </div>
         </div>
         <div class="dl-row">
           <div>
-            <h3>Haven Desktop <span class="ver">1.4.30</span></h3>
-            <p>Adds per-app audio sharing, mid-call device switching and a system tray. It can run the server too.</p>
+            <h3>Haven for macOS</h3>
+            <p>A Mac version of Haven Desktop, built and kept up to date by Amnibro. One download for Apple Silicon and Intel Macs.</p>
           </div>
           <div class="dl-links">
-            <a class="btn btn-secondary" href="https://github.com/ancsemi/Haven-Desktop/releases/download/v1.4.30/Haven-Setup-1.4.30.exe">Windows installer</a>
-            <a class="btn btn-secondary" href="https://github.com/ancsemi/Haven-Desktop/releases/download/v1.4.30/Haven-1.4.30.AppImage">Linux AppImage</a>
-            <a class="btn btn-secondary" href="https://github.com/ancsemi/Haven-Desktop/releases/download/v1.4.30/haven-desktop_1.4.30_amd64.deb">Linux .deb</a>
+            <a class="btn btn-secondary" href="https://github.com/Amnibro/Haven-Desktop/releases/latest/download/Haven-Desktop-universal.dmg"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701"/></svg>Download for Mac</a>
           </div>
         </div>
         <div class="dl-row">
@@ -510,7 +591,27 @@
             <p>A native app with chat, voice and push notifications.</p>
           </div>
           <div class="dl-links">
-            <a class="btn btn-secondary" href="https://play.google.com/store/apps/details?id=com.havenapp.mobile">Get it on Google Play</a>
+            <a class="btn btn-secondary" href="https://play.google.com/store/apps/details?id=com.havenapp.mobile"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M18.4395 5.5586c-.675 1.1664-1.352 2.3318-2.0274 3.498-.0366-.0155-.0742-.0286-.1113-.043-1.8249-.6957-3.484-.8-4.42-.787-1.8551.0185-3.3544.4643-4.2597.8203-.084-.1494-1.7526-3.021-2.0215-3.4864a1.1451 1.1451 0 0 0-.1406-.1914c-.3312-.364-.9054-.4859-1.379-.203-.475.282-.7136.9361-.3886 1.5019 1.9466 3.3696-.0966-.2158 1.9473 3.3593.0172.031-.4946.2642-1.3926 1.0177C2.8987 12.176.452 14.772 0 18.9902h24c-.119-1.1108-.3686-2.099-.7461-3.0683-.7438-1.9118-1.8435-3.2928-2.7402-4.1836a12.1048 12.1048 0 0 0-2.1309-1.6875c.6594-1.122 1.312-2.2559 1.9649-3.3848.2077-.3615.1886-.7956-.0079-1.1191a1.1001 1.1001 0 0 0-.8515-.5332c-.5225-.0536-.9392.3128-1.0488.5449zm-.0391 8.461c.3944.5926.324 1.3306-.1563 1.6503-.4799.3197-1.188.0985-1.582-.4941-.3944-.5927-.324-1.3307.1563-1.6504.4727-.315 1.1812-.1086 1.582.4941zM7.207 13.5273c.4803.3197.5506 1.0577.1563 1.6504-.394.5926-1.1038.8138-1.584.4941-.48-.3197-.5503-1.0577-.1563-1.6504.4008-.6021 1.1087-.8106 1.584-.4941z"/></svg>Get it on Google Play</a>
+          </div>
+        </div>
+        <div class="dl-row">
+          <div>
+            <h3>Haven for iOS</h3>
+            <p>A native app, in testing through TestFlight. Until it is on the App Store, open your server in Safari and Add to Home Screen.</p>
+          </div>
+          <div class="dl-links">
+            <a class="btn btn-secondary" href="https://testflight.apple.com/join/ADeG5zRq"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701"/></svg>Join the TestFlight</a>
+          </div>
+        </div>
+        <div class="dl-row">
+          <div>
+            <h3>Haven Server <span class="ver">4.28.0</span></h3>
+            <p>Only for hosting your own server. Windows, macOS and Linux. Needs Node.js. About 5 MB.</p>
+            <p class="muted small">On Windows, the same "Windows protected your PC" message can show up for Start Haven.bat. More info, then Run anyway.</p>
+          </div>
+          <div class="dl-links">
+            <a class="btn btn-secondary" href="https://github.com/ancsemi/Haven/archive/refs/tags/v4.28.0.zip"><svg class="ico ico-line" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 4h18v4H3zM5 8v12h14V8M10 12h4"/></svg>Download .zip</a>
+            <a class="btn btn-secondary" href="https://github.com/ancsemi/Haven/blob/main/GUIDE.md"><svg class="ico ico-line" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2zM22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>Setup guide</a>
           </div>
         </div>
       </div>
@@ -532,35 +633,193 @@
   <section id="screenshots">
     <div class="wrap">
       <div class="section-head">
-        <h2>More screenshots</h2>
+        <h2>Gallery</h2>
       </div>
       <div class="gallery">
-        <figure><img class="zoomable" src="img/haven-screen-share.jpg" width="1200" height="591" alt="Screen sharing with voice chat and more than one stream"></figure>
-        <figure><img class="zoomable" src="img/haven-theme-chat.jpg" width="1200" height="593" alt="A chat channel in one of the built-in themes"></figure>
-        <figure><img class="zoomable" src="img/haven-games.jpg" width="1200" height="568" alt="A channel in another theme with a video playing"></figure>
-        <figure><img class="zoomable" src="img/haven-login.jpg" width="1200" height="593" alt="The login screen with the theme picker"></figure>
+        <figure><img class="zoomable" src="img/haven-screen-share.jpg" width="1200" height="591" alt="Screen sharing with voice chat and more than one stream" loading="lazy"></figure>
+        <figure><img class="zoomable" src="img/haven-theme-chat.jpg" width="1200" height="593" alt="The login screen with the theme picker" loading="lazy"></figure>
+        <figure><img class="zoomable" src="img/haven-theme-crt.jpg" width="1916" height="1006" alt="A DM window and profile card in the CRT theme" loading="lazy"></figure>
+        <figure><img class="zoomable" src="img/haven-theme-braid.jpg" width="1918" height="1009" alt="A chat channel in the Braid theme" loading="lazy"></figure>
       </div>
     </div>
   </section>
 </main>
 
-<div class="lightbox" id="lightbox" role="dialog" aria-modal="true" aria-label="Enlarged screenshot" tabindex="-1" hidden><img alt=""></div>
+<div class="lightbox" id="lightbox" role="dialog" aria-modal="true" aria-label="Enlarged screenshot" tabindex="-1" hidden>
+  <button class="lb-nav lb-prev" type="button" aria-label="Previous screenshot">&#8249;</button>
+  <img alt="">
+  <button class="lb-nav lb-next" type="button" aria-label="Next screenshot">&#8250;</button>
+</div>
 
 <script>
-// Screenshots open full size; click anywhere or press Escape to close.
+// Page translations. The English is the page itself; i18n/<lang>.json maps
+// each piece of it (by its English HTML) to the translation, plus a few
+// strings the scripts below build. A piece with no translation, say after
+// the English was reworded, simply stays in English.
+(() => {
+  const TEXT = [
+    'nav.nav > a', 'p.prose', '.hero-title', '.lead', '.actions a', '.term-cap', '.section-head h2', '.section-head p',
+    '.prose > p', '.prose li', '.prose h3', '.cols h3', '.cols li', 'table th', 'table td', '.compare-cap',
+    '.steps li', 'figcaption', '.facts dt', '.dl-row h3', '.dl-row p', '.dl-links a', '.try', '.status-text',
+    'footer nav a', 'footer .wrap > span',
+  ].join(', ');
+  // The browser writes an icon's <path/> back as <path></path>; the
+  // translation files use the short form.
+  const norm = (h) => h.replace(/><\/path>/g, '/>').replace(/\s+/g, ' ').trim();
+  const english = new WeakMap();
+  let dict = { html: {}, js: {} };
+  let resolveReady;
+  const ready = new Promise((r) => { resolveReady = r; });
+  const listeners = [];
+
+  const t = (key, fallback, vars) => {
+    let out = (dict.js && dict.js[key]) || fallback;
+    if (vars) for (const [k, v] of Object.entries(vars)) out = out.split('{' + k + '}').join(v);
+    return out;
+  };
+  const apply = () => {
+    document.querySelectorAll(TEXT).forEach((el) => {
+      if (el.querySelector('.ver, [data-stat], select')) return;
+      if (!english.has(el)) english.set(el, el.innerHTML);
+      const en = english.get(el);
+      el.innerHTML = (dict.html && dict.html[norm(en)]) || en;
+    });
+    document.querySelectorAll('img[alt]').forEach((img) => {
+      if (!img.dataset.altEn) img.dataset.altEn = img.alt;
+      img.alt = (dict.html && dict.html[img.dataset.altEn]) || img.dataset.altEn;
+    });
+  };
+  // Longer words can wrap the menu onto a second line; links to a section
+  // then need to stop below the taller bar.
+  const fitTopbar = () => {
+    const bar = document.querySelector('header.top');
+    if (bar) document.documentElement.style.setProperty('--topbar', bar.offsetHeight + 'px');
+  };
+  window.addEventListener('resize', fitTopbar);
+  const use = async (lang) => {
+    dict = { html: {}, js: {} };
+    if (lang !== 'en') {
+      try {
+        const res = await fetch('i18n/' + lang + '.json');
+        if (res.ok) dict = await res.json();
+      } catch { /* offline or blocked: the page stays in English */ }
+    }
+    document.documentElement.lang = lang;
+    document.documentElement.dir = lang === 'fa' ? 'rtl' : 'ltr';
+    apply();
+    fitTopbar();
+    document.documentElement.classList.remove('i18n-wait');
+    listeners.forEach((fn) => fn(lang));
+  };
+
+  window.siteI18n = { t, ready, onChange: (fn) => listeners.push(fn) };
+  const pick = document.getElementById('site-lang');
+  if (pick) {
+    pick.value = window.SITE_LANG || 'en';
+    pick.addEventListener('change', () => {
+      try { localStorage.setItem('haven_site_lang', pick.value); } catch { /* storage blocked: the choice lasts this visit */ }
+      use(pick.value);
+    });
+  }
+  use(window.SITE_LANG || 'en').then(resolveReady);
+})();
+</script>
+
+<script>
+// Screenshots open full size. The arrow keys, or the arrows on screen, step
+// through every screenshot on the page; click anywhere else or press Escape
+// to close.
 (() => {
   const box = document.getElementById('lightbox');
   if (!box) return;
   const big = box.querySelector('img');
-  const open = (img) => { big.src = img.currentSrc || img.src; big.alt = img.alt; box.hidden = false; document.body.style.overflow = 'hidden'; box.focus(); };
+  const shots = Array.from(document.querySelectorAll('img.zoomable'));
+  let current = -1;
+  const show = (i) => {
+    current = (i + shots.length) % shots.length;
+    const img = shots[current];
+    big.src = img.currentSrc || img.src; big.alt = img.alt;
+  };
+  const open = (img) => { show(shots.indexOf(img)); box.hidden = false; document.body.style.overflow = 'hidden'; box.focus(); };
   const close = () => { box.hidden = true; big.removeAttribute('src'); document.body.style.overflow = ''; };
-  document.querySelectorAll('img.zoomable').forEach((img) => {
-    img.tabIndex = 0; img.setAttribute('role', 'button'); img.setAttribute('aria-label', 'Enlarge screenshot');
+  shots.forEach((img) => {
+    img.tabIndex = 0; img.setAttribute('role', 'button'); img.setAttribute('aria-label', window.siteI18n.t('enlarge', 'Enlarge screenshot'));
     img.addEventListener('click', () => open(img));
     img.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(img); } });
   });
+  box.querySelector('.lb-prev').addEventListener('click', (e) => { e.stopPropagation(); show(current - 1); });
+  box.querySelector('.lb-next').addEventListener('click', (e) => { e.stopPropagation(); show(current + 1); });
   box.addEventListener('click', close);
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !box.hidden) close(); });
+  document.addEventListener('keydown', (e) => {
+    if (box.hidden) return;
+    if (e.key === 'Escape') close();
+    else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); show(current + 1); }
+    else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); show(current - 1); }
+  });
+})();
+</script>
+
+<script>
+// The community server's status line. A job checks the server every ten
+// minutes (scripts/community-status.js) and keeps the result on the repo's
+// site-status branch; this reads it when the page opens and every two
+// minutes after. A result older than 40 minutes means the checks stopped,
+// so it says so rather than showing an old answer.
+(() => {
+  const line = document.getElementById('server-status');
+  if (!line) return;
+  const text = line.querySelector('.status-text');
+  const when = line.querySelector('.status-when');
+  const SOURCE = 'https://raw.githubusercontent.com/ancsemi/Haven/site-status/status.json';
+  const STALE_MS = 40 * 60 * 1000;
+  const { t } = window.siteI18n;
+  const ago = (iso) => {
+    const min = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 60000));
+    if (min < 1) return t('ago_now', 'just now');
+    if (min < 60) return min === 1 ? t('ago_minute', '1 minute ago') : t('ago_minutes', '{n} minutes ago', { n: min });
+    const h = Math.round(min / 60);
+    return h === 1 ? t('ago_hour', '1 hour ago') : t('ago_hours', '{n} hours ago', { n: h });
+  };
+  const at = (isoTime) => new Date(isoTime).toLocaleString(document.documentElement.lang || [], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  // Certificate dates in the visitor's own time; the rest by the checker's
+  // code, so it can be translated, else as the checker wrote it.
+  const say = (s) => {
+    if (s.code === 'cert-expired' && s.certificateExpires) {
+      return t('status_cert_expired', "The community server's security certificate expired {date}, so browsers won't connect until it's renewed.", { date: at(s.certificateExpires) });
+    }
+    if (s.code === 'cert-expiring' && s.certificateExpires) {
+      return t('status_cert_expiring', 'The community server is online. Its security certificate runs out {date}.', { date: at(s.certificateExpires) });
+    }
+    if (s.code === 'online' || s.code === 'online-chain-incomplete') return t('status_online', 'The community server is online.');
+    if (s.code === 'unreachable') return t('status_unreachable', "The community server can't be reached right now.");
+    if (s.code === 'not-answering') return t('status_not_answering', "The community server isn't answering right now.");
+    if (s.code === 'cert-invalid') return t('status_cert_invalid', "The community server's security certificate isn't valid, so browsers won't connect.");
+    return s.message || t('status_online', 'The community server is online.');
+  };
+  const show = (state, message, detail) => {
+    line.dataset.state = state;
+    text.textContent = message;
+    when.textContent = detail || '';
+  };
+  const check = async () => {
+    try {
+      const res = await fetch(`${SOURCE}?t=${Date.now()}`, { cache: 'no-store' });
+      if (!res.ok) throw new Error(`status ${res.status}`);
+      const s = await res.json();
+      if (!s || !s.checkedAt || Date.now() - Date.parse(s.checkedAt) > STALE_MS) {
+        show('unknown', t('status_stale', "The community server's status hasn't been checked lately."));
+        return;
+      }
+      const state = ['ok', 'warn', 'down'].includes(s.state) ? s.state : 'unknown';
+      const since = state === 'down' && s.code !== 'cert-expired' && s.since ? t('status_since', 'Since {date}.', { date: at(s.since) }) + ' ' : '';
+      show(state, say(s), since + t('status_checked', 'Checked {ago}.', { ago: ago(s.checkedAt) }));
+    } catch (err) {
+      show('unknown', t('status_failed', "Couldn't load the community server's status."));
+    }
+  };
+  window.siteI18n.onChange(() => check());
+  window.siteI18n.ready.then(check);
+  setInterval(check, 2 * 60 * 1000);
 })();
 </script>
 
@@ -588,13 +847,13 @@
 (async () => {
   const api = 'https://api.github.com/repos/ancsemi/Haven';
   const headers = { Accept: 'application/vnd.github+json' };
-  const fmt = (n) => Number(n).toLocaleString('en-US');
+  const fmt = (n) => Number(n).toLocaleString(document.documentElement.lang || 'en-US');
   const set = (k, v) => { const el = document.querySelector('[data-stat="' + k + '"]'); if (el && v != null && v !== '') el.textContent = v; };
   const apply = (d) => {
     set('stars', fmt(d.stars)); set('releases', fmt(d.releases)); set('commits', fmt(d.commits)); set('contributors', fmt(d.contributors));
-    if (d.started) set('started', new Date(d.started).toLocaleDateString('en-US', { month: 'short', year: 'numeric' }));
+    if (d.started) set('started', new Date(d.started).toLocaleDateString(document.documentElement.lang || 'en-US', { month: 'short', year: 'numeric' }));
     const cap = document.getElementById('stats-caption');
-    if (cap) cap.textContent = 'Live from GitHub.';
+    if (cap) cap.textContent = window.siteI18n.t('stats_live', 'Live from GitHub.');
   };
   const cacheKey = 'haven_site_stats_v1';
   try {
@@ -626,8 +885,11 @@
       <a href="https://github.com/ancsemi/Haven">Server on GitHub</a>
       <a href="https://github.com/ancsemi/Haven-Desktop">Desktop on GitHub</a>
       <a href="https://github.com/ancsemi/Haven/blob/main/GUIDE.md">Setup guide</a>
+      <a href="tutorials.html">Tutorials</a>
+      <a href="https://www.youtube.com/@Haven-App_Tutorials">YouTube</a>
+      <a href="https://rumble.com/user/HavenApp">Rumble</a>
       <a href="https://github.com/ancsemi/Haven/blob/main/CHANGELOG.md">Changelog</a>
-      <a href="https://ancsemi.github.io/Haven/support.html">Help and support</a>
+      <a href="https://haven-app.com/support.html">Help and support</a>
       <a href="https://github.com/ancsemi/Haven/issues">Report a bug</a>
       <a href="https://github.com/ancsemi/Haven/blob/main/LICENSE">AGPL-3.0</a>
     </nav>

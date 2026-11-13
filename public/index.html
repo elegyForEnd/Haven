@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en" data-haven-theme-api="1">
 <head>
   <meta charset="UTF-8">
@@ -19,6 +19,8 @@
         <h1>Ciacord</h1>
         <p class="tagline">Ciallo～(∠・ω&lt; )⌒☆</p>
         <p class="server-title" id="server-title"></p>
+        <img class="auth-server-logo" id="auth-server-logo" alt="" hidden>
+        <p class="auth-login-message" id="auth-login-message" hidden></p>
       </div>
 
       <div class="auth-tabs">
@@ -44,13 +46,14 @@
         </div>
         <div id="admin-recover-section" style="display:none;text-align:center;margin-top:6px">
           <small style="color:var(--text-muted)" data-i18n="auth.login.admin_recover_hint">Enter your admin credentials above and click Recover</small><br>
+          <input type="text" id="admin-recover-code" inputmode="numeric" autocomplete="one-time-code" maxlength="10" data-i18n-placeholder="auth.login.admin_recover_code" placeholder="Two-factor code" style="display:none;margin-top:6px;max-width:180px;text-align:center">
           <button type="button" class="btn-primary" id="admin-recover-btn" data-i18n="auth.login.admin_recover_btn" style="margin-top:6px;font-size:0.85rem;padding:6px 16px">Recover Admin Access</button>
         </div>
-        <!-- (#12) SSO — only shown when the server has OIDC configured -->
+        <!-- (#12) SSO: only shown when the server has OIDC configured -->
         <div id="oidc-login-section" style="display:none;text-align:center;margin-top:14px;padding-top:12px;border-top:1px solid var(--border-color,#333)">
           <button type="button" class="btn-secondary" id="oidc-login-btn" style="font-size:0.9rem;padding:8px 18px" data-i18n="auth.oidc.submit">Sign in with SSO</button>
         </div>
-        <!-- (#5381) Guest login — only shown when the server has guests enabled -->
+        <!-- (#5381) Guest login: only shown when the server has guests enabled -->
         <div id="guest-login-section" style="display:none;text-align:center;margin-top:14px;padding-top:12px;border-top:1px solid var(--border-color,#333)">
           <small style="color:var(--text-muted);display:block;margin-bottom:6px" data-i18n="auth.guest.prompt">No account? Just want to look around?</small>
           <button type="button" class="btn-secondary" id="guest-login-show-btn" style="font-size:0.9rem;padding:8px 18px" data-i18n="auth.guest.submit">Join as Guest</button>
@@ -84,7 +87,7 @@
         </p>
       </form>
 
-      <!-- (#5381) Guest username prompt — appears after clicking Join as Guest -->
+      <!-- (#5381) Guest username prompt: appears after clicking Join as Guest -->
       <form id="guest-form" class="auth-form" style="display:none">
         <p style="text-align:center;color:var(--text-muted);font-size:0.9rem;margin-bottom:12px" data-i18n="auth.guest.desc">
           Pick a temporary username. No password, no recovery. Your account is wiped when you disconnect.
@@ -117,14 +120,14 @@
           <label for="reg-confirm" data-i18n="auth.register.confirm_label">Confirm Password</label>
           <input type="password" id="reg-confirm" autocomplete="new-password" required>
         </div>
-        <!-- (#5344) Registration token field — shown by auth.js only when the server requires it -->
+        <!-- (#5344) Registration token field: shown by auth.js only when the server requires it -->
         <div class="form-group" id="reg-token-group" style="display:none">
           <label for="reg-token" data-i18n="auth.register.token_label">Invite Token</label>
           <input type="text" id="reg-token" autocomplete="off" maxlength="64"
                   placeholder="Paste the token your admin shared" data-i18n-placeholder="auth.register.token_placeholder">
-          <small data-i18n="auth.register.token_hint">Required by this server — ask the admin if you don't have one.</small>
+          <small data-i18n="auth.register.token_hint">Required by this server. Ask the admin if you don't have one.</small>
         </div>
-        <!-- Opt-in Cloudflare Turnstile CAPTCHA — shown by auth.js only when the server enables it -->
+        <!-- Opt-in Cloudflare Turnstile CAPTCHA: shown by auth.js only when the server enables it -->
         <div class="form-group" id="reg-captcha-group" style="display:none">
           <div id="reg-captcha"></div>
         </div>
@@ -152,8 +155,13 @@
         <div id="sso-step-register" style="display:none">
           <div class="sso-profile-preview" style="text-align:center;margin-bottom:16px;padding:12px;background:var(--bg-tertiary,#12122a);border-radius:8px;border:1px solid var(--border,#333)">
             <div id="sso-preview-avatar" style="width:64px;height:64px;border-radius:50%;margin:0 auto 8px;background:var(--bg-secondary,#1a1a2e);overflow:hidden;display:flex;align-items:center;justify-content:center;font-size:28px;color:var(--text-muted)">?</div>
-            <div id="sso-preview-username" style="font-weight:600;font-size:15px;color:var(--text-primary)">—</div>
+            <div id="sso-preview-username" style="font-weight:600;font-size:15px;color:var(--text-primary)">-</div>
             <small style="color:var(--text-muted);font-size:11px" data-i18n="auth.sso.imported_from">Imported from your home server</small>
+          </div>
+          <div class="form-group">
+            <label for="sso-username" data-i18n="auth.sso.username_label">Username on this server</label>
+            <input type="text" id="sso-username" autocomplete="username" maxlength="20" required>
+            <small data-i18n="auth.sso.username_hint">Taken from your home server. If it is already in use here, pick another. 3-20 characters, letters/numbers/underscores.</small>
           </div>
           <div class="form-group">
             <label for="sso-password" data-i18n="auth.sso.password_label">Set a password for this server</label>
@@ -164,7 +172,7 @@
             <label for="sso-confirm" data-i18n="auth.sso.confirm_label">Confirm Password</label>
             <input type="password" id="sso-confirm" autocomplete="new-password" required>
           </div>
-          <!-- Opt-in Turnstile CAPTCHA — shown by auth.js only when the server enables it -->
+          <!-- Opt-in Turnstile CAPTCHA: shown by auth.js only when the server enables it -->
           <div class="form-group" id="sso-captcha-group" style="display:none">
             <div id="sso-captcha"></div>
           </div>
@@ -332,8 +340,12 @@
           <option value="es">Español</option>
           <option value="pl">Polski</option>
           <option value="ru">Русский</option>
+          <option value="uk">Українська</option>
           <option value="zh">中文</option>
           <option value="pt">Português (Brasil)</option>
+          <option value="fa">فارسی</option>
+          <option value="ja">日本語</option>
+          <option value="ko">한국어</option>
         </select>
       </div>
       <p class="auth-version" id="auth-version"></p>
@@ -348,7 +360,7 @@
         <p style="text-align:center;font-size:12px;color:var(--text-muted,#888);margin:12px 0;" data-i18n="auth.eula.default_terms">── Default Haven Terms of Service ──</p>
       </div>
       <div class="eula-content" data-i18n-html="auth.eula.terms_body">
-        <p><strong>HAVEN — TERMS OF SERVICE, END USER LICENSE AGREEMENT &amp; RELEASE OF LIABILITY</strong></p>
+        <p><strong>HAVEN: TERMS OF SERVICE, END USER LICENSE AGREEMENT &amp; RELEASE OF LIABILITY</strong></p>
         <p><em>Effective Date: February 12, 2026 &nbsp;|&nbsp; Version 2.0</em></p>
 
         <p>By accessing, registering for, or using this Haven server instance
@@ -359,8 +371,8 @@
 
         <h4>1. AGE RESTRICTION &amp; ELIGIBILITY</h4>
         <p>1.1. <strong>Minimum Age.</strong> You must be at least <strong>eighteen
-        (18) years of age</strong> — or the age of legal majority in your
-        jurisdiction, whichever is greater — to access or use the Service. By
+        (18) years of age</strong> (or the age of legal majority in your
+        jurisdiction, whichever is greater) to access or use the Service. By
         checking the age-confirmation box and using the Service, you represent
         and warrant that you meet this requirement.</p>
         <p>1.2. <strong>Parental Notice.</strong> The Service is not intended for
@@ -521,7 +533,7 @@
     </div>
   </div>
 
-  <script src="/js/i18n.js"></script>
+  <script src="/js/i18n.js?v=4.29.11"></script>
   <script src="/js/theme.js"></script>
   <script src="/js/auth.js"></script>
   <script src="/js/password-eye.js?v=3.17.1"></script>

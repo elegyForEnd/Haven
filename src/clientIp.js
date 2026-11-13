@@ -128,30 +128,72 @@ function isValidIpOrCidr(s) {
   return Number.isFinite(bits) && bits >= 0 && bits <= (isIPv4(addr) ? 32 : 128);
 }
 
+// ── Which proxies to believe (TRUST_PROXY) ──────────────────────────
+// X-Forwarded-For says where a request came from, and anyone can send one.
+// It is believed only from a proxy Haven trusts. The default is a proxy on
+// this same machine (nginx, Caddy, the built-in tunnel). Trusting the whole
+// local network as well let any device on a home network pick its own
+// address, slipping past rate limits and IP bans. Inside a container the
+// proxy normally sits on the container network instead, so there the default
+// also takes link-local and private ranges. A proxy elsewhere (another LAN
+// machine, Cloudflare's) needs TRUST_PROXY: its address, or 1 for one hop;
+// the value means what it means to Express: a number of hops, true or
+// false, or a list of preset names and addresses/ranges.
+const DEFAULT_TRUST_PROXY = 'loopback';
+const CONTAINER_TRUST_PROXY = 'loopback, linklocal, uniquelocal';
+
+// Docker and Podman both leave a marker file; the Haven image also sets
+// HAVEN_IN_CONTAINER.
+function inContainer() {
+  if (process.env.HAVEN_IN_CONTAINER === '1') return true;
+  const fs = require('fs');
+  return fs.existsSync('/.dockerenv') || fs.existsSync('/run/.containerenv');
+}
+const TRUST_PRESETS = {
+  loopback: ['127.0.0.0/8', '::1/128'],
+  linklocal: ['169.254.0.0/16', 'fe80::/10'],
+  uniquelocal: ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', 'fc00::/7'],
+};
+
+function trustProxySetting() {
+  const raw = process.env.TRUST_PROXY;
+  if (raw === undefined || String(raw).trim() === '') return inContainer() ? CONTAINER_TRUST_PROXY : DEFAULT_TRUST_PROXY;
+  const s = String(raw).trim();
+  if (s === 'true') return true;
+  if (s === 'false') return false;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : s;
+}
+
+// (address, hop index) -> trusted?, with the meaning Express gives the value.
+function compileTrust(tp) {
+  if (tp === true) return () => true;
+  if (tp === false || tp === null || tp === undefined) return () => false;
+  if (typeof tp === 'number') return (addr, i) => i < tp;
+  const entries = [];
+  for (const part of String(tp).split(',').map(s => s.trim()).filter(Boolean)) {
+    if (TRUST_PRESETS[part]) entries.push(...TRUST_PRESETS[part]);
+    else entries.push(part);
+  }
+  return (addr) => entries.some(e => ipMatches(addr, e));
+}
+
 // ── Socket.IO client IP, honouring TRUST_PROXY ──────────────────────
 // Mirrors Express's proxy-addr so `socketClientIp(socket)` and `req.ip`
-// return the same string for the same client.
-//
-// proxy-addr builds [remoteAddress, ...xff.reverse()] and, for a numeric
-// `trust proxy` of n, returns element n (clamped to the list length).
+// return the same string for the same client: walk [peer, ...xff reversed]
+// from the peer and stop at the first address that is not trusted.
 function socketClientIp(socket, trustProxy) {
   if (!socket || !socket.handshake) return '';
   const raw = socket.handshake.address || '';
-
-  const tp = trustProxy !== undefined
-    ? trustProxy
-    : (process.env.TRUST_PROXY !== undefined ? Number(process.env.TRUST_PROXY) : 1);
-
-  // Non-numeric or zero: trust nothing, use the peer address as-is.
-  const hops = Number(tp);
-  if (!Number.isFinite(hops) || hops <= 0) return normalizeIp(raw);
+  const trust = compileTrust(trustProxy !== undefined ? trustProxy : trustProxySetting());
 
   const xff = socket.handshake.headers && socket.handshake.headers['x-forwarded-for'];
-  if (!xff || typeof xff !== 'string') return normalizeIp(raw);
-
-  const chain = [raw, ...xff.split(',').map(s => s.trim()).filter(Boolean).reverse()];
-  const idx = Math.min(hops, chain.length - 1);
-  return normalizeIp(chain[idx]);
+  const forwarded = typeof xff === 'string' ? xff.split(',').map(s => s.trim()).filter(Boolean).reverse() : [];
+  const chain = [raw, ...forwarded].map(normalizeIp);
+  for (let i = 0; i < chain.length - 1; i++) {
+    if (!trust(chain[i], i)) return chain[i];
+  }
+  return chain[chain.length - 1];
 }
 
 module.exports = {
@@ -159,6 +201,10 @@ module.exports = {
   ipMatches,
   isValidIpOrCidr,
   socketClientIp,
+  trustProxySetting,
+  compileTrust,
+  DEFAULT_TRUST_PROXY,
+  CONTAINER_TRUST_PROXY,
   isIPv4,
   isIPv6,
   ipToBigInt

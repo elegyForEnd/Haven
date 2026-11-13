@@ -1,12 +1,12 @@
 'use strict';
 
 /**
- * Haven — Safe .env upsert for admin-editable integration keys
+ * Haven: Safe .env upsert for admin-editable integration keys
  *
  * server.js already writes .env in a few places (JWT_SECRET, VAPID keys), but
  * always with values it generated itself. This module exists for values that
  * arrive over the wire from an admin's browser, which is a different threat
- * model — hence the strict allow-list and format validation below.
+ * model, hence the strict allow-list and format validation below.
  *
  * Two rules that must not be relaxed:
  *
@@ -16,7 +16,7 @@
  *
  *  2. Values are format-checked and must not contain newlines. A value like
  *     "abc\nJWT_SECRET=known" would otherwise inject a second variable into
- *     the file — a full authentication bypass from a single text field.
+ *     the file: a full authentication bypass from a single text field.
  */
 
 const fs = require('fs');
@@ -52,7 +52,7 @@ function validate(key, value) {
   // check is the one that must never be removed if a looser key is ever added.
   if (/[\r\n]/.test(trimmed)) return { ok: false, reason: 'value cannot contain line breaks' };
   if (!ALLOWED_KEYS[key].test(trimmed)) {
-    return { ok: false, reason: 'that does not look like a valid key — expected 32 hex characters' };
+    return { ok: false, reason: 'that does not look like a valid key (expected 32 hex characters)' };
   }
   return { ok: true };
 }
@@ -103,7 +103,7 @@ function setEnvValue(key, value) {
     // meaningful on the Linux/Docker deployments where Haven usually runs.
     fs.writeFileSync(ENV_PATH, lines.join('\n') + '\n', { mode: 0o600 });
   } catch {
-    return { ok: false, reason: 'could not write .env — check file permissions' };
+    return { ok: false, reason: 'could not write .env; check file permissions' };
   }
 
   process.env[key] = trimmed;
@@ -126,7 +126,7 @@ function clearEnvValue(key) {
   try {
     fs.writeFileSync(ENV_PATH, lines.join('\n') + '\n', { mode: 0o600 });
   } catch {
-    return { ok: false, reason: 'could not write .env — check file permissions' };
+    return { ok: false, reason: 'could not write .env; check file permissions' };
   }
   delete process.env[key];
   return { ok: true };

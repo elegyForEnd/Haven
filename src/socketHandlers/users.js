@@ -2,15 +2,58 @@
 
 const path = require('path');
 const fs   = require('fs');
-const { utcStamp, isString, isInt, sanitizeText, isValidUploadPath, normalizeDisplayName, sanitizeBorderTransform, parseBorderTransform } = require('./helpers');
+const { utcStamp, isString, sanitizeText, isValidUploadPath, normalizeDisplayName, sanitizeBorderTransform, parseBorderTransform } = require('./helpers');
 const { generateConnectToken } = require('../auth');
 const { setEnvValue, clearEnvValue, isWritableKey } = require('../envStore');
+const { saveFcmToken } = require('../fcm');
+const { validHighScore, isKnownGame } = require('../highScores');
+const { badgesForProfile } = require('../badges');
+const { themePreferenceAllowed } = require('../themeMetadata');
+const { MEDIA_GROUP_LAYOUTS } = require('../mediaGroup');
+const { cleanEmojiFavorites } = require('../builtinEmojis');
+const { nameRefusal } = require('../blockedNames');
+const { cleanPinnedDms } = require('../pinnedDms');
+const createEncryptionKeyReads = require('../db/encryptionKeys');
+
+const PUSH_SCOPES = ['all', 'mentions'];
+
+// A personal sidebar order (#5779): category keys and, per category, channel
+// codes. Only that shape is kept, within limits, so the value cannot carry
+// anything else.
+function cleanChannelOrder(raw) {
+  let o;
+  try { o = JSON.parse(raw); } catch { return null; } // not JSON: refused
+  if (!o || typeof o !== 'object') return null;
+  const key = (k) => typeof k === 'string' && k.length <= 60 ? k : null;
+  const cats = Array.isArray(o.cats) ? o.cats.map(key).filter(Boolean).slice(0, 200) : [];
+  const ch = {};
+  if (o.ch && typeof o.ch === 'object') {
+    for (const [k, list] of Object.entries(o.ch).slice(0, 200)) {
+      if (!key(k) || !Array.isArray(list)) continue;
+      ch[k] = list.filter(c => typeof c === 'string' && /^[a-f0-9]{8}$/i.test(c)).slice(0, 500);
+    }
+  }
+  const out = JSON.stringify({ cats, ch });
+  return out.length <= 20000 ? out : null;
+}
+
+// A real calendar date from 1900 up to today as YYYY-MM-DD, else null. A day
+// of slack lets someone whose local date is ahead of UTC pick their today.
+function cleanBirthday(value) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const [y, m, d] = value.split('-').map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d));
+  if (date.getUTCMonth() !== m - 1 || date.getUTCDate() !== d) return null;
+  if (y < 1900 || date.getTime() > Date.now() + 86400000) return null;
+  return value;
+}
 
 module.exports = function register(socket, ctx) {
   const { io, db, state, getChannelRoleChain, userHasPermission, getUserEffectiveLevel,
-          emitOnlineUsers, broadcastVoiceUsers, generateToken,
-          touchVoiceActivity, enforceAutomod, DATA_DIR, logAudit, getAdminRoleDisplay } = ctx;
+          emitOnlineUsers, emitDmPresence, broadcastVoiceUsers, generateToken,
+          touchVoiceActivity, enforceAutomod, DATA_DIR, logAudit } = ctx;
   const { channelUsers, voiceUsers } = state;
+  const keyReads = createEncryptionKeyReads(db);
   const _audit = (typeof logAudit === 'function') ? logAudit : () => {};
 
   // ── Rename (display name) ───────────────────────────────
@@ -19,16 +62,20 @@ module.exports = function register(socket, ctx) {
     const checked = normalizeDisplayName(typeof data.username === 'string' ? data.username : '');
     if (checked.error) return socket.emit('error-msg', checked.error);
     const newName = checked.value;
+    // Saving the profile for a bio or avatar change sends the name along
+    // unchanged, which announced "fenix is now known as fenix" to the
+    // channel every time. Nothing changed, so nothing to do.
+    if (newName === socket.user.displayName) return;
 
     // (#5482) A moderator-set display name holds. Otherwise the whole
-    // Manage Display Names permission is decorative — the moderated user
+    // Manage Display Names permission is decorative: the moderated user
     // renames themselves straight back and nothing has been moderated.
     // Cleared when a moderator resets them to their username. Admins are
     // never locked, so nobody can end up permanently stuck with a name.
     if (!socket.user.isAdmin) {
       const lock = db.prepare('SELECT display_name_locked FROM users WHERE id = ?').get(socket.user.id);
       if (lock && lock.display_name_locked) {
-        return socket.emit('error-msg', 'A moderator set your display name — you cannot change it yourself');
+        return socket.emit('error-msg', 'A moderator set your display name, so you cannot change it yourself');
       }
     }
 
@@ -37,6 +84,12 @@ module.exports = function register(socket, ctx) {
     // used to reserve impersonation-prone names (e.g. "Admin", "Moderator"),
     // which is also the only answer to homoglyph lookalikes (#5509).
     if (enforceAutomod(newName, { surface: 'profile' })) return;
+
+    // Words the admin blocked from names. The admin is not held to it.
+    if (!socket.user.isAdmin) {
+      const blocked = nameRefusal(db, newName);
+      if (blocked) return socket.emit('error-msg', blocked);
+    }
 
     // Reject if another user on this server already uses this display name
     // (case-insensitive). Mentions resolve by login username, but allowing
@@ -245,6 +298,8 @@ module.exports = function register(socket, ctx) {
         emitOnlineUsers(code);
       }
     }
+    // DM partners see the new status too, with the DM not on screen (#5574).
+    if (emitDmPresence) emitDmPresence(socket.user.id);
 
     socket.emit('status-updated', { status, statusText });
   });
@@ -255,13 +310,15 @@ module.exports = function register(socket, ctx) {
     try {
       const row = db.prepare(
         `SELECT u.id, u.username, COALESCE(u.display_name, u.username) as displayName,
-                u.avatar, u.avatar_shape, u.border, u.border_transform, u.animate_profile, u.status, u.status_text, u.bio, u.created_at
+                u.avatar, u.avatar_shape, u.border, u.border_transform, u.animate_profile, u.status, u.status_text, u.bio, u.created_at,
+                CASE WHEN u.birthday_hidden <> 0 OR u.birthday_hidden IS NULL THEN NULL
+                     WHEN u.birthday_hide_year = 0 THEN u.birthday ELSE substr(u.birthday, 6) END as birthday
          FROM users u WHERE u.id = ?`
       ).get(data.userId);
       if (!row) return;
 
       const roles = db.prepare(
-        `SELECT DISTINCT r.id, r.name, r.level, r.color
+        `SELECT DISTINCT r.id, r.name, r.level, r.color, r.color2, r.color_shimmer, COALESCE(r.show_on_profile, 1) AS show_on_profile
          FROM roles r
          JOIN user_roles ur ON r.id = ur.role_id
          WHERE ur.user_id = ? AND ur.channel_id IS NULL
@@ -277,7 +334,7 @@ module.exports = function register(socket, ctx) {
           if (chain.length > 0) {
             const placeholders = chain.map(() => '?').join(',');
             const channelRoles = db.prepare(
-              `SELECT DISTINCT r.id, r.name, COALESCE(ur.custom_level, r.level) as level, r.color
+              `SELECT DISTINCT r.id, r.name, COALESCE(ur.custom_level, r.level) as level, r.color, r.color2, r.color_shimmer, COALESCE(r.show_on_profile, 1) AS show_on_profile
                FROM roles r
                JOIN user_roles ur ON r.id = ur.role_id
                WHERE ur.user_id = ? AND ur.channel_id IN (${placeholders})
@@ -296,19 +353,38 @@ module.exports = function register(socket, ctx) {
         }
       }
 
-      const isAdmin = db.prepare('SELECT is_admin FROM users WHERE id = ?').get(data.userId);
-      if (isAdmin && isAdmin.is_admin) {
-        roles.length = 0;
-        const d = getAdminRoleDisplay();
-        if (d.visible) roles.push({ id: -1, name: d.name, level: 100, color: d.color, icon: d.icon });
-      } else if (roles.length > 1) {
+      if (roles.length > 1) {
         const userRoleIdx = roles.findIndex(r => r.name === 'User' && r.level <= 1);
         if (userRoleIdx !== -1) roles.splice(userRoleIdx, 1);
+      }
+      // A role switched off for profile cards (#5822) is left off for
+      // everyone but the people who manage roles, who see it marked.
+      const seesHidden = socket.user.isAdmin || userHasPermission(socket.user.id, 'manage_roles');
+      for (let i = roles.length - 1; i >= 0; i--) {
+        const shown = roles[i].show_on_profile !== 0;
+        delete roles[i].show_on_profile;
+        if (shown) continue;
+        if (seesHidden) roles[i].hiddenOnProfile = true;
+        else roles.splice(i, 1);
       }
 
       let isOnline = false;
       for (const [, s] of io.of('/').sockets) {
         if (s.user && s.user.id === data.userId) { isOnline = true; break; }
+      }
+      // Invisible means offline to everyone else, here as in the member
+      // list: reporting online next to status 'invisible' gave it away.
+      const hidden = row.status === 'invisible' && data.userId !== socket.user.id;
+      if (hidden) isOnline = false;
+
+      // Badges (#5632) are worked out here, when a card opens, and nowhere
+      // else, so member lists never pay for them. A card without its badges
+      // still beats no card.
+      let badges = [];
+      try {
+        badges = badgesForProfile(db, row.id, socket.user.id);
+      } catch (err) {
+        console.warn('[badges] profile badges failed:', err.message);
       }
 
       socket.emit('user-profile', {
@@ -320,10 +396,14 @@ module.exports = function register(socket, ctx) {
         border: row.border || null,
         borderTransform: parseBorderTransform(row.border_transform),
         animateProfile: row.animate_profile || 'trigger',
-        status: row.status || 'online',
+        status: hidden ? 'offline' : (row.status || 'online'),
         statusText: row.status_text || '',
         bio: row.bio || '',
+        // MM-DD, or YYYY-MM-DD when the owner turned off Hide birth year;
+        // null while they hide their birthday.
+        birthday: row.birthday || null,
         roles: roles,
+        badges,
         online: isOnline,
         createdAt: row.created_at,
         // Profile card shows game AND music on separate lines; the sidebar
@@ -343,22 +423,86 @@ module.exports = function register(socket, ctx) {
     if (bio && enforceAutomod(bio, { surface: 'profile' })) return;
     try {
       db.prepare('UPDATE users SET bio = ? WHERE id = ?').run(bio, socket.user.id);
+      socket.user.bio = bio;
       socket.emit('bio-updated', { bio });
     } catch (err) {
       console.error('Set bio error:', err);
     }
   });
 
+  // A birthday is set once and can never be changed. Hiding it keeps the date
+  // and only takes it off the profile and member lists; Hide birth year
+  // changes whenever. `hidden` is optional: clients from before it existed
+  // send birthday null to hide, and a first date shows.
+  socket.on('set-birthday', (data) => {
+    if (!data || typeof data !== 'object') return;
+    let birthday = null;
+    if (data.birthday != null) {
+      birthday = cleanBirthday(data.birthday);
+      if (!birthday) return socket.emit('error-msg', 'Invalid birthday');
+    }
+    let listsChanged = false;
+    try {
+      const row = db.prepare('SELECT birthday, birthday_set_at, birthday_hide_year, birthday_hidden FROM users WHERE id = ?').get(socket.user.id);
+      if (!row) return;
+      if (row.birthday && birthday && birthday !== row.birthday) {
+        return socket.emit('error-msg', 'Your birthday can only be set once.');
+      }
+      const firstSet = !row.birthday && !!birthday;
+      const date = row.birthday || birthday;
+      const setAt = firstSet ? new Date().toISOString() : row.birthday_set_at;
+      // A missing or NULL flag counts as hidden, so privacy fails closed.
+      const wasHidden = row.birthday_hidden !== 0;
+      const hidden = typeof data.hidden === 'boolean' ? data.hidden
+        : data.birthday === null ? true
+        : firstSet ? false
+        : wasHidden;
+      const hideYear = typeof data.hideYear === 'boolean' ? data.hideYear : row.birthday_hide_year !== 0;
+      // Member lists only carry MM-DD, so Hide birth year alone leaves them be.
+      listsChanged = date !== row.birthday || hidden !== wasHidden;
+      if (!listsChanged && hideYear === (row.birthday_hide_year !== 0)) return;
+      db.prepare('UPDATE users SET birthday = ?, birthday_set_at = ?, birthday_hide_year = ?, birthday_hidden = ? WHERE id = ?')
+        .run(date, setAt, hideYear ? 1 : 0, hidden ? 1 : 0, socket.user.id);
+      socket.user.birthday = date;
+      socket.user.birthdaySetAt = setAt;
+      socket.user.birthdayHideYear = hideYear;
+      socket.user.birthdayHidden = hidden;
+      socket.emit('birthday-updated', { birthday: date, birthdaySetAt: setAt, birthdayHideYear: hideYear, birthdayHidden: hidden });
+    } catch (err) {
+      console.error('Set birthday error:', err);
+      return;
+    }
+    if (!listsChanged) return;
+    // Member lists carry the birthday, so a 🎉 shows (or goes) right away.
+    for (const [code, users] of channelUsers) {
+      if (users.has(socket.user.id)) emitOnlineUsers(code);
+    }
+    if (emitDmPresence) emitDmPresence(socket.user.id);
+  });
+
   // ── Push Notifications ──────────────────────────────────
-  socket.on('push-subscribe', (data) => {
+  socket.on('push-subscribe', async (data) => {
     if (!data || typeof data !== 'object') return;
     const { endpoint, keys } = data;
-    if (typeof endpoint !== 'string' || !endpoint) return;
+    if (typeof endpoint !== 'string' || !endpoint || endpoint.length > 2048) return;
     if (!keys || typeof keys !== 'object') return;
-    if (typeof keys.p256dh !== 'string' || !keys.p256dh) return;
-    if (typeof keys.auth !== 'string' || !keys.auth) return;
+    if (typeof keys.p256dh !== 'string' || !keys.p256dh || keys.p256dh.length > 512) return;
+    if (typeof keys.auth !== 'string' || !keys.auth || keys.auth.length > 512) return;
 
     try { const u = new URL(endpoint); if (u.protocol !== 'https:') return; } catch { return; }
+    // The server posts to this address for every notification, so it has to
+    // be a public push service: a client-chosen endpoint on the server's own
+    // network was a way to make it send requests there. A self-hosted ntfy
+    // next to Haven is the exception HAVEN_ALLOW_PRIVATE_CALLBACKS opts into.
+    try {
+      await require('../webhookCallback').resolveCallbackDestination(endpoint,
+        { allowPrivateCallbacks: process.env.HAVEN_ALLOW_PRIVATE_CALLBACKS === 'true' });
+    } catch (err) {
+      // The client is never told, so say why here or the device just stops
+      // getting notifications with no trace anywhere.
+      console.warn(`Push subscription refused for ${new URL(endpoint).host}: ${err.message}`);
+      return;
+    }
 
     try {
       // One endpoint is one browser/device, and only one account is signed
@@ -373,6 +517,16 @@ module.exports = function register(socket, ctx) {
           VALUES (?, ?, ?, ?)
           ON CONFLICT(user_id, endpoint) DO UPDATE SET p256dh = excluded.p256dh, auth = excluded.auth
         `).run(socket.user.id, endpoint, keys.p256dh, keys.auth);
+        if (PUSH_SCOPES.includes(data.scope)) {
+          db.prepare('UPDATE push_subscriptions SET scope = ? WHERE user_id = ? AND endpoint = ?')
+            .run(data.scope, socket.user.id, endpoint);
+        }
+        // Ten devices per person is plenty; the oldest go first. Without a cap
+        // one account could register endless endpoints for the push queue.
+        db.prepare(`
+          DELETE FROM push_subscriptions WHERE user_id = ? AND id NOT IN (
+            SELECT id FROM push_subscriptions WHERE user_id = ? ORDER BY id DESC LIMIT 10)
+        `).run(socket.user.id, socket.user.id);
       })();
       socket.emit('push-subscribed');
     } catch (err) {
@@ -405,17 +559,30 @@ module.exports = function register(socket, ctx) {
       // endpoint dies on resubscribe and the 410 handler prunes it, but an FCM
       // token stays valid across an account switch, so a stale row never
       // cleans itself up.
-      const fcmToken = data.token.trim();
-      db.transaction(() => {
-        db.prepare('DELETE FROM fcm_tokens WHERE token = ? AND user_id != ?').run(fcmToken, socket.user.id);
-        db.prepare(`
-          INSERT INTO fcm_tokens (user_id, token)
-          VALUES (?, ?)
-          ON CONFLICT(user_id, token) DO NOTHING
-        `).run(socket.user.id, fcmToken);
-      })();
+      // saveFcmToken claims the token for this account and applies the
+      // length and per-account caps.
+      saveFcmToken(db, socket.user.id, data.token.trim(), data.scope);
     } catch (err) {
       console.error('FCM token register error:', err);
+    }
+  });
+
+  // Which messages this device is pushed: 'all', or 'mentions' while its
+  // Notifications switch (Settings > Sounds) is off, so push follows the same
+  // choice as the device's sounds and pop-ups. Only the caller's own rows.
+  socket.on('set-push-scope', (data) => {
+    if (!data || typeof data !== 'object' || !PUSH_SCOPES.includes(data.scope)) return;
+    try {
+      if (typeof data.endpoint === 'string' && data.endpoint) {
+        db.prepare('UPDATE push_subscriptions SET scope = ? WHERE user_id = ? AND endpoint = ?')
+          .run(data.scope, socket.user.id, data.endpoint);
+      }
+      if (typeof data.token === 'string' && data.token.trim()) {
+        db.prepare('UPDATE fcm_tokens SET scope = ? WHERE user_id = ? AND token = ?')
+          .run(data.scope, socket.user.id, data.token.trim());
+      }
+    } catch (err) {
+      console.error('Push scope update error:', err);
     }
   });
 
@@ -443,7 +610,7 @@ module.exports = function register(socket, ctx) {
       if (current && current.public_key && !data.force) {
         const existing = JSON.parse(current.public_key);
         if (existing.x !== publicJwk.x || existing.y !== publicJwk.y) {
-          console.warn(`[E2E] User ${socket.user.id} (${socket.user.username}) tried to overwrite public key — blocked`);
+          console.warn(`[E2E] User ${socket.user.id} (${socket.user.username}) tried to overwrite public key, blocked`);
           socket.emit('public-key-conflict', { existing });
           return;
         }
@@ -484,14 +651,19 @@ module.exports = function register(socket, ctx) {
     }
   });
 
-  socket.on('get-public-key', (data) => {
+  socket.on('get-public-key', async (data) => {
     if (!data || typeof data !== 'object') return;
     const userId = typeof data.userId === 'number' ? data.userId : parseInt(data.userId);
     if (!userId || isNaN(userId)) return;
 
-    const row = db.prepare('SELECT public_key FROM users WHERE id = ?').get(userId);
-    const jwk = row && row.public_key ? JSON.parse(row.public_key) : null;
-    socket.emit('public-key-result', { userId, jwk });
+    try {
+      const row = await keyReads.publicKey(userId);
+      const jwk = row && row.public_key ? JSON.parse(row.public_key) : null;
+      socket.emit('public-key-result', { userId, jwk });
+    } catch (err) {
+      console.error('Get public key error:', err);
+      socket.emit('error-msg', 'Failed to get public key');
+    }
   });
 
   // ── E2E Encrypted Private Key Storage ───────────────────
@@ -505,8 +677,17 @@ module.exports = function register(socket, ctx) {
       return socket.emit('error-msg', 'Encrypted key data too large');
     }
     try {
-      db.prepare('UPDATE users SET encrypted_private_key = ?, e2e_key_salt = ? WHERE id = ?')
-        .run(encryptedKey, salt, socket.user.id);
+      // separatePassphrase says what this backup is locked with, when the
+      // client is switching between its login password and a passphrase of
+      // its own; the two are saved together so they never disagree.
+      if (typeof data.separatePassphrase === 'boolean') {
+        db.prepare('UPDATE users SET encrypted_private_key = ?, e2e_key_salt = ?, e2e_passphrase = ? WHERE id = ?')
+          .run(encryptedKey, salt, data.separatePassphrase ? 1 : 0, socket.user.id);
+        socket.user.e2ePassphrase = data.separatePassphrase;
+      } else {
+        db.prepare('UPDATE users SET encrypted_private_key = ?, e2e_key_salt = ? WHERE id = ?')
+          .run(encryptedKey, salt, socket.user.id);
+      }
       socket.emit('encrypted-key-stored');
     } catch (err) {
       console.error('Store encrypted key error:', err);
@@ -514,10 +695,15 @@ module.exports = function register(socket, ctx) {
     }
   });
 
-  socket.on('get-encrypted-key', () => {
+  socket.on('store-signing-backup', (data) => {
+    const backup = typeof data?.backup === 'string' ? data.backup : '';
+    if (!backup || backup.length > 4096) return socket.emit('error-msg', 'Invalid signing key backup');
+    db.prepare('UPDATE users SET signing_backup = ? WHERE id = ?').run(backup, socket.user.id);
+    socket.emit('signing-backup-stored');
+  });
+  socket.on('get-encrypted-key', async () => {
     try {
-      const row = db.prepare('SELECT encrypted_private_key, e2e_key_salt, public_key FROM users WHERE id = ?')
-        .get(socket.user.id);
+      const row = await keyReads.encryptedKey(socket.user.id);
       const hasBackup = !!(row && row.encrypted_private_key && row.e2e_key_salt);
       // Forward just the pub-key JWK (x,y) so clients can detect
       // local-vs-server divergence without an extra round-trip. Additive:
@@ -527,13 +713,15 @@ module.exports = function register(socket, ctx) {
         try {
           const parsed = typeof row.public_key === 'string' ? JSON.parse(row.public_key) : row.public_key;
           if (parsed && parsed.x && parsed.y) publicKey = { kty: parsed.kty, crv: parsed.crv, x: parsed.x, y: parsed.y };
-        } catch { /* stored pub key not JSON — skip */ }
+        } catch { /* stored pub key not JSON: send none, the client copes with that */ }
       }
       socket.emit('encrypted-key-result', {
         encryptedKey: row?.encrypted_private_key || null,
         salt: row?.e2e_key_salt || null,
         hasPublicKey: !!(row && row.public_key),
         publicKey,
+        signingKey: row && row.signing_key ? JSON.parse(row.signing_key) : null,
+        signingBackup: row?.signing_backup || null,
         state: hasBackup ? 'present' : 'empty'
       });
     } catch (err) {
@@ -549,6 +737,27 @@ module.exports = function register(socket, ctx) {
     rows.forEach(r => { prefs[r.key] = r.value; });
     socket.emit('preferences', prefs);
   });
+
+  // Whether this account may save a theme file as its theme. Every failure
+  // counts against it: no permission, nothing published.
+  const themeFileAllowed = (value) => {
+    let canManage = false;
+    try {
+      canManage = !!(socket.user.isAdmin || userHasPermission(socket.user.id, 'manage_server'));
+    } catch (err) {
+      console.warn('[preferences] permission check failed:', err.message);
+    }
+    const setting = (name) => db.prepare('SELECT value FROM server_settings WHERE key = ?').get(name)?.value || '';
+    let published = [];
+    try {
+      published = JSON.parse(setting('published_themes') || '[]');
+    } catch {
+      // A malformed list publishes nothing; the picker reads it the same way.
+    }
+    const current = db.prepare("SELECT value FROM user_preferences WHERE user_id = ? AND key = 'theme'")
+      .get(socket.user.id)?.value || '';
+    return themePreferenceAllowed(value, { published, current, defaultTheme: setting('default_theme'), canManage });
+  };
 
   socket.on('set-preference', (data) => {
     if (!data || typeof data !== 'object') return;
@@ -569,17 +778,64 @@ module.exports = function register(socket, ctx) {
       // per-account (not localStorage) so
       // hardened browsers that wipe local storage every session still honour a
       // prior dismissal instead of re-showing the modal on every login.
-      'promo_seen_desktop', 'promo_seen_android',
+      'promo_seen_desktop', 'promo_seen_android', 'recovery_notice_seen',
+      // The top-bar Android banner, closed once (#5594).
+      'android_banner_seen',
+      // Persisted localization. timezone is an IANA zone id (e.g.
+      // "America/New_York") so DST is resolved per-instant by Intl, never a
+      // frozen offset. time_format is '12' or '24'.
+      'timezone', 'time_format',
+      // Your own sidebar order (#5779, app-channel-personal-order.js).
+      'channel_order',
+      // Muting, for yourself (app-server-mute.js): this server ('all' or
+      // 'mentions') and members muted for you (a JSON list of user ids).
+      'server_mute', 'muted_users',
+      // How pictures sent together show for you (#5799): 'grid' or
+      // 'stacked'. No row follows the server's media_group_layout.
+      'media_group_layout',
+      'emoji_favorites',
+      // DMs pinned to the top of your own DM list (src/pinnedDms.js).
+      'pinned_dms',
     ];
     // 'effects' is a JSON array of effect ids, longer than the other values.
-    const maxLen = key === 'effects' ? 400 : 50;
+    // A theme is saved as file:<file name>, and a community theme's file name
+    // can run long; at 50 it was dropped without a word and lost on reload.
+    const maxLen = key === 'effects' ? 400 : key === 'channel_order' ? 20000 : key === 'muted_users' ? 6000 : key === 'emoji_favorites' ? 1700 : key === 'pinned_dms' ? 4000 : key === 'theme' ? 200 : 50;
     if (!allowedKeys.includes(key) || !value || value.length > maxLen) return;
+    let stored = value;
+    if (key === 'channel_order') {
+      stored = cleanChannelOrder(value);
+      if (!stored) return;
+    }
+    if (key === 'emoji_favorites') {
+      stored = cleanEmojiFavorites(value);
+      if (!stored) return;
+    }
+    if (key === 'pinned_dms') {
+      stored = cleanPinnedDms(db, socket.user.id, value);
+      if (!stored) return;
+    }
+    if (key === 'server_mute' && value !== 'all' && value !== 'mentions') return;
+    if (key === 'media_group_layout' && !MEDIA_GROUP_LAYOUTS.includes(value)) return;
+    // Members pick from Haven's own themes and the published theme files. A
+    // refusal is quiet: the picker only offers allowed themes, so this is a
+    // stale list or a crafted request, and the client falls back on its own.
+    if (key === 'theme' && value.startsWith('file:') && !themeFileAllowed(value)) {
+      socket.emit('preference-refused', { key, value });
+      return;
+    }
+    if (key === 'muted_users') {
+      let ids;
+      try { ids = JSON.parse(value); } catch { return; } // not JSON: refused
+      if (!Array.isArray(ids)) return;
+      stored = JSON.stringify([...new Set(ids.map(Number).filter(n => Number.isInteger(n) && n > 0 && n !== socket.user.id))].slice(0, 500));
+    }
 
     db.prepare(
       'INSERT OR REPLACE INTO user_preferences (user_id, key, value) VALUES (?, ?, ?)'
-    ).run(socket.user.id, key, value);
+    ).run(socket.user.id, key, stored);
 
-    socket.emit('preference-saved', { key, value });
+    socket.emit('preference-saved', { key, value: stored });
 
     // When the score-badge visibility changes, re-broadcast the online-users
     // list for the user's current channel so every connected client immediately
@@ -591,6 +847,26 @@ module.exports = function register(socket, ctx) {
       emitOnlineUsers(socket.currentChannel);
     }
   });
+
+  // Clear a preference back to unset. Only the localization keys are erasable
+  // (the Erase button in the timezone modal), which returns the account to the
+  // browser-default behaviour. set-preference never writes empty values, so a
+  // dedicated delete is the way to remove a row.
+  socket.on('delete-preference', (data) => {
+    if (!data || typeof data !== 'object') return;
+    const key = typeof data.key === 'string' ? data.key.trim() : '';
+    const deletableKeys = ['timezone', 'time_format', 'channel_order', 'server_mute', 'muted_users', 'media_group_layout', 'pinned_dms'];
+    if (!deletableKeys.includes(key)) return;
+    db.prepare('DELETE FROM user_preferences WHERE user_id = ? AND key = ?').run(socket.user.id, key);
+    socket.emit('preference-deleted', { key });
+  });
+
+  // ── Recovery-codes notice gating ────────────────────────
+  // The client asks whether to surface the one-time "generate recovery codes"
+  // notice; the decision is made entirely server-side. Skip it when the account
+  // already has at least one usable recovery code (nothing to nudge), or when
+  // the user ticked "never show again" (persisted in user_preferences, exactly
+  // like the promo-modal dismissals).
 
   // ── Rich presence: linked accounts ──────────────────────
   const activity = ctx.state?.activity || null;
@@ -634,7 +910,7 @@ module.exports = function register(socket, ctx) {
    *
    * The keys are secrets: they are never echoed back to any client, and the
    * response is only "is this provider configured now". Validation lives in
-   * envStore.setEnvValue, which allow-lists the writable keys — a text field
+   * envStore.setEnvValue, which allow-lists the writable keys; a text field
    * that could write arbitrary .env entries would be a server takeover.
    */
   /**
@@ -700,7 +976,7 @@ module.exports = function register(socket, ctx) {
     // it now rather than waiting up to STEAM_POLL_MS for the next tick to pick
     // up the rotated key. Non-fatal: a failure here just means the old cadence.
     if (key === 'STEAM_API_KEY') {
-      try { activity.pollSteam().catch(() => {}); } catch { /* ignore */ }
+      try { activity.pollSteam().catch((err) => console.warn('[Haven activity] Steam poll failed:', err.message)); } catch { /* the regular poll picks up the new key anyway */ }
     }
 
     _audit({
@@ -708,7 +984,7 @@ module.exports = function register(socket, ctx) {
       action: 'integration_key_set',
       target_type: 'server',
       target_name: key,
-      // Deliberately records only which key changed, never the value — the
+      // Deliberately records only which key changed, never the value. The
       // audit log is readable in Settings and is not a place to store secrets.
       details: { key },
     });
@@ -725,7 +1001,7 @@ module.exports = function register(socket, ctx) {
   });
 
   /**
-   * Last.fm linking — a username, not an OAuth round-trip.
+   * Last.fm linking: a username, not an OAuth round-trip.
    *
    * getRecentTracks is a public read, so there is no redirect, no popup, no
    * token to store, and no callback URI to register. The username is verified
@@ -743,20 +1019,20 @@ module.exports = function register(socket, ctx) {
     activity.saveConnection(socket.user.id, 'lastfm', {
       externalId: check.name,
       displayName: check.name,
-      accessToken: null,   // public API — nothing secret to keep
+      accessToken: null,   // public API, nothing secret to keep
       refreshToken: null,
       expiresAt: 0,
     });
 
     // Populate straight away rather than waiting up to 30s for the next tick.
-    activity.pollLastfmUser(socket.user.id).catch(() => {});
+    activity.pollLastfmUser(socket.user.id).catch((err) => console.warn('[Haven activity] Last.fm poll failed:', err.message));
     if (socket.currentChannel) emitOnlineUsers(socket.currentChannel);
   });
 
   socket.on('unlink-connection', (data) => {
     if (!activity) return;
     const provider = typeof data?.provider === 'string' ? data.provider : '';
-    // lastfm belongs here too — without it a Last.fm account could be linked
+    // lastfm belongs here too; without it a Last.fm account could be linked
     // but never removed.
     if (!['steam', 'spotify', 'lastfm'].includes(provider)) return;
     activity.removeConnection(socket.user.id, provider);
@@ -797,14 +1073,18 @@ module.exports = function register(socket, ctx) {
   socket.on('submit-high-score', (data) => {
     if (!data || typeof data !== 'object') return;
     const game = typeof data.game === 'string' ? data.game.trim() : '';
-    const score = isInt(data.score) && data.score >= 0 ? data.score : 0;
     if (!game || !/^[a-z0-9_-]{1,32}$/.test(game)) return;
+    if (!isKnownGame(game)) return;
+    // Same rule as POST /api/high-scores: a safe integer under the game's ceiling.
+    const score = validHighScore(game, data.score);
+    if (score === null) return;
 
     const current = db.prepare(
       'SELECT score FROM high_scores WHERE user_id = ? AND game = ?'
     ).get(socket.user.id, game);
 
-    if (!current || score > current.score) {
+    const improved = !current || score > current.score;
+    if (improved) {
       db.prepare(
         'INSERT OR REPLACE INTO high_scores (user_id, game, score, updated_at) VALUES (?, ?, ?, datetime(\'now\'))'
       ).run(socket.user.id, game, score);
@@ -829,7 +1109,9 @@ module.exports = function register(socket, ctx) {
         )
       ORDER BY hs.score DESC LIMIT 50
     `).all(game);
-    io.except('bot-sockets').emit('high-scores', { game, leaderboard });
+    // Everyone hears about a new best; an unchanged board goes only to the
+    // sender, so repeating a score is not a broadcast to the whole server.
+    (improved ? io.except('bot-sockets') : socket).emit('high-scores', { game, leaderboard });
   });
 
   socket.on('get-high-scores', (data) => {
@@ -862,10 +1144,23 @@ module.exports = function register(socket, ctx) {
     try {
       const filePath = path.join(DATA_DIR, 'beta-signups.json');
       let signups = [];
-      try { signups = JSON.parse(fs.readFileSync(filePath, 'utf8')); } catch { /* first signup */ }
+      try { signups = JSON.parse(fs.readFileSync(filePath, 'utf8')); } catch (err) {
+        // No file yet means this is the first signup. Anything else (an
+        // unreadable or corrupt file) must not be treated as empty, or the
+        // write below would wipe every earlier signup.
+        if (err.code !== 'ENOENT') throw err;
+      }
 
       if (signups.some(s => s.email === email)) {
         return callback({ ok: true });
+      }
+      // One entry per account, and a ceiling on the file: it is read and
+      // rewritten whole on each signup.
+      if (signups.some(s => s.username === socket.user.username)) {
+        return callback({ ok: false, error: 'You are already signed up.' });
+      }
+      if (signups.length >= 5000) {
+        return callback({ ok: false, error: 'The beta list is full.' });
       }
 
       signups.push({
@@ -878,12 +1173,12 @@ module.exports = function register(socket, ctx) {
       callback({ ok: true });
     } catch (err) {
       console.error('Beta signup error:', err);
-      callback({ ok: false, error: 'Server error — try again later.' });
+      callback({ ok: false, error: 'Server error. Try again later.' });
     }
   });
 
   // ── Nicknames (#5394) ───────────────────────────────────
-  // Nicknames are personal and private — only visible to the user who set them.
+  // Nicknames are personal and private: only visible to the user who set them.
   // set-nickname upserts (or deletes when nickname is blank/null).
   // set-nicknames-bulk accepts { nicknames: { [targetId]: nickname|null } } for
   // the one-time migration where the client pushes its localStorage contents.
@@ -906,8 +1201,8 @@ module.exports = function register(socket, ctx) {
   });
 
   // ── Global display name (Manage Display Names permission) ──
-  // Lets a moderator change another member's real display name — the one
-  // everyone sees — reusing the same validation and broadcast path as a
+  // Lets a moderator change another member's real display name (the one
+  // everyone sees), reusing the same validation and broadcast path as a
   // self-rename. A blank displayName resets the target back to their username.
   socket.on('rename-user-global', (data) => {
     if (!data || typeof data !== 'object') return;
@@ -951,6 +1246,10 @@ module.exports = function register(socket, ctx) {
       // reserves impersonation-prone names like "Admin" / "Moderator", and
       // holding this permission is no reason to be able to hand one out.
       if (enforceAutomod(raw, { surface: 'profile' })) return;
+      if (!socket.user.isAdmin) {
+        const blocked = nameRefusal(db, raw);
+        if (blocked) return socket.emit('error-msg', blocked);
+      }
       try {
         const conflict = db.prepare(`
           SELECT id FROM users
@@ -986,7 +1285,7 @@ module.exports = function register(socket, ctx) {
       return socket.emit('error-msg', 'Failed to update display name');
     }
 
-    // Refresh presence maps silently — no user-renamed system message, since a
+    // Refresh presence maps silently: no user-renamed system message, since a
     // moderator changing someone's name shouldn't announce itself in-channel.
     for (const [code, users] of channelUsers) {
       if (users.has(targetId)) {
@@ -1060,3 +1359,5 @@ module.exports = function register(socket, ctx) {
     try { txn(); } catch (err) { console.error('set-nicknames-bulk error:', err); }
   });
 };
+
+module.exports.cleanChannelOrder = cleanChannelOrder;

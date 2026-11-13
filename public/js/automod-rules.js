@@ -1,5 +1,5 @@
 /**
- * Haven — shared auto-mod link rules (v3.44.0)
+ * Haven: shared auto-mod link rules (v3.44.0)
  *
  * Loaded by BOTH the Node server (src/automod.js requires this file) and the
  * browser (plain <script> tag). One copy on purpose: the server decides
@@ -8,7 +8,7 @@
  * what "the host of this URL" means, the client-side check would become a
  * false reassurance, which is worse than not having it.
  *
- * Pure functions only. No DOM, no database, no settings lookups — callers
+ * Pure functions only. No DOM, no database, no settings lookups; callers
  * pass a policy object in and get a verdict out.
  *
  * ── Why the URL parsing is this paranoid ──
@@ -54,7 +54,7 @@
   // Only consulted for schemeless candidates. Haven's client auto-links
   // http(s):// URLs only, so a bare "evil.foo" is inert text nobody can click.
   // We still catch bare domains a human would retype, without flagging every
-  // "readme.md" or "main.py" in a technical conversation — several file
+  // "readme.md" or "main.py" in a technical conversation. Several file
   // extensions collide with real ccTLDs, so a permissive rule here would block
   // ordinary messages.
   var COMMON_TLDS = {};
@@ -127,12 +127,45 @@
     return { text: out, obfuscated: out !== before };
   }
 
+  // ── Code in chat messages ─────────────────────────────────────────
+  // Commands people paste name things like ghcr.io/owner/image or start.sh
+  // that nobody is meant to click, and Haven never turns a bare address into
+  // a link anyway. So in a chat message, code (``` blocks and `inline`) keeps
+  // only its full http(s) links for checking; the bare addresses are dropped.
+  // A full link is checked wherever it sits. The patterns match the message
+  // formatter's, so both read the same spans as code.
+  var FENCE_RE = /```(?:\w+[ \t]*\n|\n)?([\s\S]*?)```/g;
+  var INLINE_CODE_RE = /`([^`]+)`/g;
+  var FULL_LINK_RE = /\bhttps?:\/\/[^\s<>"'`]+/gi;
+  function keepFullLinks(code) {
+    var links = code.match(FULL_LINK_RE);
+    return ' ' + (links ? links.join(' ') : '') + ' ';
+  }
+  function codeLinksOnly(text) {
+    return text
+      .replace(FENCE_RE, function (_, code) { return keepFullLinks(code); })
+      .replace(INLINE_CODE_RE, function (_, code) { return keepFullLinks(code); });
+  }
+
   // ── URL extraction ────────────────────────────────────────────────
   // Returns [{ raw, host, url, viaMarkdown, label, obfuscated }]. `host` is the
   // normalised hostname a browser would actually connect to, which is the only
-  // thing worth making a policy decision about.
-  function extractUrls(rawText) {
+  // thing worth making a policy decision about. opts.markdown: the text is a
+  // chat message, so bare addresses inside code are not counted (see above).
+  var FILE_ATTACHMENT_RE = /\[file:((?:[^\[\]\n]|\[[^\[\]\n]*\])*)\]\(\/uploads\/[^)\s|]*(?:\|[^)\n]*)?\)/g;
+  // No real file name has a slash in it, so a name with :// was typed to look
+  // like a file. Where chat shows that markup as text, the address in it
+  // becomes a clickable link, so it is checked like any other.
+  function skipFileMarkup(block, name) {
+    return name.indexOf('://') === -1 ? ' ' : block;
+  }
+  function extractUrls(rawText, opts) {
     if (typeof rawText !== 'string' || !rawText) return [];
+    if (opts && opts.markdown) rawText = codeLinksOnly(rawText);
+    // An uploaded file's own message, [file:name](/uploads/...|size), points
+    // at this server. Its name is whatever the file was called, and a name
+    // like ssstwitter.com_123.mp4 is not a link someone posted.
+    rawText = rawText.replace(FILE_ATTACHMENT_RE, skipFileMarkup);
 
     var stripped = rawText.replace(INVISIBLE_RE, '');
     var d = deobfuscate(stripped);
@@ -176,9 +209,14 @@
     var MD_RE = /!?\[([^\]]*)\]\(\s*([^\s)]+)\s*\)/g;
     var m;
     while ((m = MD_RE.exec(text)) !== null) push(m[2], { viaMarkdown: true, label: m[1] });
-    var withoutMd = text.replace(MD_RE, ' ');
+    // Chat only turns [text](target) into a link when the target is a web
+    // address. Otherwise it shows the whole thing as text, and an address with
+    // :// in the text becomes a clickable link, so that one is checked too.
+    var withoutMd = text.replace(MD_RE, function (full, label, target) {
+      return /^https?:\/\//i.test(target) || label.indexOf('://') === -1 ? ' ' : ' ' + label + ' ';
+    });
 
-    // Scheme-ful URLs — the ones Haven turns into clickable anchors and inline
+    // Scheme-ful URLs (the ones Haven turns into clickable anchors and inline
     // <img> tags, so they carry all the real risk.
     var SCHEME_RE = /\bhttps?:\/\/[^\s<>"'`\])]+/gi;
     while ((m = SCHEME_RE.exec(withoutMd)) !== null) push(m[0].replace(/[.,;:!?]+$/, ''));
@@ -240,10 +278,10 @@
   }
 
   // Evaluate a whole block of text. Returns null when everything is fine, or
-  // the first offending { rule, host, url, message }.
-  function checkText(text, policy) {
+  // the first offending { rule, host, url, message }. opts as for extractUrls.
+  function checkText(text, policy, opts) {
     if (!policy || policy.mode === 'off') return null;
-    var links = extractUrls(text);
+    var links = extractUrls(text, opts);
     if (!links.length) return null;
 
     for (var i = 0; i < links.length; i++) {

@@ -2,6 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { randomUUID } = require('node:crypto');
 const registerRemoteControl = require('./remoteControl');
 
 class FakeSocket {
@@ -49,8 +50,8 @@ function setup() {
   const ctx = { io: { sockets: { sockets } }, db, state };
   registerRemoteControl(host, ctx);
   registerRemoteControl(controller, ctx);
-  host.trigger('remote-control-capability', { hostSupported: true, controllerSupported: true, platform: 'win32' });
-  controller.trigger('remote-control-capability', { hostSupported: false, controllerSupported: true, platform: 'web' });
+  host.trigger('remote-control-capability', { hostSupported: true, controllerSupported: true, version: 'moonlight-1', routeSelection: 1 });
+  controller.trigger('remote-control-capability', { hostSupported: false, controllerSupported: true, version: 'moonlight-1', routeSelection: 1 });
   return { code, host, controller, state };
 }
 
@@ -83,11 +84,28 @@ test('request, consent, signaling, and end stay between channel participants', (
   assert.equal(controllerStart.role, 'controller');
   assert.equal(hostStart.sessionId, controllerStart.sessionId);
 
-  host.trigger('remote-control-signal', {
-    sessionId: hostStart.sessionId,
-    description: { type: 'offer', sdp: 'test-sdp' },
-  });
-  assert.deepEqual(controller.last('remote-control-signal').description, { type: 'offer', sdp: 'test-sdp' });
+  const { sessionId } = hostStart;
+  const certificate = '-----BEGIN CERTIFICATE-----\nVEVTVA==\n-----END CERTIFICATE-----\n';
+  const ice = { ufrag: 'ABCD', password: 'abcdefghijklmopqrstuvwxyz', candidates: ['candidate'] };
+  const endpoint = { basePort: 50000, certificate, iceOffer: ice, videoMode: '1280x720x30', relayOnly: false };
+  const viewer = { sessionId, kind: 'viewer', watchId: randomUUID(), certificate };
+  const signal = (socket, data, expected) => {
+    let result;
+    socket.trigger('remote-control-signal', data, reply => { result = reply; });
+    assert.equal(result?.ok, expected);
+  };
+
+  signal(host, { sessionId, kind: 'offer', endpoint }, false);
+  signal(host, viewer, false);
+  signal(controller, { ...viewer, transfer: true, privateKey: 'discarded' }, true);
+  assert.deepEqual(host.last('remote-control-signal'), { ...viewer, transfer: true });
+  signal(controller, viewer, false);
+  signal(host, { sessionId, kind: 'offer', endpoint: { ...endpoint, transfer: true, transferPort: 1234, privateKey: 'discarded' } }, true);
+  assert.deepEqual(controller.last('remote-control-signal').endpoint, { ...endpoint, bitrateKbps: undefined, transfer: true });
+  signal(controller, { sessionId, kind: 'answer', answer: ice }, true);
+  assert.deepEqual(host.last('remote-control-signal').answer, ice);
+  signal(controller, { sessionId, kind: 'playing' }, true);
+  signal(controller, { sessionId, kind: 'input', keyCode: 0x41 }, false);
 
   controller.trigger('remote-control-end', { sessionId: hostStart.sessionId, reason: 'controller-stopped' });
   assert.equal(state.remoteControlSessions.size, 0);
@@ -102,7 +120,8 @@ test('a web-only target cannot host remote control', () => {
     targetUserId: controller.user.id,
     mode: 'request',
   }, result => { response = result; });
-  assert.match(response.error, /Haven Desktop on Windows/);
+  assert.match(response.error, /Windows Ciacord desktop app/);
+  assert.equal(response.desktopRequirement, 'host_desktop_required');
 });
 
 test('requests cannot target a user outside the active channel', () => {
@@ -126,4 +145,49 @@ test('leaving the channel revokes an active session', () => {
   host.trigger('leave-channel', { code });
   assert.equal(state.remoteControlSessions.size, 0);
   assert.equal(controller.last('remote-control-session-ended').reason, 'channel-left');
+});
+
+test('a browser or older desktop cannot act as the Moonlight controller', () => {
+  const { code, host, controller } = setup();
+  controller.trigger('remote-control-capability', { controllerSupported: true, version: '1' });
+  let response;
+  controller.trigger('remote-control-request', { code, targetUserId: host.user.id }, result => { response = result; });
+  assert.match(response.error, /controller needs an updated Windows Ciacord desktop app/);
+  assert.equal(response.desktopRequirement, 'controller_desktop_required');
+});
+
+test('another connection for the same account cannot signal or end an approved session', () => {
+  const { code, host, controller, state } = setup();
+  controller.trigger('remote-control-request', { code, targetUserId: host.user.id }, () => {});
+  const requestId = host.last('remote-control-requested').requestId;
+  host.trigger('remote-control-response', { requestId, accepted: true }, () => {});
+  const { sessionId } = host.last('remote-control-session-start');
+  controller.id = 'another-controller-socket';
+  let response;
+  controller.trigger('remote-control-signal', { sessionId, kind: 'viewer' }, result => { response = result; });
+  assert.equal(response.ok, false);
+  controller.trigger('remote-control-end', { sessionId });
+  assert.equal(state.remoteControlSessions.size, 1);
+  host.trigger('remote-control-end', { sessionId });
+});
+
+test('remote control settings are validated and delivered to both approved desktops', () => {
+  const { code, host, controller } = setup();
+  const settings = { resolution: 1440, fps: 60, bitrateKbps: 12000, connectionPreference: 'ip-direct' };
+  let result;
+  const request = options => controller.trigger('remote-control-request',
+    { code, targetUserId: host.user.id, settings: options }, response => { result = response; });
+  request({ ...settings, fps: 999 });
+  assert.match(result.error, /settings/);
+  request({ ...settings, connectionPreference: 'haven-relay' });
+  assert.match(result.error, /settings/);
+  host.trigger('remote-control-capability', { hostSupported: true, version: 'moonlight-1' });
+  request(settings);
+  assert.equal(result.desktopRequirement, 'host_desktop_required');
+  host.trigger('remote-control-capability', { hostSupported: true, version: 'moonlight-1', routeSelection: 1 });
+  request({ ...settings, unexpected: true });
+  assert.equal(result.ok, true);
+  host.trigger('remote-control-response', { requestId: result.requestId, accepted: true }, () => {});
+  assert.deepEqual(host.last('remote-control-session-start').settings, settings);
+  assert.deepEqual(controller.last('remote-control-session-start').settings, settings);
 });

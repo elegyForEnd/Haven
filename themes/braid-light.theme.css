@@ -1,13 +1,13 @@
 /**
  * @name        Braid Light
- * @description Braid's airy light look — white surfaces, deep green accent, soft rounded corners. Pairs with the Braid Layout plugin.
+ * @description Braid's airy light look: white surfaces, deep green accent, soft rounded corners. Pairs with the Braid Layout plugin.
  * @author      Amnibro
  * @version     1.0
  * @icon        🍃
  */
 
 /*
-  Braid — light. Palette is 1:1 with Haven-Mobile's BRAID_LIGHT preset
+  Braid (light). Palette is 1:1 with Haven-Mobile's BRAID_LIGHT preset
   (deep green #00875a on white, radius scale 1.6). File themes load on
   the stable "haven" layout base, so tokens live on :root and win over
   style.css by cascade order. Sizes are rem so the interface Zoom
@@ -67,8 +67,8 @@
 
 /* == Type & color enforcement == make the Braid type stack and palette
    land everywhere, over style.css's own per-element declarations. */
-body, button, input, textarea, select { font-family: var(--font-main) !important; }
-h1, h2, h3, h4, h5, h6, .brand-text, .auth-header h1 { font-family: var(--font-heading) !important; }
+body, button, input, textarea, select { font-family: var(--font-main), var(--font-emoji) !important; }
+h1, h2, h3, h4, h5, h6, .brand-text, .auth-header h1 { font-family: var(--font-heading), var(--font-emoji) !important; }
 ::selection { background: color-mix(in srgb, var(--accent) 30%, transparent); color: var(--text-primary); }
 ::placeholder { color: var(--text-muted) !important; opacity: 1; }
 a, .text-link { color: var(--text-link); }
@@ -81,7 +81,7 @@ a, .text-link { color: var(--text-link); }
 
 /* ── Base type & chrome ──────────────────────────── */
 html { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; background: var(--bg-primary); }
-body { background: var(--bg-primary) !important; color: var(--text-primary) !important; font: 400 .9375rem/1.5 var(--font-main); letter-spacing: -.011em; }
+body { background: var(--bg-primary) !important; color: var(--text-primary) !important; font: 400 .9375rem/1.5 var(--font-main), var(--font-emoji); letter-spacing: -.011em; }
 :focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent); outline-offset: 2px; border-radius: .5rem; }
 ::-webkit-scrollbar { width: .5rem; height: .5rem; }
 ::-webkit-scrollbar-thumb { background: var(--border-light); border-radius: 999px; border: 2px solid transparent; background-clip: padding-box; }
@@ -125,7 +125,7 @@ body { background: var(--bg-primary) !important; color: var(--text-primary) !imp
 .messages { padding: 1.5rem 1.75rem .75rem !important; gap: .25rem; width: 100%; box-sizing: border-box; }
 .message { border-radius: var(--braid-r) !important; }
 .message:hover { background: rgba(0, 0, 0, .03) !important; box-shadow: none !important; }
-/* Message gutter — drive the shared variables instead of restyling
+/* Message gutter: drive the shared variables instead of restyling
    .message-row / .message-avatar directly. A compact follow-up has no avatar
    and indents by (padding + avatar + gap); sizing only the leader's half left
    follow-ups 8px to its left. See --msg-gutter in style.css. */

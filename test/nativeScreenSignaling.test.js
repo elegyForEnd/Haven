@@ -234,19 +234,19 @@ test('relays ICE in either direction and rejects stale session identifiers', () 
 });
 
 function createLifecycleHarness({
-  socketId = 'socket-1', ownerSocketId = 'socket-1', streamsEnabled = 1,
+  socketId = 'socket-1', ownerSocketId = 'socket-1', streamsEnabled = 1, userId = 1, sharedState, channelMember = true,
 } = {}) {
   const handlers = new Map();
   const emitted = [];
   const socket = {
     id: socketId,
-    user: { id: 1, username: 'User 1', displayName: 'User 1', isAdmin: false },
+    user: { id: userId, username: `User ${userId}`, displayName: `User ${userId}`, isAdmin: false },
     on(event, handler) { handlers.set(event, handler); },
     emit(event, payload) { emitted.push({ socketId, event, payload }); },
     join() {},
     leave() {},
   };
-  const state = {
+  const state = sharedState || {
     channelUsers: new Map(),
     voiceUsers: new Map([['a1b2c3d4', new Map([
       [1, { id: 1, username: 'User 1', socketId: ownerSocketId, nativeScreenVersion: 2, nativeScreenCodecs: ['H264'] }],
@@ -275,9 +275,13 @@ function createLifecycleHarness({
     },
   };
   const db = {
-    prepare() {
+    prepare(sql) {
       return {
-        get() { return { streams_enabled: streamsEnabled, voice_bitrate: 0 }; },
+        get(code) {
+          if (sql.includes('SELECT id, is_dm FROM channels')) return { id: code, is_dm: 0 };
+          if (sql.includes('FROM channel_members') && !channelMember) return undefined;
+          return { streams_enabled: streamsEnabled, voice_bitrate: 0 };
+        },
         all() { return []; },
         run() {},
       };
@@ -299,8 +303,241 @@ function createLifecycleHarness({
     getActiveMusicSyncState: () => null,
     getMusicQueuePayload: () => [],
   });
-  return { handlers, emitted, state };
+  return { handlers, emitted, state, io };
 }
+
+test('EasyTier limits credentials and IP visibility to authorized members and removes disconnected nodes', t => {
+  const env = {
+    HAVEN_EASYTIER_SECRET: 'a'.repeat(64),
+    HAVEN_EASYTIER_NETWORK_PREFIX: 'b'.repeat(16),
+    HAVEN_EASYTIER_HOST: 'example.test',
+  };
+  for (const [name, value] of Object.entries(env)) {
+    const original = process.env[name];
+    process.env[name] = value;
+    t.after(() => {
+      if (original === undefined) delete process.env[name];
+      else process.env[name] = original;
+    });
+  }
+  const host = createLifecycleHarness();
+  const viewer = createLifecycleHarness({ socketId: 'socket-2', userId: 2, sharedState: host.state });
+  const outsider = createLifecycleHarness({ socketId: 'outsider', userId: 3, channelMember: false, sharedState: host.state });
+  const code = 'a1b2c3d4';
+  const call = (client, event, extra = {}) => {
+    let result;
+    client.handlers.get(event)({ code, ...extra }, value => { result = value; });
+    return result;
+  };
+  const hostVoice = call(host, 'voice-network');
+  const viewerVoice = call(viewer, 'voice-network');
+  assert.equal(hostVoice.name, viewerVoice.name);
+  assert.notEqual(hostVoice.address, viewerVoice.address);
+  assert.equal(call(outsider, 'voice-network'), null);
+  assert.equal(call(outsider, 'manual-network', { join: true }), null);
+
+  const manual = call(host, 'manual-network', { join: true }).config;
+  assert.notEqual(manual.secret, hostVoice.secret);
+  assert.match(manual.address, /^10\.243\./);
+  assert.deepEqual(call(viewer, 'manual-network').members, []);
+  call(host, 'manual-network', { ready: true });
+  assert.deepEqual(call(viewer, 'manual-network').members, [{ name: 'User 1', address: manual.address }]);
+  assert.equal(call(outsider, 'manual-network'), null);
+  host.handlers.get('disconnect')();
+  assert.deepEqual(call(viewer, 'manual-network').members, []);
+});
+
+test('GameStream queues viewer handshakes and revokes one viewer without stopping the others', () => {
+  const host = createLifecycleHarness();
+  host.state.voiceUsers.get('a1b2c3d4').set(3, { id: 3, socketId: 'socket-3' });
+  const viewer = createLifecycleHarness({ socketId: 'socket-2', userId: 2, sharedState: host.state });
+  const second = createLifecycleHarness({ socketId: 'socket-3', userId: 3, sharedState: host.state });
+  const stale = createLifecycleHarness({ socketId: 'old-viewer', userId: 2, sharedState: host.state });
+  const signal = { code: 'a1b2c3d4', sharerId: 1, sessionId: 'game-session-123' };
+  const firstWatch = { ...signal, watchId: '00000000-0000-4000-8000-000000000001' };
+  const secondWatch = { ...signal, watchId: '00000000-0000-4000-8000-000000000002' };
+  const certificate = '-----BEGIN CERTIFICATE-----\nAQID\n-----END CERTIFICATE-----\n';
+  const endpoint = { address: '192.168.1.2', basePort: 51000, certificate };
+  const call = (harness, event, payload) => {
+    let result;
+    harness.handlers.get(event)(payload, value => { result = value; });
+    return result;
+  };
+  assert.equal(call(host, 'screen-share-started', {
+    ...signal, ...endpoint, transport: 'gamestream', videoMode: '1281x720x30',
+  }).ok, false);
+  assert.equal(call(host, 'screen-share-started', {
+    ...signal, ...endpoint, transport: 'gamestream', bitrateKbps: 6000, videoMode: '1280x720x30',
+  }).ok, true);
+  assert.equal('endpoint' in host.emitted.find(item => item.event === 'screen-share-started').payload, false);
+  assert.equal(call(stale, 'gamestream-watch', { ...firstWatch, certificate }), false);
+  assert.equal(call(viewer, 'gamestream-watch', { ...firstWatch, certificate }), true);
+  assert.equal(call(second, 'gamestream-watch', { ...secondWatch, certificate }), true);
+  assert.equal(viewer.emitted.filter(item => item.event === 'gamestream-viewer-request').length +
+    second.emitted.filter(item => item.event === 'gamestream-viewer-request').length, 1);
+  assert.equal(call(viewer, 'gamestream-ready', { ...firstWatch, accepted: true }), false);
+  assert.equal(call(host, 'gamestream-ready', { ...firstWatch, accepted: true }), true);
+  assert.deepEqual(host.emitted.find(item => item.event === 'gamestream-connect'), {
+    socketId: 'socket-2', event: 'gamestream-connect', payload: {
+      ...firstWatch, endpoint: { ...endpoint, addresses: [endpoint.address], bitrateKbps: 6000, videoMode: '1280x720x30' },
+      hasAudio: false,
+    },
+  });
+  call(viewer, 'gamestream-playing', firstWatch);
+  assert.equal(viewer.emitted.filter(item => item.event === 'gamestream-viewer-request').length, 2);
+  assert.equal(call(host, 'gamestream-ready', { ...secondWatch, accepted: true }), true);
+  call(second, 'gamestream-playing', secondWatch);
+  assert.equal(call(second, 'gamestream-relay-request', secondWatch), true);
+  const chunk = { ...signal, seq: 0, index: 0, count: 1, video: true, keyFrame: true,
+    timestampUs: 1000, data: Buffer.from([1, 2, 3]) };
+  assert.equal(call(viewer, 'gamestream-relay-data', chunk), false);
+  assert.equal(call(host, 'gamestream-relay-data', { ...chunk, sessionId: 'stale-session' }), false);
+  assert.equal(call(host, 'gamestream-relay-data', chunk), true);
+  const recipients = host.emitted.filter(item => item.event === 'gamestream-relay-data');
+  assert.equal(recipients.length, 1);
+  assert.equal(recipients[0].socketId, 'socket-3');
+  assert.equal(recipients[0].payload.watchId, secondWatch.watchId);
+  assert.equal(call(viewer, 'gamestream-relay-request', firstWatch), true);
+  const ws = { bufferedAmount: 0 };
+  host.io.sockets.sockets.set('socket-3', { conn: { writeBuffer: [], transport: { socket: ws } } });
+  const forwarded = seq => host.emitted.filter(item =>
+    item.event === 'gamestream-relay-data' && item.payload.seq === seq).map(item => item.socketId);
+  call(host, 'gamestream-relay-data', { ...chunk, seq: 1 });
+  assert.deepEqual(forwarded(1), ['socket-2', 'socket-3']);
+  ws.bufferedAmount = 256 * 1024;
+  call(host, 'gamestream-relay-data', { ...chunk, seq: 2, keyFrame: false });
+  assert.deepEqual(forwarded(2), ['socket-2']);
+  ws.bufferedAmount = 0;
+  call(host, 'gamestream-relay-data', { ...chunk, seq: 3, keyFrame: false });
+  assert.deepEqual(forwarded(3), ['socket-2']);
+  call(host, 'gamestream-relay-data', { ...chunk, seq: 4 });
+  assert.deepEqual(forwarded(4), ['socket-2', 'socket-3']);
+  const session = host.state.activeScreenSessions.get(signal.code).get(1);
+  session.relayRate.bytes = 4 * 1024 * 1024;
+  assert.deepEqual(call(host, 'gamestream-relay-data', { ...chunk, seq: 5 }),
+    { ok: false, error: 'rate_limited' });
+  session.relayRate.time = 0;
+  assert.equal(call(host, 'gamestream-relay-data', { ...chunk, seq: 6 }), true);
+  host.state.voiceUsers.get(signal.code).delete(2);
+  assert.equal(call(host, 'gamestream-lease', signal), true);
+  assert.equal(call(viewer, 'gamestream-lease', firstWatch), false);
+  assert.equal(call(second, 'gamestream-lease', secondWatch), true);
+  assert.equal(host.emitted.find(item => item.event === 'gamestream-viewer-revoke').payload.watchId, firstWatch.watchId);
+  call(second, 'gamestream-unwatch', secondWatch);
+  assert.equal(call(host, 'gamestream-relay-data', chunk), false);
+  assert.equal(call(second, 'gamestream-watch', { ...secondWatch, certificate }), true);
+  assert.deepEqual(call(host, 'screen-share-stopped', { ...signal, sessionId: 'old-game-session' }), { ok: false });
+  assert.deepEqual(call(host, 'screen-share-stopped', signal), { ok: true });
+  assert.equal(call(host, 'screen-share-started', { ...signal, ...endpoint,
+    addresses: ['192.168.1.2', '192.168.200.1'], connectionMode: 'manual', transport: 'gamestream' }).ok, true);
+  const configured = host.state.activeScreenSessions.get(signal.code).get(1).endpoint;
+  assert.equal(configured.connectionMode, 'manual');
+  assert.deepEqual(configured.addresses, [endpoint.address]);
+});
+
+test('GameStream ICE signaling stays with the authorized viewer and hides the host IP in relay mode', () => {
+  const host = createLifecycleHarness();
+  const viewer = createLifecycleHarness({ socketId: 'socket-2', userId: 2, sharedState: host.state });
+  const stale = createLifecycleHarness({ socketId: 'old-viewer', userId: 2, sharedState: host.state });
+  const signal = { code: 'a1b2c3d4', sharerId: 1, sessionId: 'game-session-ice' };
+  const watch = { ...signal, watchId: '00000000-0000-4000-8000-000000000001' };
+  const certificate = '-----BEGIN CERTIFICATE-----\nAQID\n-----END CERTIFICATE-----\n';
+  const description = {
+    ufrag: 'AbCd', password: 'a'.repeat(22), candidates: ['1 1 udp 1 192.0.2.1 55000 typ relay'],
+  };
+  const call = (harness, event, payload) => {
+    let result;
+    harness.handlers.get(event)(payload, value => { result = value; });
+    return result;
+  };
+  assert.equal(call(host, 'screen-share-started', { ...signal, address: '192.168.1.5', basePort: 51000,
+    certificate, connectionMode: 'relay', transport: 'gamestream' }).ok, true);
+  assert.equal(call(viewer, 'gamestream-watch', { ...watch, certificate, iceVersion: 1 }), true);
+  assert.equal(viewer.emitted.find(item => item.event === 'gamestream-viewer-request').payload.iceVersion, 1);
+  assert.equal(call(viewer, 'gamestream-ice-answer', { ...watch, answer: description }), false);
+  assert.equal(call(host, 'gamestream-ready', { ...watch, accepted: true, iceOffer: description }), true);
+  assert.deepEqual(host.emitted.find(item => item.event === 'gamestream-connect').payload, {
+    ...watch, endpoint: { connectionMode: 'relay', basePort: 51000, certificate }, iceOffer: description, hasAudio: false,
+  });
+  assert.equal(call(stale, 'gamestream-ice-answer', { ...watch, answer: description }), false);
+  assert.equal(call(viewer, 'gamestream-ice-answer', { ...watch, answer: { ...description, candidates: [] } }), false);
+  assert.equal(call(viewer, 'gamestream-ice-answer', { ...watch, answer: description }), true);
+  assert.equal(call(viewer, 'gamestream-ice-answer', { ...watch, answer: description }), false);
+  assert.deepEqual(viewer.emitted.filter(item => item.event === 'gamestream-ice-answer'), [{
+    socketId: 'socket-1', event: 'gamestream-ice-answer',
+    payload: { code: signal.code, sessionId: signal.sessionId, watchId: watch.watchId, answer: description },
+  }]);
+});
+
+test('explicit GameStream tunnel modes require capable viewers and cannot fall back to Haven relay', () => {
+  const host = createLifecycleHarness();
+  const viewer = createLifecycleHarness({ socketId: 'socket-2', userId: 2, sharedState: host.state });
+  const certificate = '-----BEGIN CERTIFICATE-----\nAQID\n-----END CERTIFICATE-----\n';
+  const call = (harness, event, payload) => {
+    let result;
+    harness.handlers.get(event)(payload, value => { result = value; });
+    return result;
+  };
+  const signal = { code: 'a1b2c3d4', sharerId: 1, sessionId: 'game-route-test' };
+  const watch = { ...signal, watchId: '00000000-0000-4000-8000-000000000001' };
+  const start = { ...signal, address: '192.168.1.5', basePort: 51000, certificate, transport: 'gamestream' };
+  assert.equal(call(host, 'screen-share-started', { ...start, connectionMode: 'auto', routePreference: 'turn-udp' }).ok, false);
+  assert.equal(call(host, 'screen-share-started', { ...start, connectionMode: 'relay', routePreference: 'ice-direct' }).ok, true);
+  assert.equal(call(viewer, 'gamestream-watch', { ...watch, certificate, iceVersion: 1 }), false);
+  assert.equal(call(viewer, 'gamestream-watch', { ...watch, certificate, iceVersion: 1, connectionVersion: 1 }), true);
+  const iceOffer = {
+    ufrag: 'AbCd', password: 'a'.repeat(22), candidates: ['1 1 udp 1 192.0.2.1 55000 typ host'],
+  };
+  assert.equal(call(host, 'gamestream-ready', { ...watch, accepted: true, iceOffer }), true);
+  const connect = host.emitted.find(item => item.event === 'gamestream-connect').payload;
+  assert.deepEqual(connect.endpoint, { connectionMode: 'relay', routePreference: 'ice-direct', basePort: 51000, certificate });
+  assert.deepEqual(connect.iceOffer, iceOffer);
+  assert.equal(call(viewer, 'gamestream-ice-answer', { ...watch,
+    answer: { ...iceOffer, candidates: ['1 1 udp 1 192.0.2.1 55000 typ relay'] } }), false);
+  assert.equal(call(viewer, 'gamestream-relay-request', watch), false);
+});
+
+test('automatic GameStream negotiates ICE only after the viewer requests a retry', () => {
+  const host = createLifecycleHarness();
+  const viewer = createLifecycleHarness({ socketId: 'socket-2', userId: 2, sharedState: host.state });
+  const signal = { code: 'a1b2c3d4', sharerId: 1, sessionId: 'game-auto-retry' };
+  const watch = { ...signal, watchId: '00000000-0000-4000-8000-000000000001' };
+  const cert = data => `-----BEGIN CERTIFICATE-----\n${data}\n-----END CERTIFICATE-----\n`;
+  const certificate = cert('AQID');
+  const retry = { ...watch, certificate: cert('BAUG') };
+  const offer = { ufrag: 'AbCd', password: 'a'.repeat(22),
+    candidates: ['1 1 udp 1 192.0.2.1 55000 typ host', '2 1 udp 1 2001:db8::1 55000 typ host'] };
+  const call = (client, event, payload) => {
+    let result;
+    client.handlers.get(event)(payload, value => { result = value; });
+    return result;
+  };
+  assert.equal(call(host, 'screen-share-started', { ...signal, address: '192.168.1.5', basePort: 51000,
+    certificate, connectionMode: 'auto', transport: 'gamestream' }).ok, true);
+  assert.equal(call(viewer, 'gamestream-watch', { ...watch, certificate, iceVersion: 1, iceAfterDirect: true }), true);
+  assert.equal(call(host, 'gamestream-ready', { ...watch, accepted: true, iceOffer: offer }), true);
+  const first = host.emitted.find(event => event.event === 'gamestream-connect').payload;
+  assert.equal(first.endpoint.connectionMode, 'auto');
+  assert.equal(first.iceAfterDirect, true);
+  assert.equal(first.iceOffer, undefined);
+  assert.equal(call(viewer, 'gamestream-try-ice', retry), true);
+  assert.equal(call(viewer, 'gamestream-try-ice', retry), false);
+  assert.deepEqual(viewer.emitted.slice(-2).map(event => event.event),
+    ['gamestream-viewer-revoke', 'gamestream-viewer-request']);
+  assert.equal(call(host, 'gamestream-ready', { ...watch, accepted: true, iceRetry: true, iceOffer: offer }), true);
+  const second = host.emitted.filter(event => event.event === 'gamestream-connect').at(-1).payload;
+  assert.equal(second.endpoint.routePreference, 'ice-direct');
+  assert.deepEqual(second.iceOffer, offer);
+  assert.equal(call(viewer, 'gamestream-relay-request', watch), true);
+  call(viewer, 'gamestream-nat', { ...watch, nat: 'stable' });
+  call(host, 'gamestream-nat', { ...watch, nat: '192.168.1.5' });
+  call(host, 'gamestream-nat', { ...watch, nat: 'destination-dependent' });
+  call(host, 'gamestream-nat', { ...watch, nat: 'stable' });
+  assert.deepEqual(host.emitted.filter(event => event.event === 'gamestream-nat'), [{
+    event: 'gamestream-nat', socketId: 'socket-2',
+    payload: { ...watch, nat: 'destination-dependent' },
+  }]);
+});
 
 test('screen lifecycle requires the socket that owns the voice entry', () => {
   const { handlers, state } = createLifecycleHarness({

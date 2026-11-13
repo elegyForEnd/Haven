@@ -71,7 +71,7 @@ for /f "tokens=1 delims=v." %%v in ('node -v 2^>nul') do set "NODE_MAJOR=%%v"
 echo  [OK] Node.js found: & node -v
 
 :: Warn if Node major version is very new (native modules may lack prebuilts).
-:: Don't hard-refuse on a version number — Node 24 is the current LTS and
+:: Don't hard-refuse on a version number: Node 24 is the current LTS and
 :: better-sqlite3 ships prebuilts for it.  The real gate is the functional
 :: native-module load check after npm install below.
 if defined NODE_MAJOR (
@@ -98,7 +98,7 @@ if %ERRORLEVEL% NEQ 0 (
     exit /b 1
 )
 :: Verify native modules actually load on this Node version (the honest
-:: compatibility test — version-number guessing refuses working setups).
+:: compatibility test; version-number guessing refuses working setups).
 node -e "require('better-sqlite3')" >nul 2>&1
 if %ERRORLEVEL% NEQ 0 (
     color 0C
@@ -127,7 +127,7 @@ if not exist "%HAVEN_DATA%\.env" (
 :: no longer needed. Windows ships OpenSSH, which is not OpenSSL, and machines without
 :: openssl.exe used to fall back to HTTP silently.
 if /I "%FORCE_HTTP%"=="true" (
-    echo  [*] FORCE_HTTP=true -- skipping SSL certificate generation
+    echo  [*] FORCE_HTTP=true, skipping SSL certificate generation
     echo.
     goto :ssl_done
 )

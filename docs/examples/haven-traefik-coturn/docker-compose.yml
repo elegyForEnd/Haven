@@ -57,6 +57,10 @@ services:
       - ADMIN_USERNAME=${ADMIN_USERNAME}
       - TURN_URL=turn:${DOMAIN}:3478
       - TURN_SECRET=${TURN_SECRET}
+      - HAVEN_EASYTIER_HOST=${HAVEN_EASYTIER_HOST:-}
+      - HAVEN_EASYTIER_PORT=${HAVEN_EASYTIER_PORT:-11010}
+      - HAVEN_EASYTIER_SECRET=${HAVEN_EASYTIER_SECRET:-}
+      - HAVEN_EASYTIER_NETWORK_PREFIX=${HAVEN_EASYTIER_NETWORK_PREFIX:-}
     networks:
       - proxy
     labels:
@@ -68,6 +72,30 @@ services:
       - traefik.http.services.haven.loadbalancer.server.port=3000
       - traefik.http.services.haven.loadbalancer.server.scheme=https
       - traefik.http.routers.haven.service=haven
+
+  easytier:
+    profiles: [easytier]
+    image: ghcr.io/easytier/easytier:v2.6.4@sha256:91d6732ea5ff71542fdb99333d2ee7b168e973443114db84db061e452427d91e
+    restart: unless-stopped
+    network_mode: host
+    logging:
+      driver: none
+    command:
+      - --network-name
+      - haven-coordinator
+      - --no-tun
+      - --disable-ipv6
+      - --secure-mode
+      - "true"
+      - --relay-network-whitelist
+      - haven-${HAVEN_EASYTIER_NETWORK_PREFIX:-disabled}-*
+      - --foreign-relay-bps-limit
+      - "20000000"
+      - --listeners
+      - udp://0.0.0.0:${HAVEN_EASYTIER_PORT:-11010}
+      - tcp://0.0.0.0:${HAVEN_EASYTIER_PORT:-11010}
+    environment:
+      - ET_NETWORK_SECRET=${HAVEN_EASYTIER_COORDINATOR_SECRET:-}
 
   coturn:
     image: ghcr.io/coturn/coturn:4.9

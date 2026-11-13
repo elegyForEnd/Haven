@@ -31,7 +31,8 @@ function createDb() {
       position INTEGER DEFAULT 0,
       voice_enabled INTEGER DEFAULT 1,
       voice_user_limit INTEGER DEFAULT 0,
-      voice_bitrate INTEGER DEFAULT 0
+      voice_bitrate INTEGER DEFAULT 0,
+      role_gate TEXT DEFAULT NULL
     );
     CREATE TABLE channel_members (channel_id INTEGER, user_id INTEGER);
     CREATE TABLE webhooks (
@@ -54,6 +55,8 @@ function createDb() {
       can_use_voice INTEGER DEFAULT 0
     );
     CREATE TABLE server_settings (key TEXT PRIMARY KEY, value TEXT);
+    CREATE TABLE bans (user_id INTEGER PRIMARY KEY, banned_by INTEGER, reason TEXT);
+    CREATE TABLE user_roles (user_id INTEGER, role_id INTEGER, channel_id INTEGER);
   `);
   db.prepare('INSERT INTO users (id, is_admin) VALUES (?, ?)').run(10, 0);
   db.prepare('INSERT INTO users (id, is_admin) VALUES (?, ?)').run(11, 1);
@@ -197,6 +200,7 @@ function createAdminHarness(db, user, io = null) {
     automod: { invalidate() {}, settings: () => ({}) },
     getIdleOnlineUsers: () => [],
     getUploadUsage: () => ({ byUser: new Map() }),
+    roleGateAllows: () => true,
     revokeBotVoiceAccess(webhookId, reason) { revoked.push({ webhookId, reason }); }
   });
   return { handlers, outgoing, revoked };
@@ -211,6 +215,18 @@ test('voice channel access is scoped to assignment, membership, or admin ownersh
 
   const adminChannels = getAccessibleVoiceChannels(db, { channel_id: 1, created_by: 11 });
   assert.deepEqual(adminChannels.map(channel => channel.code), ['11111111', '22222222', '44444444']);
+});
+
+test('voice channel access follows the creator role gate and ban', t => {
+  const db = createDb();
+  t.after(() => db.close());
+  db.prepare('UPDATE channels SET role_gate = ? WHERE id = 2').run(JSON.stringify({ mode: 'any', roles: [5] }));
+  const codes = () => getAccessibleVoiceChannels(db, { channel_id: 1, created_by: 10 }).map(channel => channel.code);
+  assert.deepEqual(codes(), ['11111111']);
+  db.prepare('INSERT INTO user_roles (user_id, role_id, channel_id) VALUES (10, 5, NULL)').run();
+  assert.deepEqual(codes(), ['11111111', '22222222']);
+  db.prepare('INSERT INTO bans (user_id, banned_by) VALUES (10, 11)').run();
+  assert.deepEqual(codes(), []);
 });
 
 test('active bot access detects token, membership, channel, and permission revocation', t => {
@@ -228,6 +244,35 @@ test('active bot access detects token, membership, channel, and permission revoc
   assert.match(getBotVoiceAccessFailure(db, 7, [], BOT_TOKEN), /token was rotated/);
   db.prepare('UPDATE webhooks SET token = ?, can_use_voice = 0 WHERE id = 7').run(BOT_TOKEN);
   assert.match(getBotVoiceAccessFailure(db, 7, [], BOT_TOKEN), /permission was revoked/);
+});
+
+test('a bot whose creator is banned loses its token and its voice session', t => {
+  const db = createDb();
+  t.after(() => db.close());
+  insertBot(db);
+  const { getBotVoiceWebhookByToken } = require('../src/botVoice');
+  assert.ok(getBotVoiceWebhookByToken(db, BOT_TOKEN));
+  db.prepare('INSERT INTO bans (user_id, banned_by) VALUES (10, 11)').run();
+  assert.equal(getBotVoiceWebhookByToken(db, BOT_TOKEN), null);
+  assert.match(getBotVoiceAccessFailure(db, 7, [], BOT_TOKEN), /is banned/);
+});
+
+test('a bot reaches a channel only while its creator could read it', t => {
+  const db = createDb();
+  t.after(() => db.close());
+  const { creatorCanReachChannel } = require('../src/botAccess');
+  const member = { id: 2, is_dm: 0, role_gate: null };
+  assert.equal(creatorCanReachChannel(db, 10, member), true);
+  assert.equal(creatorCanReachChannel(db, 10, { id: 1, is_dm: 0, role_gate: null }), false);
+  assert.equal(creatorCanReachChannel(db, 11, { id: 4, is_dm: 0, role_gate: null }), true);
+  assert.equal(creatorCanReachChannel(db, null, member), false);
+  assert.equal(creatorCanReachChannel(db, 999, member), false);
+  const gated = { ...member, role_gate: JSON.stringify({ mode: 'any', roles: [5] }) };
+  assert.equal(creatorCanReachChannel(db, 10, gated), false);
+  db.prepare('INSERT INTO user_roles (user_id, role_id, channel_id) VALUES (10, 5, NULL)').run();
+  assert.equal(creatorCanReachChannel(db, 10, gated), true);
+  db.prepare('INSERT INTO bans (user_id, banned_by) VALUES (10, 11)').run();
+  assert.equal(creatorCanReachChannel(db, 10, gated), false);
 });
 
 test('bot voice gateway joins visibly, relays authorized signaling, and refreshes AFK activity', t => {
@@ -389,6 +434,14 @@ test('only admins can change voice permission and revocation is immediate', t =>
   t.after(() => db.close());
   insertBot(db, { can_use_voice: 0 });
 
+  // A moderator outside the bot's channel cannot touch it at all.
+  const outsider = createAdminHarness(db, { id: 20, isAdmin: false });
+  outsider.handlers.get('update-webhook')({ id: 7, can_use_voice: 1 });
+  assert.equal(db.prepare('SELECT can_use_voice FROM webhooks WHERE id = 7').get().can_use_voice, 0);
+  assert.match(outsider.outgoing.at(-1).payload, /Webhook not found/);
+
+  // One in the channel still cannot change its voice permission.
+  db.prepare('INSERT INTO channel_members (channel_id, user_id) VALUES (?, ?)').run(1, 20);
   const moderator = createAdminHarness(db, { id: 20, isAdmin: false });
   moderator.handlers.get('update-webhook')({ id: 7, can_use_voice: 1 });
   assert.equal(db.prepare('SELECT can_use_voice FROM webhooks WHERE id = 7').get().can_use_voice, 0);
@@ -413,10 +466,14 @@ test('non-admin integration managers cannot obtain privileged bot tokens owned b
     created_by: 11,
     can_use_voice: 0
   });
+  insertBot(db, { id: 9, name: 'Elsewhere', token: 'e'.repeat(64), channel_id: 4, created_by: 11, can_use_voice: 0 });
+  db.prepare('INSERT INTO channel_members (channel_id, user_id) VALUES (?, ?)').run(1, 10);
   const moderator = createAdminHarness(db, { id: 10, isAdmin: false });
 
   moderator.handlers.get('get-webhooks')();
   let list = moderator.outgoing.filter(item => item.event === 'webhooks-list').at(-1).payload.webhooks;
+  // Bots in channels the moderator is not in are not listed at all.
+  assert.equal(list.some(webhook => webhook.id === 9), false);
   assert.equal(list.find(webhook => webhook.id === 7).token, BOT_TOKEN);
   assert.equal(list.find(webhook => webhook.id === 8).token, null);
 
@@ -468,11 +525,18 @@ test('human voice snapshots preserve bot identity and listening state', t => {
     handleVoiceLeave() {},
     touchVoiceActivity() {},
     pruneStaleVoiceUsers: () => [],
+    voiceCodesVisibleTo: (userId) => new Set(db.prepare('SELECT c.code FROM channels c JOIN channel_members cm ON cm.channel_id = c.id WHERE cm.user_id = ?').all(userId).map(r => r.code)),
     getMentionableChannelMembers: () => [],
     getActiveMusicSyncState: () => null,
     getMusicQueuePayload: () => ({})
   });
 
+  // Not a member of the voice room's channel: nothing comes back.
+  handlers.get('request-voice-users')({ code: '11111111' });
+  handlers.get('get-voice-counts')();
+  assert.equal(outgoing.some(item => item.event === 'voice-users-update' || item.event === 'voice-count-update'), false);
+
+  db.prepare('INSERT INTO channel_members (channel_id, user_id) VALUES (?, ?)').run(1, 10);
   handlers.get('request-voice-users')({ code: '11111111' });
   handlers.get('get-voice-counts')();
   const roster = outgoing.find(item => item.event === 'voice-users-update').payload.users[0];

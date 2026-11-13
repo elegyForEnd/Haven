@@ -25,8 +25,12 @@ comment:
  */
 ```
 
-The theme list reads `@name`, `@description`, `@author`, `@version`, `@icon`, and
-`@haven-theme-api`. Haven checks the API declaration before it injects the
+The theme list reads `@name`, `@description`, `@author`, `@version`, `@icon`,
+`@section`, and `@haven-theme-api`. `@section Seasonal` puts the theme in the
+picker's Seasonal section; any other `@section` name gets a section of its own,
+and a theme without one is listed under Community. The picker's preview card is
+drawn from the file's `--bg-primary`, `--bg-secondary`, `--accent` and
+`--text-primary` values when they are plain colours. Haven checks the API declaration before it injects the
 stylesheet. Older Haven versions ignore metadata they do not recognise.
 Declare each field on its own metadata line. Multiple `@haven-theme-api`
 declarations make the theme invalid.
@@ -63,13 +67,18 @@ the stylesheet. The cache is only a flash-prevention optimisation.
 
 1. Put the file in the server's `themes/` directory.
 2. Restart Haven or refresh the Plugins & Themes list.
-3. Open Settings, then Admin, Branding, Custom Themes.
-4. Publish the theme to add it to every user's theme picker.
+3. Open the theme picker (the palette button in the sidebar). As an admin you
+   see it under Available to publish.
+4. Switch Publish on under its card to add it to every user's theme picker.
+   Settings, Admin, Branding, Custom Themes has the same switches.
 
 A published file is a selectable base theme. Haven applies the built-in Haven
 theme as the stable layout base, then loads the selected file after the core
-stylesheet. A file that is installed but not published can instead be enabled
-per browser as an additive CSS tweak from Plugins & Themes.
+stylesheet. A file that is installed but not published is only for people who
+manage the server: they can try it, or enable it per browser as an additive CSS
+tweak from Plugins & Themes. Members do not see it there or in the picker, and
+the server will not save it as a member's theme. A member who already uses a
+theme when it is unpublished keeps it until they pick another.
 
 Themes are server-managed files. Haven does not download themes from arbitrary
 URLs or provide a per-user raw CSS editor.
@@ -78,6 +87,28 @@ URLs or provide a per-user raw CSS editor.
 public tokens, page markers, and layout regions. It deliberately leaves message
 geometry to the user's Layout Density setting; structural compaction belongs in
 a plugin.
+
+## Previewing a theme without a server
+
+`public/theme-preview.html` is a static copy of the app with sample content:
+a conversation with every kind of markdown, a picture, a poll, reactions and
+a reply, the member list, an open profile card, the Settings modal, and a
+forum channel. It loads Haven's real stylesheet, so a theme file applied to
+it looks the way it will in the app.
+
+1. Open `public/theme-preview.html` from a checkout in a browser, or in a
+   live editor such as Phoenix Code that previews as you type.
+2. In the toolbar at the top right, type the path to your theme relative to
+   the file (`../themes/my.theme.css` for a file in the repository's
+   `themes/` folder) and press Apply, or open the page as
+   `theme-preview.html?theme=../themes/my.theme.css`.
+3. Chat and Forum switch the view; Settings modal and Profile card show or
+   hide those.
+
+The page is a snapshot, so a change to the app's markup reaches it the next
+time it is regenerated with `scripts/theme-preview-capture.js`; the file's
+header comment and the script say how. A running server also serves it at
+`/theme-preview.html`.
 
 ## Scoping a theme
 
@@ -301,6 +332,23 @@ HavenApi.Layout.release('MyLayout');
 Listen for `haven:layout-owner-change` to retry after that owner releases it.
 This prevents one plugin from recording another plugin's temporary DOM as the
 native restore position. `HavenApi.Layout.owner` exposes the current owner.
+
+### Appearing in the Layout picker
+
+The **Sidebar Layout** picker in Settings, Layout lists **Original** (Haven's own layout) and
+every layout plugin on the server, one at a time. A plugin shows up there when:
+
+- its file is named `<Name>Layout.plugin.js` (the picker shows its `@name`,
+  without a trailing "Layout");
+- its class has `_engage()` and `_disengage()`, which move and restore the
+  regions;
+- it acquires the layout under its file's base name, for example
+  `HavenApi.Layout.acquire('MyLayout')` for `MyLayout.plugin.js`;
+- it keeps its on/off as `HavenApi.Data.save('MyLayout', 'layoutOn', '1' | '0')`
+  and reads it back on `start()`, as Braid and Compact do.
+
+Picking another layout disengages the current one and saves `layoutOn = '0'`
+for it, so a plugin never has to know about the others.
 
 ## Stability policy
 

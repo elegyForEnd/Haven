@@ -1,15 +1,16 @@
 'use strict';
 
 /**
- * Haven — Rich presence / user activity
+ * Haven: Rich presence / user activity
  *
- * Collects "what is this person doing right now" from four sources and hands
+ * Collects "what is this person doing right now" from five sources and hands
  * it to the presence broadcast in socketHandlers/index.js:
  *
- *   haven   — Haven's own voice-channel music player (no external calls)
- *   steam   — Steam Web API GetPlayerSummaries (one batched call for everyone)
- *   lastfm  — Last.fm getRecentTracks (username + server API key, no OAuth)
- *   spotify — Spotify Web API currently-playing (full OAuth, one call per user)
+ *   haven:    Haven's own voice-channel music player (no external calls)
+ *   haven-game: a game from Haven's Activities list (no external calls)
+ *   steam:    Steam Web API GetPlayerSummaries (one batched call for everyone)
+ *   lastfm:   Last.fm getRecentTracks (username + server API key, no OAuth)
+ *   spotify:  Spotify Web API currently-playing (full OAuth, one call per user)
  *
  * Prefer Last.fm for music. It needs no per-user OAuth, no token storage, and
  * has no per-app user cap; it also covers whatever the person actually listens
@@ -27,7 +28,7 @@
  * - Sharing is ON by default, but nothing appears until a user links an account
  *   (an explicit act, and the real consent gate) or plays music in a Haven
  *   voice channel. Users can opt out entirely, or mute games/music separately.
- *   Anyone with status 'invisible' reports nothing regardless of preferences —
+ *   Anyone with status 'invisible' reports nothing regardless of preferences:
  *   being invisible while broadcasting "playing Helldivers 2" would defeat the
  *   entire point.
  *
@@ -44,7 +45,7 @@ const crypto = require('crypto');
 
 // ── Token encryption ──────────────────────────────────────
 // Key is derived from JWT_SECRET, so rotating that secret invalidates stored
-// OAuth tokens. That's the correct failure mode — decryption returns null and
+// OAuth tokens. That's the correct failure mode: decryption returns null and
 // the user is asked to re-link, rather than the server using a stale token.
 function deriveKey() {
   const secret = process.env.JWT_SECRET;
@@ -69,7 +70,7 @@ function decryptToken(stored) {
     decipher.setAuthTag(Buffer.from(parts[1], 'base64'));
     return Buffer.concat([decipher.update(Buffer.from(parts[2], 'base64')), decipher.final()]).toString('utf8');
   } catch {
-    return null; // wrong key or tampered — treat as "not linked"
+    return null; // wrong key or tampered: treat as "not linked"
   }
 }
 
@@ -93,7 +94,7 @@ const isLastfmConfigured  = () => !!lastfmApiKey();
 
 /**
  * Last.fm usernames: 2-15 chars, letters/digits/underscore/hyphen. Anchored
- * because this value goes straight into an API URL — no path traversal, no
+ * because this value goes straight into an API URL: no path traversal, no
  * query-string smuggling.
  */
 const LASTFM_USERNAME_RE = /^[a-zA-Z0-9_-]{2,15}$/;
@@ -151,10 +152,22 @@ async function fetchJson(url, opts = {}, timeoutMs = 8000) {
 /**
  * @param {object}   db               better-sqlite3 handle
  * @param {function} getOnlineUserIds () => number[] of connected user ids
- * @param {function} onChange         (userId) => void — fired when a user's
+ * @param {function} onChange         (userId) => void, fired when a user's
  *                                    activity actually changed, so the caller
  *                                    can re-broadcast presence for them
  */
+// The games in Activities (public/js/modules/app-ui.js, _gamesRegistry), by
+// id. Presence shows these names only.
+const HAVEN_GAMES = {
+  flappy: 'Shippy Container',
+  flight: 'Flight',
+  'learn-to-fly-3': 'Learn to Fly 3',
+  'bubble-tanks-3': 'Bubble Tanks 3',
+  tanks: 'Tanks',
+  'super-smash-flash-2': 'Super Smash Flash 2',
+  'io-games': '.io Games',
+};
+
 function createActivity({ db, getOnlineUserIds, onChange, onConnectionsChanged }) {
   // userId -> { playing: Activity|null, listening: Activity|null }
   const activity = new Map();
@@ -176,12 +189,16 @@ function createActivity({ db, getOnlineUserIds, onChange, onConnectionsChanged }
         `SELECT key, value FROM user_preferences
          WHERE user_id = ? AND key IN ('share_activity','share_game_activity','share_music_activity')`
       ).all(userId);
-    } catch { /* table missing on a very old DB */ }
+    } catch {
+      // If the opt-outs cannot be read, share nothing rather than assume
+      // consent. Not logged: this runs on every presence update.
+      return { master: false, games: false, music: false };
+    }
     const map = {};
     rows.forEach(r => { map[r.key] = r.value; });
     return {
       // Default ON. The meaningful consent gate for Steam/Spotify is linking
-      // the account, which is always an explicit act — so defaulting the master
+      // the account, which is always an explicit act, so defaulting the master
       // switch off just meant people linked an account and then wondered why
       // nothing happened. The one case this discloses without an explicit
       // action is Haven's own voice-channel music, which is already visible to
@@ -197,7 +214,9 @@ function createActivity({ db, getOnlineUserIds, onChange, onConnectionsChanged }
       const row = db.prepare('SELECT status FROM users WHERE id = ?').get(userId);
       return !!row && row.status === 'invisible';
     } catch {
-      return false;
+      // Unknown status: treat them as invisible, so someone who chose to hide
+      // is never shown because a read failed.
+      return true;
     }
   }
 
@@ -267,7 +286,7 @@ function createActivity({ db, getOnlineUserIds, onChange, onConnectionsChanged }
   /**
    * Called by the music handlers when a track starts/stops in a voice channel.
    * Everyone listening in that channel gets the activity, not just whoever
-   * queued it — they are all, in fact, listening to it.
+   * queued it; they are all, in fact, listening to it.
    */
   function setHavenMusic(userIds, track) {
     const ids = Array.isArray(userIds) ? userIds : [];
@@ -299,6 +318,25 @@ function createActivity({ db, getOnlineUserIds, onChange, onConnectionsChanged }
     }
   }
 
+  // ── Source 2: Haven's own games ─────────────────────────
+  /**
+   * A game from the Activities list is open (or closed, with ''). Returns
+   * true when the game is one Haven knows. A Steam game already showing is
+   * left alone: that is the bigger news.
+   */
+  function setHavenGame(userId, gameId) {
+    const name = Object.hasOwn(HAVEN_GAMES, gameId) ? HAVEN_GAMES[gameId] : null;
+    const entry = activity.get(userId);
+    const mine = entry && entry.playing && entry.playing.source === 'haven-game';
+    if (!name) {
+      if (mine) setSlot(userId, 'playing', null);
+      return false;
+    }
+    if (entry && entry.playing && !mine) return true;
+    setSlot(userId, 'playing', { type: 'playing', name, details: '', image: null, source: 'haven-game', startedAt: Date.now() });
+    return true;
+  }
+
   // ── Connections ─────────────────────────────────────────
   function getConnection(userId, provider) {
     try {
@@ -312,7 +350,9 @@ function createActivity({ db, getOnlineUserIds, onChange, onConnectionsChanged }
     let rows = [];
     try {
       rows = db.prepare('SELECT provider, display_name, created_at FROM user_connections WHERE user_id = ?').all(userId);
-    } catch { /* table missing */ }
+    } catch (err) {
+      console.warn('[Haven activity] Could not list connections:', err.message);
+    }
     return rows.map(r => ({
       provider: r.provider,
       displayName: r.display_name || '',
@@ -345,7 +385,11 @@ function createActivity({ db, getOnlineUserIds, onChange, onConnectionsChanged }
   function removeConnection(userId, provider) {
     try {
       db.prepare('DELETE FROM user_connections WHERE user_id = ? AND provider = ?').run(userId, provider);
-    } catch { /* nothing to remove */ }
+    } catch (err) {
+      // A DELETE that matches nothing does not throw, so this is a real failure:
+      // the stored tokens for this link are still there.
+      console.error(`[Haven activity] Failed to remove ${provider} connection:`, err.message);
+    }
     notifyConnections(userId);
     // Drop whatever that provider was reporting so the activity doesn't linger
     // until the next poll tick that will no longer happen.
@@ -381,7 +425,11 @@ function createActivity({ db, getOnlineUserIds, onChange, onConnectionsChanged }
   function disableListening(userId) {
     try {
       db.prepare('DELETE FROM listening_tokens WHERE user_id = ?').run(userId);
-    } catch { /* nothing to remove */ }
+    } catch (err) {
+      // A DELETE that matches nothing does not throw, so the old webhook token
+      // is still valid here.
+      console.error('[Haven activity] Failed to revoke listening token:', err.message);
+    }
     clearListeningPresence(userId);
   }
 
@@ -693,8 +741,8 @@ function createActivity({ db, getOnlineUserIds, onChange, onConnectionsChanged }
   // is a public read keyed by username plus the server's API key, so linking
   // is a text box rather than a redirect dance, there are no per-user tokens
   // to encrypt or refresh, and there is no per-app user cap to run into.
-  // It also covers whatever the user actually listens with — Spotify, Apple
-  // Music, YouTube Music, Navidrome, Plex — because they all scrobble here.
+  // It also covers whatever the user actually listens with (Spotify, Apple
+  // Music, YouTube Music, Navidrome, Plex), because they all scrobble here.
 
   /** Confirm a username exists before saving it, so typos fail loudly. */
   async function verifyLastfmUser(username) {
@@ -709,7 +757,7 @@ function createActivity({ db, getOnlineUserIds, onChange, onConnectionsChanged }
       if (data?.error || !data?.user) return { ok: false, reason: 'No Last.fm user by that name' };
       return { ok: true, name: clean(data.user.name, 30) || username };
     } catch (err) {
-      return { ok: false, reason: 'Could not reach Last.fm — try again in a moment' };
+      return { ok: false, reason: 'Could not reach Last.fm. Try again in a moment' };
     }
   }
 
@@ -774,7 +822,7 @@ function createActivity({ db, getOnlineUserIds, onChange, onConnectionsChanged }
     });
     if (eligible.length === 0) return;
 
-    // Same round-robin as Spotify — one request per user, no batch endpoint,
+    // Same round-robin as Spotify: one request per user, no batch endpoint,
     // and Last.fm asks for well under a few calls per second.
     const MAX_PER_TICK = 20;
     const slice = [];
@@ -790,11 +838,11 @@ function createActivity({ db, getOnlineUserIds, onChange, onConnectionsChanged }
   function start() {
     // Both timers always run; each poller no-ops while its provider is
     // unconfigured. Registering unconditionally is what lets an admin paste
-    // keys into Settings and have presence start working without a restart —
-    // gating the intervals on boot-time config would strand them until reboot.
-    timers.push(setInterval(() => { pollSteam().catch(() => {}); }, STEAM_POLL_MS));
-    timers.push(setInterval(() => { pollSpotify().catch(() => {}); }, SPOTIFY_POLL_MS));
-    timers.push(setInterval(() => { pollLastfm().catch(() => {}); }, LASTFM_POLL_MS));
+    // keys into Settings and have presence start working without a restart.
+    // Gating the intervals on boot-time config would strand them until reboot.
+    timers.push(setInterval(() => { pollSteam().catch((err) => console.warn('[Haven activity] Steam poll failed:', err.message)); }, STEAM_POLL_MS));
+    timers.push(setInterval(() => { pollSpotify().catch((err) => console.warn('[Haven activity] Spotify poll failed:', err.message)); }, SPOTIFY_POLL_MS));
+    timers.push(setInterval(() => { pollLastfm().catch((err) => console.warn('[Haven activity] Last.fm poll failed:', err.message)); }, LASTFM_POLL_MS));
     timers.forEach(t => t.unref?.());
     if (isSteamConfigured())   console.log('[Haven activity] Steam presence enabled');
     if (isSpotifyConfigured()) console.log('[Haven activity] Spotify presence enabled');
@@ -817,6 +865,7 @@ function createActivity({ db, getOnlineUserIds, onChange, onConnectionsChanged }
     // write
     setHavenMusic,
     clearHavenMusic,
+    setHavenGame,
     clearUser,
     saveConnection,
     removeConnection,

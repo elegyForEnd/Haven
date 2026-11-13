@@ -5,7 +5,28 @@ const { isInt, isString } = require('./helpers');
 
 const REQUEST_TTL_MS = 30_000;
 const SESSION_TTL_MS = 30 * 60_000;
-const MAX_SIGNAL_BYTES = 64 * 1024;
+const PROTOCOL = 'moonlight-1';
+const SETUP_TTL_MS = 120_000;
+const ROUTES = new Set(['ip-direct', 'auto', 'ice-direct', 'relay', 'turn-tcp', 'turn-udp']);
+function validSettings(value) {
+  return value && [0, 720, 1080, 1440].includes(value.resolution) && [15, 30, 60].includes(value.fps) &&
+    Number.isInteger(value.bitrateKbps) &&
+    (value.bitrateKbps === 0 || value.bitrateKbps >= 1000 && value.bitrateKbps <= 50000) &&
+    ROUTES.has(value.connectionPreference);
+}
+const validId = value => typeof value === 'string' && /^[a-f0-9-]{36}$/i.test(value);
+const validCertificate = value => typeof value === 'string' && value.length <= 4096 &&
+  /^-----BEGIN CERTIFICATE-----\r?\n[A-Za-z0-9+/=\r\n]+-----END CERTIFICATE-----\r?\n?$/.test(value);
+const validIce = value => value && typeof value.ufrag === 'string' && /^[a-z0-9+/]{4,256}$/i.test(value.ufrag) &&
+  typeof value.password === 'string' && /^[a-z0-9+/]{22,256}$/i.test(value.password) &&
+  Array.isArray(value.candidates) && value.candidates.length > 0 && value.candidates.length <= 32 &&
+  value.candidates.every(candidate => typeof candidate === 'string' && candidate.length <= 384 &&
+    /^[\x20-\x7e]+$/.test(candidate));
+const validEndpoint = value => value && validCertificate(value.certificate) && validIce(value.iceOffer) &&
+  Number.isInteger(value.basePort) && value.basePort >= 49000 && value.basePort < 60000 &&
+  typeof value.videoMode === 'string' && /^\d{3,4}x\d{3,4}x(?:15|30|60)$/.test(value.videoMode) &&
+  (value.bitrateKbps == null || Number.isInteger(value.bitrateKbps) &&
+    value.bitrateKbps >= 1000 && value.bitrateKbps <= 50000) && typeof value.relayOnly === 'boolean';
 const MAX_REQUESTS_PER_MINUTE = 4;
 
 module.exports = function register(socket, ctx) {
@@ -57,18 +78,18 @@ module.exports = function register(socket, ctx) {
       reason,
       endedBy,
     };
-    emitToUser(session.code, session.hostId, 'remote-control-session-ended', payload);
-    emitToUser(session.code, session.controllerId, 'remote-control-session-ended', payload);
+    io.sockets.sockets.get(session.hostSocketId)?.emit('remote-control-session-ended', payload);
+    io.sockets.sockets.get(session.controllerSocketId)?.emit('remote-control-session-ended', payload);
   }
 
   function endSessionsForUser(userId, reason) {
     for (const [sessionId, session] of remoteControlSessions) {
-      if (session.hostId === userId || session.controllerId === userId) {
+      if (session.hostSocketId === socket.id || session.controllerSocketId === socket.id) {
         endSession(sessionId, reason, userId);
       }
     }
     for (const [requestId, request] of remoteControlRequests) {
-      if (request.hostId === userId || request.controllerId === userId) {
+      if (request.hostSocketId === socket.id || request.controllerSocketId === socket.id) {
         clearRequest(requestId, reason);
       }
     }
@@ -97,12 +118,17 @@ module.exports = function register(socket, ctx) {
     return true;
   }
 
-  socket.on('remote-control-capability', (data = {}) => {
+  function participantSupported(participant, role) {
+    return participant?.remoteControlCapability?.version === PROTOCOL &&
+      participant.remoteControlCapability[role + 'Supported'] === true;
+  }
+
+  socket.on('remote-control-capability', data => {
     socket.remoteControlCapability = {
-      hostSupported: data.hostSupported === true,
-      controllerSupported: data.controllerSupported !== false,
-      platform: isString(data.platform, 1, 24) ? data.platform : 'web',
-      version: isString(data.version, 1, 24) ? data.version : '1',
+      hostSupported: data?.hostSupported === true,
+      controllerSupported: data?.controllerSupported === true,
+      version: data?.version === PROTOCOL ? PROTOCOL : null,
+      routeSelection: data?.routeSelection === 1,
     };
   });
 
@@ -132,12 +158,32 @@ module.exports = function register(socket, ctx) {
     if (channelPolicy?.streams_enabled === 0 && !hostSocket.user?.isAdmin) {
       return safeCallback(callback, { error: 'Screen sharing is disabled in this channel' });
     }
-    if (hostSocket.remoteControlCapability?.hostSupported !== true) {
-      return safeCallback(callback, { error: 'The computer to be controlled needs Haven Desktop on Windows' });
+    if (!participantSupported(hostSocket, 'host')) {
+      return safeCallback(callback, {
+        error: 'The host needs an updated Windows Ciacord desktop app and one active display.',
+        desktopRequirement: 'host_desktop_required',
+      });
     }
-    if (controllerSocket.remoteControlCapability?.controllerSupported === false) {
-      return safeCallback(callback, { error: 'That client cannot control a remote screen' });
+    if (!participantSupported(controllerSocket, 'controller')) {
+      return safeCallback(callback, {
+        error: 'The controller needs an updated Windows Ciacord desktop app.',
+        desktopRequirement: 'controller_desktop_required',
+      });
     }
+
+    if (data.settings != null && (!validSettings(data.settings) || mode !== 'request')) {
+      return safeCallback(callback, { error: 'Invalid remote control settings' });
+    }
+    if (data.settings && !hostSocket.remoteControlCapability.routeSelection) {
+      return safeCallback(callback, { desktopRequirement: 'host_desktop_required' });
+    }
+    if (data.settings && !controllerSocket.remoteControlCapability.routeSelection) {
+      return safeCallback(callback, { desktopRequirement: 'controller_desktop_required' });
+    }
+    const settings = data.settings && {
+      resolution: data.settings.resolution, fps: data.settings.fps, bitrateKbps: data.settings.bitrateKbps,
+      connectionPreference: data.settings.connectionPreference,
+    };
 
     const hostId = hostSocket.user.id;
     const controllerId = controllerSocket.user.id;
@@ -159,8 +205,10 @@ module.exports = function register(socket, ctx) {
       mode,
       hostId,
       controllerId,
-      initiatorId: socket.user.id,
+      hostSocketId: hostSocket.id,
+      controllerSocketId: controllerSocket.id,
       responderId: targetUserId,
+      settings,
       createdAt: Date.now(),
       timer: null,
     };
@@ -191,8 +239,11 @@ module.exports = function register(socket, ctx) {
       clearRequest(request.id, 'declined');
       return safeCallback(callback, { ok: true });
     }
-    if (!isActiveChannelMember(request.code, request.hostId) ||
-        !isActiveChannelMember(request.code, request.controllerId)) {
+    const hostSocket = liveSocketFor(request.code, request.hostId);
+    const controllerSocket = liveSocketFor(request.code, request.controllerId);
+    if (hostSocket?.id !== request.hostSocketId || controllerSocket?.id !== request.controllerSocketId ||
+        socket.id !== (request.responderId === request.hostId ? request.hostSocketId : request.controllerSocketId) ||
+        !participantSupported(hostSocket, 'host') || !participantSupported(controllerSocket, 'controller')) {
       clearRequest(request.id, 'unavailable');
       return safeCallback(callback, { error: 'One participant is no longer in the channel' });
     }
@@ -209,15 +260,17 @@ module.exports = function register(socket, ctx) {
       code: request.code,
       hostId: request.hostId,
       controllerId: request.controllerId,
-      createdAt: Date.now(),
+      hostSocketId: request.hostSocketId,
+      controllerSocketId: request.controllerSocketId,
+      phase: 'waiting-viewer',
+      settings: request.settings,
+      setupExpires: Date.now() + SETUP_TTL_MS,
       timer: null,
     };
-    session.timer = setTimeout(() => endSession(sessionId, 'expired'), SESSION_TTL_MS);
+    session.timer = setTimeout(() => endSession(sessionId, 'setup-timeout'), SETUP_TTL_MS);
     session.timer.unref?.();
     remoteControlSessions.set(sessionId, session);
 
-    const hostSocket = liveSocketFor(request.code, request.hostId);
-    const controllerSocket = liveSocketFor(request.code, request.controllerId);
     const hostName = hostSocket?.user?.displayName || 'Host';
     const controllerName = controllerSocket?.user?.displayName || 'Controller';
     hostSocket?.emit('remote-control-session-start', {
@@ -225,55 +278,82 @@ module.exports = function register(socket, ctx) {
       channelCode: request.code,
       role: 'host',
       peer: { id: request.controllerId, username: controllerName },
-      expiresAt: Date.now() + SESSION_TTL_MS,
+      expiresAt: session.setupExpires,
+      ...(session.settings ? { settings: session.settings } : {}),
     });
     controllerSocket?.emit('remote-control-session-start', {
       sessionId,
       channelCode: request.code,
       role: 'controller',
       peer: { id: request.hostId, username: hostName },
-      expiresAt: Date.now() + SESSION_TTL_MS,
+      expiresAt: session.setupExpires,
+      ...(session.settings ? { settings: session.settings } : {}),
     });
     safeCallback(callback, { ok: true, sessionId });
   });
 
-  socket.on('remote-control-signal', (data) => {
-    if (!data || typeof data !== 'object' || !isString(data.sessionId, 1, 64)) return;
+  socket.on('remote-control-signal', (data, callback) => {
+    const reply = ok => safeCallback(callback, { ok });
+    if (!validId(data?.sessionId)) return reply(false);
     const session = remoteControlSessions.get(data.sessionId);
-    if (!session || session.code !== socket.currentChannel) return;
-    const isHost = socket.user.id === session.hostId;
-    const isController = socket.user.id === session.controllerId;
-    if (!isHost && !isController) return;
-    const targetUserId = isHost ? session.controllerId : session.hostId;
-    let serialized;
-    try { serialized = JSON.stringify({ description: data.description, candidate: data.candidate }); }
-    catch { return; }
-    if (serialized.length > MAX_SIGNAL_BYTES) return;
-    emitToUser(session.code, targetUserId, 'remote-control-signal', {
-      sessionId: session.id,
-      fromUserId: socket.user.id,
-      description: data.description || null,
-      candidate: data.candidate || null,
-    });
+    if (!session || session.code !== socket.currentChannel) return reply(false);
+    const host = liveSocketFor(session.code, session.hostId);
+    const controller = liveSocketFor(session.code, session.controllerId);
+    if (host?.id !== session.hostSocketId || controller?.id !== session.controllerSocketId) return reply(false);
+    let target, signal;
+    if (data.kind === 'viewer' && socket.id === controller.id && session.phase === 'waiting-viewer' &&
+        validId(data.watchId) && validCertificate(data.certificate)) {
+      session.phase = 'waiting-host';
+      target = host;
+      signal = { watchId: data.watchId, certificate: data.certificate };
+      if (data.transfer === true) signal.transfer = true;
+    } else if (data.kind === 'offer' && socket.id === host.id && session.phase === 'waiting-host' &&
+        validEndpoint(data.endpoint)) {
+      session.phase = 'waiting-answer';
+      target = controller;
+      const { certificate, iceOffer, basePort, videoMode, bitrateKbps, relayOnly } = data.endpoint;
+      signal = { endpoint: { certificate, iceOffer: { ufrag: iceOffer.ufrag, password: iceOffer.password,
+        candidates: iceOffer.candidates }, basePort, videoMode, bitrateKbps, relayOnly } };
+      if (data.endpoint.transfer === true) signal.endpoint.transfer = true;
+      if (['public', 'stable', 'destination-dependent', 'unknown'].includes(data.endpoint.nat)) {
+        signal.endpoint.nat = data.endpoint.nat;
+      }
+    } else if (data.kind === 'answer' && socket.id === controller.id && session.phase === 'waiting-answer' &&
+        validIce(data.answer)) {
+      session.phase = 'connecting';
+      target = host;
+      const { ufrag, password, candidates } = data.answer;
+      signal = { answer: { ufrag, password, candidates } };
+    } else if (data.kind === 'playing' && socket.id === controller.id && session.phase === 'connecting') {
+      session.phase = 'playing';
+      clearTimeout(session.timer);
+      session.timer = setTimeout(() => endSession(session.id, 'expired'), SESSION_TTL_MS);
+      session.timer.unref?.();
+      target = host;
+    } else {
+      return reply(false);
+    }
+    target.emit('remote-control-signal', { sessionId: session.id, kind: data.kind, ...signal });
+    reply(true);
   });
 
-  socket.on('remote-control-end', (data = {}) => {
-    if (!isString(data.sessionId, 1, 64)) return;
+  socket.on('remote-control-end', data => {
+    if (!validId(data?.sessionId)) return;
     const session = remoteControlSessions.get(data.sessionId);
     if (!session) return;
-    if (socket.user.id !== session.hostId && socket.user.id !== session.controllerId) return;
+    if (socket.id !== session.hostSocketId && socket.id !== session.controllerSocketId) return;
     endSession(session.id, isString(data.reason, 1, 48) ? data.reason : 'ended', socket.user.id);
   });
 
   socket.on('enter-channel', (data = {}) => {
     const nextCode = isString(data.code, 8, 8) ? data.code : '';
     for (const session of remoteControlSessions.values()) {
-      if ((session.hostId === socket.user.id || session.controllerId === socket.user.id) && session.code !== nextCode) {
+      if ((session.hostSocketId === socket.id || session.controllerSocketId === socket.id) && session.code !== nextCode) {
         endSession(session.id, 'channel-changed', socket.user.id);
       }
     }
     for (const [requestId, request] of remoteControlRequests) {
-      if ((request.hostId === socket.user.id || request.controllerId === socket.user.id) && request.code !== nextCode) {
+      if ((request.hostSocketId === socket.id || request.controllerSocketId === socket.id) && request.code !== nextCode) {
         clearRequest(requestId, 'channel-changed');
       }
     }
@@ -283,12 +363,12 @@ module.exports = function register(socket, ctx) {
     const code = isString(data.code, 8, 8) ? data.code : '';
     if (!code) return;
     for (const [sessionId, session] of remoteControlSessions) {
-      if (session.code === code && (session.hostId === socket.user.id || session.controllerId === socket.user.id)) {
+      if (session.code === code && (session.hostSocketId === socket.id || session.controllerSocketId === socket.id)) {
         endSession(sessionId, 'channel-left', socket.user.id);
       }
     }
     for (const [requestId, request] of remoteControlRequests) {
-      if (request.code === code && (request.hostId === socket.user.id || request.controllerId === socket.user.id)) {
+      if (request.code === code && (request.hostSocketId === socket.id || request.controllerSocketId === socket.id)) {
         clearRequest(requestId, 'channel-left');
       }
     }
@@ -303,6 +383,6 @@ module.exports = function register(socket, ctx) {
 module.exports.constants = {
   REQUEST_TTL_MS,
   SESSION_TTL_MS,
-  MAX_SIGNAL_BYTES,
+  SETUP_TTL_MS,
   MAX_REQUESTS_PER_MINUTE,
 };

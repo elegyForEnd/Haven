@@ -36,7 +36,7 @@ test('nothing to strip leaves the message untouched', () => {
 });
 
 // ── client side ───────────────────────────────────────────────────────────
-const MODULES = ['app-utilities.js', 'app-context.js'].map(name => ({
+const MODULES = ['app-utilities.js', 'app-message-content.js', 'app-threads.js', 'app-context.js'].map(name => ({
   name,
   source: fs.readFileSync(path.join(ROOT, 'public/js/modules', name), 'utf8'),
 }));
@@ -105,7 +105,8 @@ test('a member who shares a role name wins over the role', () => {
   const app = loadApp();
   app.channelMembers.push({ id: 3, username: 'Moderators', loginName: 'moderators' });
   const html = app._formatContent('hi @Moderators');
-  assert.match(html, /<span class="mention">@Moderators<\/span>/);
+  // The person's mention carries their id, which opens their profile card (#5878).
+  assert.match(html, /<span class="mention" data-mention-user="3">@Moderators<\/span>/);
   assert.ok(!html.includes('mention-role'));
 });
 

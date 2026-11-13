@@ -62,13 +62,12 @@ function fakeConnection(localType, remoteType, videoTrack) {
 
 function makeSharer(VoiceManager, { local = 'host', remote = 'srflx' } = {}) {
   const voice = Object.create(VoiceManager.prototype);
-  const track = { kind: 'video', readyState: 'live' };
+  const track = { kind: 'video', readyState: 'live', getSettings: () => ({ width: 1920, height: 1080 }) };
   voice.peers = new Map();
   voice.screenStream = { getVideoTracks: () => [track], getTracks: () => [track] };
   voice.isScreenSharing = true;
   voice.screenResolution = 1080;
   voice.screenFrameRate = 30;
-  voice._screenBitrates = { 0: 8_000_000, 720: 4_000_000, 1080: 8_000_000, 1440: 14_000_000 };
   const connection = fakeConnection(local, remote, track);
   voice.peers.set(2, { connection, username: 'viewer' });
   return { voice, connection };
@@ -93,6 +92,24 @@ test('the remote end being a relay counts too', async () => {
   assert.equal(voice._relayPeers.has(2), true);
 });
 
+test('manual screen resolution and FPS limits only affect the requesting viewer and reset to automatic', async () => {
+  const VoiceManager = loadVoiceManager();
+  const { voice, connection } = makeSharer(VoiceManager);
+  const second = fakeConnection('host', 'srflx', connection.sender.track);
+  voice.peers.set(3, { connection: second });
+  voice.peers.get(2).screenViewQuality = { resolution: 480, fps: 15 };
+  voice.reapplyScreenBitrate();
+  assert.equal(connection.sender.applied.encodings[0].scaleResolutionDownBy, 1080 / 480);
+  assert.equal(connection.sender.applied.encodings[0].maxFramerate, 15);
+  assert.equal(connection.sender.applied.encodings[0].maxBitrate, 1000000);
+  assert.equal(second.sender.applied.encodings[0].scaleResolutionDownBy, 1);
+  assert.equal(second.sender.applied.encodings[0].maxFramerate, 30);
+  voice.peers.get(2).screenViewQuality = { resolution: 0, fps: 0 };
+  voice.reapplyScreenBitrate();
+  assert.equal(connection.sender.applied.encodings[0].scaleResolutionDownBy, 1);
+  assert.equal(connection.sender.applied.encodings[0].maxBitrate, 8000000);
+});
+
 test('a direct viewer keeps the full-quality profile', async () => {
   const VoiceManager = loadVoiceManager();
   const { voice, connection } = makeSharer(VoiceManager);
@@ -100,7 +117,7 @@ test('a direct viewer keeps the full-quality profile', async () => {
   assert.equal(voice._relayPeers.has(2), false);
   // Nothing changed, so nothing was re-applied by detection; apply explicitly
   // the way shareScreen does and check the full profile is what goes out.
-  voice._applyScreenBitrate(connection, voice._screenBitrates[1080], 2);
+  voice._applyScreenBitrate(connection, 8_000_000, 2);
   const p = connection.sender.applied;
   assert.equal(p.encodings[0].maxBitrate, 8_000_000);
   assert.equal(p.encodings[0].maxFramerate, 30);
@@ -112,7 +129,7 @@ test('switching the detection off in Debug leaves relayed viewers on the full pr
   const { voice, connection } = makeSharer(VoiceManager, { local: 'relay' });
   await voice._detectRelayPath(2, connection);
   assert.equal(voice._relayPeers.has(2), true, 'the path is still recorded');
-  voice._applyScreenBitrate(connection, voice._screenBitrates[1080], 2);
+  voice._applyScreenBitrate(connection, 8_000_000, 2);
   assert.equal(connection.sender.applied.encodings[0].maxBitrate, 8_000_000);
   assert.equal(connection.sender.applied.degradationPreference, 'maintain-framerate');
 });
@@ -120,7 +137,7 @@ test('switching the detection off in Debug leaves relayed viewers on the full pr
 test('the manual toggle still applies the gentler profile to everyone', () => {
   const VoiceManager = loadVoiceManager({ haven_screen_relay_profile: '1' });
   const { voice, connection } = makeSharer(VoiceManager);
-  voice._applyScreenBitrate(connection, voice._screenBitrates[1080], 2);
+  voice._applyScreenBitrate(connection, 8_000_000, 2);
   assert.equal(connection.sender.applied.encodings[0].maxBitrate, 3_000_000);
   assert.equal(connection.sender.applied.degradationPreference, 'balanced');
 });
@@ -142,6 +159,6 @@ test('the userId is recovered from the connection when a caller does not pass it
   const { voice, connection } = makeSharer(VoiceManager, { local: 'relay' });
   await voice._detectRelayPath(2, connection);
   connection.sender.applied = null;
-  voice._applyScreenBitrate(connection, voice._screenBitrates[1080]);
+  voice._applyScreenBitrate(connection, 8_000_000);
   assert.equal(connection.sender.applied.encodings[0].maxBitrate, 3_000_000);
 });

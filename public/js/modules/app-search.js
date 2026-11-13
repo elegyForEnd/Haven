@@ -19,6 +19,8 @@ const SEARCH_PAGE_SIZE = 25;
 // has: options the server understands. Seeded here so adding one is a one-liner.
 const SEARCH_HAS_OPTIONS = ['image', 'file', 'link', 'video', 'audio'];
 
+import { keepInColumn } from './keep-in-column.js?v=4.29.18';
+
 export default {
 
 _searchInit() {
@@ -36,7 +38,7 @@ _searchInit() {
   document.getElementById('search-panel-close')?.addEventListener('click', () => this._searchClose());
   document.getElementById('search-page-prev')?.addEventListener('click', () => this._searchGoToPage(-1));
   document.getElementById('search-page-next')?.addEventListener('click', () => this._searchGoToPage(1));
-  // Direct page entry — commit on Enter or blur (never per keystroke), so
+  // Direct page entry: commit on Enter or blur (never per keystroke), so
   // jumping to page 20 is one fetch instead of 19 arrow clicks. Out-of-range
   // and non-numeric input is clamped/reverted in _searchGoToPageAbsolute.
   const pageInput = document.getElementById('search-page-input');
@@ -137,6 +139,28 @@ _searchRun(query, page = 1) {
 // search-results whose token isn't the latest, so a slow earlier query can't
 // clobber the panel with stale results.
 _searchNextToken() { this._searchSeq = (this._searchSeq || 0) + 1; return this._searchSeq; },
+
+// Build a tag: token, quoting multi-word tags since the server captures a bare
+// value with \S+ (tags may contain spaces). (#tagging phase 2)
+_tagSearchToken(name) {
+  const n = String(name || '').trim();
+  if (!n) return '';
+  return /\s/.test(n) ? `tag:"${n}"` : `tag:${n}`;
+},
+
+// Clicking a tag chip (on a message or a result) opens search and runs exactly
+// that tag, nothing else. Tagged messages only exist in non-DM channels, so this
+// always lands on the server (global) search path.
+_searchByTag(name) {
+  const token = this._tagSearchToken(name);
+  if (!token) return;
+  const sc = document.getElementById('search-container');
+  if (sc) sc.style.display = 'flex';
+  const input = document.getElementById('search-input');
+  if (input) input.value = token;
+  this._searchRun(token);
+  this._sfpSync?.();
+},
 
 // Toggle the "Searching…" indicator. Shown when a server request is in flight,
 // hidden once its (matching) response lands. Also makes sure the panel is on
@@ -241,7 +265,7 @@ _searchJumpTo(code, msgId) {
   }
 },
 
-// Called from switchChannel — hide/show the panel for the new context.
+// Called from switchChannel: hide/show the panel for the new context.
 _searchOnChannelSwitch() {
   const key = this._searchContextKey();
   const st = this._searchGetState(key);
@@ -261,7 +285,7 @@ _searchOnChannelSwitch() {
   this._sfpSync();
 },
 
-// channels-list arrived — the user's channel set changing (add/remove) can make
+// channels-list arrived. The user's channel set changing (add/remove) can make
 // cached rows outlive their access. Signature-gate it so a plain reconnect that
 // re-pushes an identical list doesn't false-trigger, then mark stale.
 _searchInvalidate(channels) {
@@ -273,7 +297,7 @@ _searchInvalidate(channels) {
 },
 
 // Force the PUBLIC search context stale regardless of the channel signature.
-// Used when the user's channel set or their own roles/permissions change — that
+// Used when the user's channel set or their own roles/permissions change; that
 // can revoke access without altering which channels appear in the list, so the
 // signature wouldn't catch it. Only the public context is touched: DM search is
 // local, E2E, and per-DM, so server roles/channel membership never affect it.
@@ -319,7 +343,7 @@ _searchFilterInit() {
   pop.querySelectorAll('.sfp-chip[data-sfp-filter]').forEach(chip => {
     chip.addEventListener('click', () => {
       const f = chip.dataset.sfpFilter;
-      // pinned is a plain boolean — no sub-picker, append straight away.
+      // pinned is a plain boolean: no sub-picker, append straight away.
       if (f === 'pinned') this._sfpAppend('pinned:true');
       else this._sfpOpenPicker(f);
     });
@@ -338,11 +362,11 @@ _searchFilterInit() {
   document.getElementById('search-filter-btn')?.addEventListener('click', (e) => {
     e.stopPropagation();
     const hidden = pop.style.display === 'none' || !pop.style.display;
-    if (hidden) { this._sfpShowRoot(); pop.style.display = 'block'; }
+    if (hidden) { this._sfpShowRoot(); pop.style.display = 'block'; keepInColumn(pop); }
     else pop.style.display = 'none';
   });
   // Clicking into the text box reopens the popover too (parity with the filter
-  // button), so dismissing it by clicking away isn't a dead end. Public only —
+  // button), so dismissing it by clicking away isn't a dead end. Public only:
   // DM search has no filters. If it's already open we leave it alone.
   document.getElementById('search-input')?.addEventListener('click', () => {
     const ch = (this.channels || []).find(c => c.code === this.currentChannel);
@@ -350,6 +374,7 @@ _searchFilterInit() {
     if (pop.style.display === 'none' || !pop.style.display) {
       this._sfpShowRoot();
       pop.style.display = 'block';
+      keepInColumn(pop);
     }
   });
   // Click outside the search box hides the popover (without closing search).
@@ -361,7 +386,7 @@ _searchFilterInit() {
   });
 },
 
-// Show the popover with the search box, but only for public channels — filters
+// Show the popover with the search box, but only for public channels; filters
 // don't apply to local DM search.
 _sfpSync() {
   const pop = document.getElementById('search-filter-popover');
@@ -371,7 +396,7 @@ _sfpSync() {
   const show = open && !(ch && ch.is_dm);
   const btn = document.getElementById('search-filter-btn');
   if (btn) btn.style.display = show ? '' : 'none';
-  if (show) { this._sfpShowRoot(); pop.style.display = 'block'; }
+  if (show) { this._sfpShowRoot(); pop.style.display = 'block'; keepInColumn(pop); }
   else pop.style.display = 'none';
 },
 
@@ -468,6 +493,9 @@ _sfpRenderRecent() {
 _sfpRenderList(type, term) {
   const list = document.getElementById('sfp-list');
   if (!list) return;
+  // tag: options come from the server vocabulary, not client state, so they take
+  // a debounced async path of their own.
+  if (type === 'tag') return this._sfpRenderTagList(term);
   const p = (term || '').toLowerCase();
   let entries = [];
 
@@ -499,6 +527,41 @@ _sfpRenderList(type, term) {
   list.querySelectorAll('.sfp-item').forEach(item => {
     item.addEventListener('click', () => this._sfpAppend(item.dataset.token));
   });
+},
+
+// Tag picker list: debounced lookup against the server vocabulary (reusing the
+// composer's search-upload-tags handler, so it shares the tagSearch rate limit).
+// Picking one appends a correctly-quoted tag: token. (#tagging phase 2)
+_sfpRenderTagList(term) {
+  const list = document.getElementById('sfp-list');
+  if (!list) return;
+  clearTimeout(this._sfpTagTimer);
+  const q = (term || '').trim();
+  this._sfpTagTimer = setTimeout(() => {
+    if (this._sfpActive !== 'tag') return;   // picker changed while waiting
+    this.socket.emit('search-upload-tags', { query: q, code: this.currentChannel }, (res) => {
+      if (this._sfpActive !== 'tag') return;
+      if (res && res.error === 'rate_limited') return;
+      const tags = (res && res.tags) || [];
+      if (!tags.length) {
+        // No tag starts with what they typed. Offer to run the search anyway.
+        if (q) {
+          list.innerHTML = `<button type="button" class="sfp-item sfp-search-removed" data-token="${this._escapeHtml(this._tagSearchToken(q))}">${this._escapeHtml(t('tags.search_removed'))}</button>`;
+          list.querySelector('.sfp-search-removed')?.addEventListener('click', (e) => this._sfpAppend(e.currentTarget.dataset.token));
+        } else {
+          list.innerHTML = `<div class="sfp-empty">${t('header.filter_no_matches')}</div>`;
+        }
+        return;
+      }
+      list.innerHTML = tags.slice(0, 100).map(tg =>
+        `<div class="sfp-item" data-token="${this._escapeHtml(this._tagSearchToken(tg.name))}">
+           <span>${this._escapeHtml(tg.name)}</span>
+         </div>`).join('');
+      list.querySelectorAll('.sfp-item').forEach(item => {
+        item.addEventListener('click', () => this._sfpAppend(item.dataset.token));
+      });
+    });
+  }, 250);
 },
 
 // Append a filter token to the search input and re-run the search.
@@ -557,13 +620,18 @@ _searchRenderPanel() {
     if (st.filters.after)  tags.push(`<span class="search-filter-tag">after:${this._escapeHtml(st.filters.after)}</span>`);
     if (st.filters.before) tags.push(`<span class="search-filter-tag">before:${this._escapeHtml(st.filters.before)}</span>`);
     if (st.filters.during) tags.push(`<span class="search-filter-tag">during:${this._escapeHtml(st.filters.during)}</span>`);
+    if (st.filters.tag)    tags.push(`<span class="search-filter-tag">tag:${this._escapeHtml(st.filters.tag)}</span>`);
+    if (st.filters.mentions) tags.push('<span class="search-filter-tag">mentions:me</span>');
     if (tags.length) filterInfo = `<div class="search-filter-tags">${tags.join(' ')}</div>`;
   }
   const localTag = st.isDM ? ` <span class="search-filter-tag">${t('header.search_dm_local_tag')}</span>` : '';
   count.innerHTML = `${t(total === 1 ? 'header.search_results_one' : 'header.search_results_other', { count: total, query: qHtml })}${localTag}${filterInfo}`;
 
   // Highlight the plain text (all filter tokens stripped).
-  const highlightQuery = (st.query || '').replace(/\b(?:from|in|has|pinned|before|after|during):\S+/gi, '').trim();
+  const highlightQuery = (st.query || '')
+    .replace(/\btag:"[^"]*"/gi, '')
+    .replace(/\b(?:from|in|has|pinned|before|after|during|tag|mentions):\S+/gi, '')
+    .trim();
 
   list.innerHTML = total === 0
     ? `<p class="muted-text" style="padding:12px">${t('header.search_no_results')}</p>`
@@ -588,9 +656,10 @@ _searchRenderPanel() {
         <div class="search-result-item" data-msg-id="${r.id}" data-user-id="${this._escapeHtml(String(r.user_id ?? ''))}" data-channel-code="${this._escapeHtml(r.channel_code || '')}">
           ${chan}
           <span class="search-result-author" style="color:${this._getUserColor(r.username)}">${this._escapeHtml(this._getNickname(r.user_id, r.username))}</span>
-          <span class="search-result-time">${this._formatTime(r.created_at)}</span>
+          <span class="search-result-time"${this._timeAttr(r.created_at)}>${this._formatTime(r.created_at)}</span>
           ${thread}
           <div class="message-content search-result-content">${this._formatContent(r.content)}</div>
+          ${this._renderAttachmentTags ? this._renderAttachmentTags(r.attachmentTags) : ''}
         </div>`;
       }).join('');
 
@@ -601,16 +670,16 @@ _searchRenderPanel() {
     if (highlightQuery) this._searchHighlightTextNodes(content, highlightQuery);
     this._searchDeferEmbeds(item);
     // Row click jumps to the message, but never when the click lands on
-    // interactive content (media, links, the Load button, or the thread badge)
-    // — those have their own behaviour and must not trigger a jump.
+    // interactive content (media, links, the Load button, or the thread badge).
+    // Those have their own behaviour and must not trigger a jump.
     item.addEventListener('click', (e) => {
-      if (e.target.closest('a, img, video, audio, .chat-image, .file-video, .file-audio, .link-preview, .search-load-embed, .search-result-thread, .spoiler')) return;
+      if (e.target.closest('a, img, video, audio, .chat-image, .file-video, .file-audio, .link-preview, .search-load-embed, .search-result-thread, .spoiler, .message-tag')) return;
       this._searchJumpTo(item.dataset.channelCode, parseInt(item.dataset.msgId, 10));
     });
   });
   this._setupVideos(list);
 
-  // Pager — only when more than one page.
+  // Pager: only when more than one page.
   if (pager) {
     if (pages > 1) {
       pager.style.display = 'flex';
