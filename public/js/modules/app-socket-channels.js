@@ -97,7 +97,7 @@ _listenChannelsAndMessages() {
       this.socket.emit('join-channel', { code: inviteCode });
       sessionStorage.removeItem('haven_pending_invite');
       // Clean up the URL
-      const cleanUrl = window.location.pathname;
+      const cleanUrl = window.location.pathname + window.location.hash;
       window.history.replaceState({}, '', cleanUrl);
     }
 
@@ -126,7 +126,7 @@ _listenChannelsAndMessages() {
         // who already have channel access.
         this._showToast?.(t('toasts.channel_link_unavailable'), 'error');
       }
-      window.history.replaceState({}, '', window.location.pathname);
+      window.history.replaceState({}, '', window.location.pathname + window.location.hash);
     }
 
     // Re-evaluate input area visibility for the current channel (read-only, text/media toggles may have changed)

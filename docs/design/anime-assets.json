@@ -1,0 +1,43 @@
+{
+  "generator": "built-in image_gen.imagegen",
+  "date": "2026-11-14",
+  "directory": "public/img/anime",
+  "processing": "WebP encoding and bounded downscaling only; transparent alpha preserved. Original outputs remain in Codex generated_images.",
+  "assets": [
+    {
+      "file": "frieren-hero.webp",
+      "usage": "首页全景主视觉",
+      "prompt": "Production website hero illustration background, VERY WIDE PANORAMIC LANDSCAPE exactly 3:1 aspect ratio (not 16:9). Japanese anime film quality. Frieren, a silver-haired elf adventurer with green eyes, pointed ears and modest white/gold travel cape shown waist-up in RIGHT THIRD. Her ENTIRE head and hair MUST be inside the canvas with space above, eye line roughly 1/3 from top. Panoramic wildflower meadow, distant old stone arches, bright blue sky, soft pink cherry blossoms at very top right, luminous spring sunlight. LEFT HALF is quiet pale sunlit sky with very light cream blush and lavender mist and some meadow, abundant open negative space for dark webpage text. Delicate anime linework and refined cel shading, gentle serene mood. No text, no logos, no lettering, no interface, no borders, no watermark."
+    },
+    {
+      "file": "frieren-thumb.webp",
+      "usage": "横向缩略图与播放器等待封面",
+      "prompt": "Generate a production website hero background asset, NOT a UI mockup. Wide landscape 16:9. Beautiful high quality Japanese anime film illustration of Frieren, silver long hair with twin tied sections, pointed elf ears, white and gold travel outfit, shown waist-up on the RIGHT THIRD, serene sunlit wildflower meadow, distant ancient stone arches, rich clear blue sky and white clouds, drifting tiny petals, luminous gentle lavender and sakura pink accents. Left half is a softly painted pale sunlit sky and meadow with abundant quiet open negative space to place dark webpage text over. Elegant delicate linework, nuanced soft cel shading, dreamy spring light, gorgeous environment detail to right. No writing, no letters, no symbols, no logos, no interface. Entire image edge to edge. This asset matches a creamy white pastel lavender anime streaming website."
+    },
+    {
+      "file": "mascot.webp",
+      "usage": "透明侧栏角色",
+      "prompt": "Generate an original anime website mascot as an isolated transparent-background cutout. One small full-body chibi magical-girl mascot with long flowing pastel lavender hair, tiny golden four-point star hair clip, lavender eyes, cheerful eyes-closed smile, fully clothed modest elegant lavender and cream magical-academy dress with a capelet and bows, small dark-purple boots. Sitting in a relaxed adorable pose, holding a little book and waving. Beautiful delicate anime line art, clean refined cel shading, pastel sakura pink and lavender details, a few tiny sakura petals around character, no ground plane, no background, no text, no logos, no UI. Leave clear margin all around, character centered. Designed for a 140px-wide sidebar in a mature anime fan website."
+    },
+    {
+      "file": "weekend-banner.webp",
+      "usage": "周末补番专题",
+      "prompt": "Generate a production website editorial banner illustration, NOT a UI mockup. Wide landscape 3:1. Gorgeous cozy anime illustration in pastel lavender, cream and sakura pink. On the RIGHT half a lovely original fully clothed lavender-haired anime girl with a tiny gold star hairpin rests her chin on her folded arms at a sunlit desk, surrounded by small books and a teacup, looking at viewer warmly. Window with soft cherry blossoms, floating tiny petals, beautiful delicate linework, soft cel shading. LEFT HALF has calm very pale blush-lavender sunlight with generous open negative space to put website text over, no character or clutter there. Charming visual-novel and anime-journal art direction. No writing, no letters, no text, no UI, no watermark. All edges filled."
+    },
+    {
+      "file": "dungeon-thumb.webp",
+      "usage": "迷宫饭横向缩略图",
+      "prompt": "Wide 16:9 anime illustration, production anime website landscape thumbnail, Delicious in Dungeon characters Marcille the long blonde-haired elf woman with pointed ears and a friendly bearded dwarf cook with horned helmet, cozy underground stone dungeon camp kitchen, steaming soup and vegetables, warm lantern light, expressive high quality delicate anime linework and cel shading, friendly adventurous atmosphere. No text, logos, UI, watermark, borders."
+    },
+    {
+      "file": "guitar-thumb.webp",
+      "usage": "孤独摇滚横向缩略图",
+      "prompt": "Wide 16:9 production anime website landscape thumbnail illustration, Bocchi the Rock pink long-haired shy teenage girl in a modest pink tracksuit playing a black electric guitar on a small live music stage, cinematic lavender and pink concert lights, beautiful clean detailed Japanese anime cel-shading, thoughtful earnest expression, fully clothed, other instruments softly blurred in background. No text, no logos, no UI, no watermark, no borders."
+    },
+    {
+      "file": "sakura-branch.webp",
+      "usage": "透明樱花装饰",
+      "prompt": "Transparent-background isolated decorative sakura cherry blossom branch for a pastel anime website header corner. Very wide horizontal 3:1 composition, thin gently curved brown-lavender branch extending from upper RIGHT toward center LEFT, clusters of small delicate pink five-petal cherry flowers, a few floating petals, light airy Japanese anime watercolor and fine clean line art, soft sakura pink and cream palette with lavender shadows, graceful sparse arrangement. No vase, no ground, no backdrop, no text, no frame, no logos. Entire branch fully in frame with margins, truly transparent cutout."
+    }
+  ]
+}

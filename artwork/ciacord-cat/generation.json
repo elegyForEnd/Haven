@@ -1,0 +1,21 @@
+{
+  "generator": "built-in image_gen.imagegen",
+  "selection": "4 — 猫耳观影",
+  "master": "ciacord-cat.png",
+  "reference": "exec-1eca918f-4d6e-4399-b500-e8019f2e1a02.png",
+  "steps": [
+    {
+      "purpose": "Independent character extraction",
+      "prompt": "Create a single high-resolution clean transparent-background full-body mascot illustration, faithfully EXTRACT and redraw ONLY candidate number 4 (BOTTOM LEFT) from the reference sheet. It must be the exact same design: tiny seated chibi girl with silver-lavender short fluffy bob hair, original happy closed crescent smiling eyes and open tiny smile, pale neutral pink skin and blush, huge lavender cat-ear plush hood with white fluffy rim and pale inner ears, tiny cat face embroidered atop hood, purple bow/paw medallion and tiny gold bell on IMAGE LEFT, lavender oversized comfy hoodie with paw marks, short skirt, lilac striped knee socks, lavender lace-up boots, fluffy lavender cat tail curls on IMAGE LEFT. Holding purple-and-white vertically striped popcorn carton with paw emblem on IMAGE RIGHT in front of chest, small popcorn mound, sleeve on IMAGE LEFT embracing carton. Exact original compact seated pose, knees together and shoes down to image right, keep both arms and prop as in number 4. Use same fine detailed anime linework, refined soft cel shading, pale lilac color palette and small white highlights as the sheet. No new pose, no redesign. Full complete character and tail, generous 6 percent transparent margin on every side, isolated true alpha background. No ground, no shadow, no panel, no writing, no number 4, no other candidates, no isolated exclamation accents. Image suitable to split into layers for Live2D."
+    },
+    {
+      "purpose": "Cool white materials",
+      "prompt": "Precise color-only edit to the attached cat-hooded girl with popcorn. User says the WHITE PARTS look YELLOW compared with candidate sheet. Correct ONLY the whites: hood's fluffy rim, fluffy ear tufts, skirt ruffles, white stripes on stockings, white stripes on popcorn box, shoelaces and white shoe toecaps. Make them clean cool neutral porcelain WHITE with VERY faint blue-lavender shadows, ZERO yellow, beige or ivory cast. Soft skin stays natural rosy pale pink. Preserve existing lavender garment and hair colors and all tiny gold bell details. Strictly same character, exactly same lines and geometry, same seated pose, same CLOSED smiling eyes, same framing and canvas coordinates, same transparent background and margins. Do not redesign anything. It is a white-balance adjustment of white material only. Crisp delicately shaded anime art matching original."
+    },
+    {
+      "purpose": "Slightly fairer skin",
+      "prompt": "Make a very subtle SKIN-ONLY correction on this exact transparent cat-hood chibi illustration. Lighten exposed facial skin and knees/legs a small amount, remove yellow/orange tint to achieve pale neutral porcelain pink skin with natural soft rosy blush and existing soft shadow depth. Match skin from the original 6-candidate mascot sheet: soft fair slightly rosy. This is a small adjustment, not glowing pure white or grey. Keep the now clean cool white fur rim, ear tufts, striped socks, lace, skirt and popcorn box EXACTLY as they are. Keep ALL other pixels and exact line geometry, proportions, pose, hair, hood, clothes, popcorn, boots, CLOSED smiling eyes and facial features unchanged. Same canvas registration and transparent alpha. No redesign, skin palette correction only."
+    }
+  ],
+  "processing": "Disconnected alpha speckles removed. Original visible pixels partitioned into PSD layers. Separate model PSD includes four-pixel texture overlap. Hidden body plate aligned from an ImageGen reconstruction and keyed by waving parameter."
+}

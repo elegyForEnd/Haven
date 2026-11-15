@@ -41,9 +41,10 @@ services:
     volumes:
       - haven_data:/data
     environment:
+      - MANGA_ENGINE_URL=http://manga-engine:4567
       - PORT=3000
       - HOST=0.0.0.0
-      - FFMPEG_PATH=/usr/bin/ffmpeg
+      - FFMPEG_PATH=/usr/local/bin/ffmpeg
       - BILIBILI_VIDEO_MAX_HEIGHT=1080
       - BILIBILI_HLS_ENABLED=true
       - BILIBILI_HLS_MAX_CONCURRENT=2
@@ -54,6 +55,8 @@ services:
       - BILIBILI_PROXY_RESERVED_AUDIO=8
       - BILIBILI_PROXY_TIMEOUT_MS=30000
       - SERVER_NAME=${SERVER_NAME}
+      - ANIME_TMDB_READ_TOKEN=${ANIME_TMDB_READ_TOKEN:-}
+      - ANIME_TMDB_MAPPINGS=${ANIME_TMDB_MAPPINGS:-}
       - ADMIN_USERNAME=${ADMIN_USERNAME}
       - TURN_URL=turn:${DOMAIN}:3478
       - TURN_SECRET=${TURN_SECRET}
@@ -63,15 +66,33 @@ services:
       - HAVEN_EASYTIER_NETWORK_PREFIX=${HAVEN_EASYTIER_NETWORK_PREFIX:-}
     networks:
       - proxy
+      - manga-private
     labels:
       - traefik.enable=true
-      - traefik.docker.network=proxy
+      - traefik.docker.network=${COMPOSE_PROJECT_NAME:-haven-traefik-coturn}_proxy
       - traefik.http.routers.haven.rule=Host(`${DOMAIN}`)
       - traefik.http.routers.haven.entrypoints=websecure
       - traefik.http.routers.haven.tls.certresolver=letsencrypt
       - traefik.http.services.haven.loadbalancer.server.port=3000
       - traefik.http.services.haven.loadbalancer.server.scheme=https
       - traefik.http.routers.haven.service=haven
+
+  manga-engine:
+    image: ghcr.io/suwayomi/suwayomi-server:v2.4.2366
+    restart: unless-stopped
+    mem_limit: 512m
+    environment:
+      - BIND_IP=0.0.0.0
+      - BIND_PORT=4567
+      - AUTH_MODE=none
+      - WEB_UI_ENABLED=false
+      - JAVA_TOOL_OPTIONS=-Xms64m -Xmx192m -Dsuwayomi.tachidesk.config.server.kcefEnabled=false
+    volumes:
+      - manga_data:/home/suwayomi/.local/share/Tachidesk
+    networks:
+      - manga-private
+    labels:
+      - traefik.enable=false
 
   easytier:
     profiles: [easytier]
@@ -113,8 +134,10 @@ services:
       - --max-port=65535
 
 volumes:
+  manga_data:
   haven_data:
   traefik_certs:
 
 networks:
+  manga-private:
   proxy:

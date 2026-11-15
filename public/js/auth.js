@@ -19,7 +19,8 @@
       if (_pendingMessage) parts.push('message=' + encodeURIComponent(_pendingMessage));
       return parts.length ? '?' + parts.join('&') : '';
     })();
-    return '/app' + _appQuery;
+    const animeHash = window.location.hash.startsWith('#anime') ? window.location.hash : '';
+    return '/app' + _appQuery + animeHash;
   }
   let _appUrl = _buildAppUrl();
 
@@ -41,9 +42,10 @@
 
   // If already logged in, redirect to app
   if (!_oidcHandoff && localStorage.getItem('haven_token')) {
-    window.location.href = _appUrl;
+    window.location.replace(_appUrl);
     return;
   }
+  document.documentElement.classList.remove('has-saved-session');
 
   // Initialise translations before rendering any UI text
   await window.i18n.init();

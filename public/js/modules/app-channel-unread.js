@@ -490,10 +490,10 @@ _updateTabTitle() {
   }, 0);
   // Include the server's display name so multiple Haven tabs are easy to tell
   // apart at a glance (issue #5284).
-  const serverName = (this.serverSettings && this.serverSettings.server_name) || '';
-  const base = serverName && serverName.toLowerCase() !== 'haven'
-    ? `Haven: ${serverName}`
-    : 'Haven';
+  const serverName = this.serverSettings?.server_name || this.serverSettings?.server_name_effective;
+  const base = serverName && serverName.toLowerCase() !== 'ciacord'
+    ? `Ciacord: ${serverName}`
+    : 'Ciacord';
   document.title = total > 0 ? `(${total}) ${base}` : base;
 },
 

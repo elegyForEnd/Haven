@@ -39,6 +39,7 @@ _initDesktopAppBanner() {
   // "Electron" in the user agent. data-desktop-app is set independently by the
   // preload, so any one of them surviving is enough to recognise the app.
   const inDesktopApp = !!(
+    window.ciacordDesktop ||
     window.havenDesktop?.isDesktopApp ||
     window.havenDesktop ||
     navigator.userAgent.includes('Electron') ||
@@ -52,26 +53,9 @@ _initDesktopAppBanner() {
     return;
   }
 
-  // Don't show on mobile / tablet, desktop app isn't relevant there
-  if (/Android|iPhone|iPad|iPod|Mobile|Tablet/i.test(navigator.userAgent)) return;
-
-  // ── Top-bar banner ──
-  const bannerDismissed = localStorage.getItem('haven_desktop_banner_dismissed');
-  if (!bannerDismissed) {
-    const banner = document.getElementById('desktop-app-banner');
-    if (banner) {
-      banner.style.display = 'inline-flex';
-      const dismissBtn = document.getElementById('desktop-app-dismiss');
-      if (dismissBtn) {
-        dismissBtn.addEventListener('click', (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          banner.style.display = 'none';
-          localStorage.setItem('haven_desktop_banner_dismissed', '1');
-        });
-      }
-    }
-  }
+  // Keep the server download available even if an older promo was dismissed.
+  const banner = document.getElementById('desktop-app-banner');
+  if (banner) banner.style.display = 'inline-flex';
 
   // ── Wire the promo modal's close paths. The welcome-popup queue handles
   // auto-show + seen-tracking; here we just make sure the buttons inside

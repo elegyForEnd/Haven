@@ -1,0 +1,511 @@
+/* Deliberately scoped: switching back to chat restores its existing theme. */
+body[data-anime-standalone]{margin:0;background:#fcf9ff}
+body.anime-mode{overflow:hidden}
+body.anime-mode #app{display:none!important}
+#anime-space{--ac-ink:#3f2a49;--ac-muted:#97899f;--ac-purple:#9760ed;--ac-line:#eadef6;--ac-pink:#f29ac3;--ac-paper:#fffcff;position:fixed;inset:0;z-index:100;display:grid;grid-template-columns:3.5rem 220px minmax(0,1fr);background:#fcf9ff;color:var(--ac-ink);font:14px/1.6 "Segoe UI","Microsoft YaHei","PingFang SC",sans-serif;isolation:isolate;letter-spacing:0;overflow:hidden;color-scheme:light}
+#anime-space[hidden]{display:none!important}
+#anime-space *{box-sizing:border-box}
+#anime-space :is(h1,h2,h3,h4,p,figure){margin:0}
+#anime-space button,#anime-space input,#anime-space textarea,#anime-space select{font:inherit;letter-spacing:inherit}
+#anime-space button{cursor:pointer;color:inherit;border:0;background:none;line-height:inherit}
+#anime-space button:disabled{cursor:default;opacity:.45}
+#anime-space a{color:inherit;text-decoration:none}
+#anime-space input,#anime-space textarea,#anime-space select{min-width:0;color:var(--ac-ink);background:#fffcff;border:1px solid var(--ac-line);border-radius:8px;outline:none;box-shadow:none}
+#anime-space input:focus,#anime-space textarea:focus,#anime-space select:focus{border-color:#b58bf2;box-shadow:0 0 0 3px #ae7df018}
+#anime-space :focus-visible{outline:2px solid var(--ac-purple);outline-offset:4px}
+#anime-space .ac-icon{width:19px;height:19px;flex-shrink:0;display:inline-block;vertical-align:middle}
+#anime-space .ac-rail{position:relative;background:linear-gradient(180deg,#f6eeff,#faf5ff);border-right:1px solid var(--ac-line);display:flex;align-items:center;flex-direction:column;gap:17px;padding:0.5rem 0 16px;z-index:4}
+
+#anime-space .ac-rail-btn{width:44px;height:44px;display:grid;place-items:center;position:relative;border-radius:12px;color:#735389}
+#anime-space .ac-rail-btn .ac-icon{width:23px;height:23px}
+#anime-space .ac-rail-btn.active{background:#e9d7fe;color:#8c46ea}
+#anime-space .ac-rail-btn.active:before{content:"";position:absolute;left:-10px;top:12px;width:3px;height:22px;background:#a269fb;border-radius:0 5px 5px 0}
+#anime-space .ac-rail-btn:hover{background:#eddefa}
+#anime-space .ac-rail-bottom{margin-top:auto}
+#anime-space .ac-sidebar{position:relative;display:flex;flex-direction:column;overflow:auto;scrollbar-width:thin;padding:15px 17px;background:linear-gradient(150deg,#fff7fc 0%,#fbf4ff 70%,#f9f1ff);border-right:1px solid var(--ac-line);z-index:3}
+#anime-space .ac-brand{padding:0 12px 17px;border-bottom:1px solid var(--ac-line);margin-bottom:22px;line-height:1.4}
+#anime-space .ac-brand strong{font-size:24px;letter-spacing:-.8px;font-weight:700}
+#anime-space .ac-brand small{display:block;font-size:12px;letter-spacing:2px;color:#7e628a}
+#anime-space .ac-brand .ac-icon{color:var(--ac-pink);width:21px;height:21px;margin-left:4px;fill:#f9c2db;stroke-width:1}
+#anime-space .ac-nav{display:grid;gap:7px}
+#anime-space .ac-nav button{display:flex;align-items:center;gap:14px;padding:10px 13px;border-radius:9px;text-align:left;white-space:nowrap}
+#anime-space .ac-nav button.active{background:linear-gradient(90deg,#efdcff,#e7d4fb);color:#8546d4;font-weight:600}
+#anime-space .ac-nav button:hover{background:#f0e3fa}
+#anime-space .ac-nav-divider{margin:20px 5px 17px;border-top:1px solid var(--ac-line)}
+#anime-space .ac-nav-caption{padding:0 12px 10px;font-size:12px;color:#8c6f98}
+#anime-space .ac-mascot{margin-top:auto;padding-top:25px;text-align:center;position:relative}
+#anime-space .ac-mascot p{font-size:11px;color:#9272a5;display:inline-block;border:1px solid #d4b6ee;background:#fff9ff;border-radius:40% 45% 35% 40%;padding:8px 16px;transform:rotate(-4deg)}
+#anime-space .ac-mascot img{display:block;width:145px;max-width:95%;height:160px;object-fit:contain;margin:10px auto 12px;filter:drop-shadow(0 5px 6px #c59edf20)}
+#anime-space .ac-mascot-hello{display:block;position:relative;width:100%;padding:0;border:0;background:none;cursor:pointer}
+#anime-space .ac-mascot-hello:focus-visible{outline:2px solid #9e74c0;outline-offset:2px;border-radius:14px}
+#anime-space .ac-mascot-art{display:flow-root;position:relative;pointer-events:none}
+#anime-space .ac-mascot-live2d{display:none;position:absolute;inset:0;width:145px;max-width:95%;height:160px;margin:10px auto 12px;filter:drop-shadow(0 5px 6px #c59edf20)}
+#anime-space .has-live2d>.ac-mascot-live2d{display:block}
+#anime-space .has-live2d>img{visibility:hidden}
+@media(prefers-reduced-motion:no-preference){
+  #anime-space .ac-mascot-art{animation:ac-mascot-float 4.8s ease-in-out infinite}
+}
+@keyframes ac-mascot-float{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
+#anime-space .ac-mascot.is-greeting p{color:#794994;background:#fff0fa;border-color:#c58bdf}
+#anime-space .ac-sync{border-top:1px solid var(--ac-line);padding-top:15px;font-size:11px;display:flex;align-items:center;gap:7px;justify-content:center;white-space:nowrap}
+#anime-space .ac-sync .ac-icon{width:15px;height:15px}
+#anime-space .ac-sync-dot{width:14px;height:14px;border-radius:50%;background:#a688ca;color:white;display:grid;place-items:center;margin-left:3px}
+#anime-space .ac-sync-dot .ac-icon{width:10px;height:10px}
+#anime-space .ac-main{overflow-y:auto;overflow-x:hidden;scrollbar-color:#d7bafa #f9f5fd;scrollbar-width:thin;position:relative;background:radial-gradient(ellipse at 95% 5%,#fff2f92e,transparent 60%),linear-gradient(120deg,#fffcff,#fcf9ff 45%,#fff8fc)}
+#anime-space .ac-toolbar{height:66px;position:sticky;top:0;z-index:8;display:flex;align-items:center;gap:25px;padding:0 27px;border-bottom:1px solid var(--ac-line);background:#fdfaffed;backdrop-filter:blur(16px)}
+#anime-space .ac-toolbar:before{content:"";position:absolute;right:140px;top:-12px;width:170px;height:70px;background:url('/img/anime/sakura-branch.webp') center/contain no-repeat;opacity:.65;pointer-events:none;z-index:-1}
+#anime-space .ac-toolbar-title{font-size:22px;font-weight:650;white-space:nowrap;min-width:140px;display:flex;gap:8px;align-items:center}
+#anime-space .ac-toolbar-title .ac-icon{color:#f3a2c6;width:17px}
+#anime-space .ac-search{position:relative;display:flex;align-items:center;width:clamp(240px,46%,620px);margin:auto}
+#anime-space .ac-search>.ac-icon{position:absolute;left:16px;color:#8a699f;width:17px}
+#anime-space .ac-search input{width:100%;height:36px;border-radius:22px;border-color:#d6b5f5;background:#fffaff;padding:0 37px;font-size:12px}
+#anime-space .ac-search input::placeholder{color:#9b85a5}
+#anime-space .ac-user-actions{display:flex;align-items:center;gap:20px}
+#anime-space .ac-user-actions>button{display:grid;place-items:center;padding:0}
+#anime-space .ac-user-actions .ac-avatar{display:block}
+#anime-space .ac-notice{position:relative;padding:4px!important}
+#anime-space .ac-notice:after{content:"";position:absolute;right:5px;top:1px;background:#ad7af3;width:6px;height:6px;border:2px solid #fff;border-radius:50%}
+#anime-space .ac-avatar{width:31px;height:31px;object-fit:cover;border-radius:50%;border:2px solid #e2caf9;background:#ede1fa;object-position:50% 17%}
+#anime-space .ac-page{padding:22px 27px 0;max-width:1800px;margin:auto;min-height:calc(100% - 66px)}
+#anime-space .ac-hero{height:clamp(255px,22vw,360px);position:relative;border:1px solid #ecdaf5;border-radius:14px;overflow:hidden;background:#f3e7fa;box-shadow:0 0 0 4px #fff7fc,0 0 0 5px #efdef64a;isolation:isolate}
+#anime-space .ac-hero-bg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:70% 50%;z-index:-2}
+#anime-space .ac-hero:after{content:"";position:absolute;inset:0;z-index:-1;background:linear-gradient(90deg,#fff8fdf8 0%,#fff8fde5 25%,#fff8fd6b 43%,transparent 65%)}
+#anime-space .ac-hero-copy{padding:28px 31px;width:55%;height:100%;display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:11px}
+#anime-space .ac-eyebrow{font-size:12px;letter-spacing:.5px;display:flex;align-items:center;gap:8px;color:#8351ad;font-weight:600}
+#anime-space .ac-eyebrow .ac-icon{color:#efa3c7;fill:#f8c4dc;stroke-width:1}
+#anime-space .ac-hero h1{font-size:clamp(26px,2.4vw,40px);line-height:1.25;font-weight:700;letter-spacing:-.7px}
+#anime-space .ac-hero-meta{font-size:12px;color:#6f5377;display:flex;align-items:center;gap:9px}
+#anime-space .ac-score-star{color:#ffbf42}
+#anime-space .ac-hero-desc{font-size:12px;color:#7a637d;max-width:320px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+#anime-space .ac-hero-buttons{display:flex;gap:12px;margin-top:7px}
+#anime-space .ac-btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:35px;padding:7px 17px;border:1px solid #d5b9ed;border-radius:8px;background:#fffaff;font-size:12px;transition:background .15s,transform .15s;white-space:nowrap}
+#anime-space .ac-btn:hover{background:#f4e9ff;transform:translateY(-1px)}
+#anime-space .ac-btn-primary{background:linear-gradient(115deg,#bb8afc,#9360e8);color:#fff;border-color:transparent;box-shadow:0 4px 10px #a16beb1a}
+#anime-space .ac-btn-primary:hover{background:linear-gradient(115deg,#b17ef7,#8754df)}
+#anime-space .ac-btn .ac-icon{width:16px;height:16px}
+#anime-space .ac-hero-dots{position:absolute;right:18px;bottom:17px;display:flex;gap:6px;background:#ffffff8a;border-radius:20px;padding:6px 9px}
+#anime-space .ac-hero-dots button{width:7px;height:7px;padding:0;border-radius:10px;background:#b2a4ba}
+#anime-space .ac-hero-dots button.active{width:19px;background:#ad79ef}
+#anime-space .ac-home-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(245px,28%);gap:22px;margin-top:25px;align-items:start}
+#anime-space .ac-section{margin-bottom:28px;min-width:0}
+#anime-space .ac-section-head{display:flex;align-items:center;gap:10px;margin-bottom:16px;min-height:31px}
+#anime-space .ac-section-head h2{font-size:20px;line-height:1.4;font-weight:650;white-space:nowrap;letter-spacing:-.4px}
+#anime-space .ac-section-head>.ac-icon{color:var(--ac-pink);width:22px;height:22px;stroke-width:1.4}
+#anime-space .ac-flourish{width:52px;height:10px;border-top:1px solid #dfb7ed;border-radius:50%;transform:rotate(-8deg);position:relative;margin-left:4px}
+#anime-space .ac-flourish:after{content:"✧";position:absolute;right:-8px;top:-9px;color:#ebb4d5;font-size:15px}
+#anime-space .ac-more{margin-left:auto;color:#9959df;font-size:12px;white-space:nowrap;display:flex;align-items:center;gap:3px}
+#anime-space .ac-more .ac-icon{width:13px;height:13px}
+#anime-space .ac-landscapes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:13px}
+#anime-space .ac-landscape{min-width:0;text-align:left;padding:0;border-radius:10px}
+#anime-space .ac-thumb{position:relative;aspect-ratio:16/9;overflow:hidden;border-radius:9px;background:#f1e8f7;border:1px solid #ebd9f4}
+#anime-space .ac-thumb img{width:100%;height:100%;object-fit:cover;transition:transform .3s;object-position:center 25%}
+#anime-space .ac-landscape:hover img,#anime-space .ac-poster:hover img{transform:scale(1.035)}
+#anime-space .ac-play-dot{position:absolute;bottom:12px;left:10px;background:#ffffffd9;color:#806888;width:27px;height:27px;border-radius:50%;display:grid;place-items:center;border:1px solid white}
+#anime-space .ac-play-dot .ac-icon{width:15px;height:15px;fill:currentColor;stroke-width:0;margin-left:2px}
+#anime-space .ac-card-progress{position:absolute;bottom:3px;left:4px;right:4px;height:4px;background:#fff9;border-radius:3px;overflow:hidden}
+#anime-space .ac-card-progress i{display:block;height:100%;background:linear-gradient(90deg,#bb8cf6,#e0a6e9);border-radius:3px}
+#anime-space .ac-card-title{display:block;font-size:13px;font-weight:600;margin-top:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1.5}
+#anime-space .ac-card-sub{display:block;color:#9b859f;font-size:11px;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#anime-space .ac-tabs{display:flex;gap:7px;align-items:center;flex-wrap:wrap}
+#anime-space .ac-tabs button{font-size:11px;padding:3px 12px;border-radius:20px;background:#f4e9fc;color:#8d6c9b;display:flex;align-items:center;gap:4px;border:1px solid transparent}
+#anime-space .ac-tabs .ac-icon{width:13px;height:13px}
+#anime-space .ac-tabs button.active{background:linear-gradient(110deg,#c495fc,#a26ae9);color:white;box-shadow:0 2px 5px #b98be524}
+#anime-space .ac-section-head .ac-tabs{margin-left:8px}
+#anime-space .ac-posters{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:13px}
+#anime-space .ac-poster{min-width:0;padding:0;text-align:left;position:relative;border-radius:8px}
+#anime-space .ac-poster-art{position:relative;aspect-ratio:2/3;overflow:hidden;border-radius:8px;background:#f0e7f8;border:1px solid #eadcf4}
+#anime-space .ac-poster-art img{width:100%;height:100%;object-fit:cover;transition:transform .3s}
+#anime-space .ac-rating{position:absolute;right:5px;top:6px;background:#8658b8bd;border:1px solid #ffffff8a;backdrop-filter:blur(4px);color:white;padding:0 5px;border-radius:5px;line-height:20px;font-size:11px;display:flex;align-items:center;gap:3px}
+#anime-space .ac-rating b{color:#ffe3a2;font-size:11px}
+#anime-space .ac-episode-tag{position:absolute;bottom:0;left:0;right:0;text-align:center;background:#a47ccec4;color:white;font-size:10px;padding:2px;backdrop-filter:blur(4px)}
+#anime-space .ac-panel{border:1px solid #e9d9f6;border-radius:13px;background:linear-gradient(145deg,#fffaffc9,#fcf5ffc2);box-shadow:0 3px 12px #b895d109;padding:17px;margin-bottom:17px;min-width:0;position:relative;overflow:hidden}
+#anime-space .ac-panel:after{content:"✿";color:#f5c1db90;position:absolute;right:14px;top:8px;font-size:22px;pointer-events:none;transform:rotate(15deg)}
+#anime-space .ac-panel .ac-section-head{margin-bottom:13px;gap:7px}
+#anime-space .ac-panel .ac-section-head h2{font-size:18px}
+#anime-space .ac-panel .ac-section-head>.ac-icon{width:18px;height:18px;color:#bb8bd8}
+#anime-space .ac-weekdays{display:grid;grid-template-columns:repeat(7,1fr);padding:3px;background:#f7eaf8;border-radius:7px;margin-bottom:10px;gap:2px}
+#anime-space .ac-weekdays button{padding:4px 0;font-size:11px;border-radius:6px}
+#anime-space .ac-weekdays button.active{background:linear-gradient(110deg,#c290f4,#a16aed);color:white}
+#anime-space .ac-schedule-item{display:flex;align-items:center;text-align:left;width:100%;gap:10px;padding:11px 0;border-bottom:1px solid #efe3f5}
+#anime-space .ac-schedule-item:last-child{border-bottom:0}
+#anime-space .ac-schedule-item img{width:44px;height:49px;object-fit:cover;border-radius:6px;flex-shrink:0;object-position:50% 20%}
+#anime-space .ac-schedule-item>span{min-width:0;flex:1}
+#anime-space .ac-schedule-item strong{display:block;font-size:12px;font-weight:600;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;max-width:190px}
+#anime-space .ac-schedule-item small{display:block;font-size:10px;color:#9b849f;margin-top:4px}
+#anime-space .ac-rank{font-size:13px;font-weight:700;width:17px;flex-shrink:0;color:#b08bd0}
+#anime-space .ac-schedule-item:nth-of-type(2) .ac-rank{color:#e8b355}
+#anime-space .ac-summary{font-size:12px;line-height:2;color:#8d7395}
+#anime-space .ac-summary strong{color:#8c55c0}
+#anime-space .ac-summary .ac-icon{width:14px;height:14px;margin-right:5px}
+#anime-space .ac-tiny-mascot{position:absolute;right:0;bottom:-15px;width:75px;height:75px;object-fit:contain;opacity:.65;pointer-events:none}
+#anime-space .ac-note{color:#937c9d;font-size:12px;line-height:2;min-height:110px;padding-top:3px}
+#anime-space .ac-note p+p{margin-top:7px}
+#anime-space .ac-season{border-top:1px solid var(--ac-line);padding-top:19px}
+#anime-space .ac-season .ac-section-head{flex-wrap:wrap;gap:8px}
+#anime-space .ac-feature{height:190px;margin:0 0 25px;border:1px solid #ebd4f4;box-shadow:0 0 0 3px #fff7fc,0 0 0 4px #f4e7fa;border-radius:12px;position:relative;overflow:hidden;background:#f9ebf4;isolation:isolate}
+#anime-space .ac-feature>img{width:100%;height:100%;object-fit:cover;object-position:70% 50%;position:absolute;inset:0;z-index:-2}
+#anime-space .ac-feature:after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,#fff2fbd9,#fff2fb75 42%,transparent 65%);z-index:-1}
+#anime-space .ac-feature-copy{padding:26px 24px;width:58%}
+#anime-space .ac-feature h2{font-size:22px;color:#9866b7;margin-bottom:7px}
+#anime-space .ac-feature p{font-size:12px;color:#947b9d;margin-bottom:16px}
+#anime-space .ac-collections{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:15px;margin-bottom:25px}
+#anime-space .ac-collection{position:relative;aspect-ratio:1.8;border-radius:10px;overflow:hidden;text-align:left;background:#cfb7de}
+#anime-space .ac-collection img{width:100%;height:100%;object-fit:cover;object-position:50% 25%;position:absolute;inset:0}
+#anime-space .ac-collection:after{content:"";position:absolute;inset:0;background:linear-gradient(transparent 25%,#5e3e76a8)}
+#anime-space .ac-collection>span{position:absolute;bottom:13px;left:14px;z-index:1;color:white;font-size:13px;font-weight:600}
+#anime-space .ac-collection small{display:block;font-size:10px;font-weight:400;opacity:.9;margin-top:3px}
+#anime-space .ac-footer{display:flex;align-items:center;justify-content:center;gap:15px;font-size:10px;color:#b18cbe;border-top:1px solid #ecdaf5;margin-top:25px;padding:22px 0 20px;background:radial-gradient(ellipse at 50% 100%,#f8e6f6,transparent 70%)}
+#anime-space .ac-footer>.ac-icon{color:#e9acd0;width:14px;height:14px}
+#anime-space .ac-footer{position:relative}
+#anime-space .ac-footer:after{content:"";position:absolute;right:-10px;bottom:0;width:165px;height:65px;background:url('/img/anime/sakura-branch.webp') center/contain no-repeat;opacity:.45;transform:rotate(180deg);pointer-events:none}
+#anime-space .ac-status{padding:14px;border:1px dashed #ddc6ed;border-radius:10px;color:#9d81a8;font-size:12px;text-align:center;margin:15px 0}
+#anime-space .ac-loading{display:flex;align-items:center;justify-content:center;gap:10px;min-height:250px;color:#a184ae}
+#anime-space .ac-spinner{display:inline-block;width:19px;height:19px;border:2px solid #e4c9f5;border-top-color:#a66beb;border-radius:50%;animation:ac-spin .8s linear infinite}
+@keyframes ac-spin{to{transform:rotate(360deg)}}
+#anime-space .ac-error{padding:60px 20px;text-align:center;color:#8d7299}
+#anime-space .ac-error p{margin-bottom:20px}
+#anime-space .ac-notification{position:fixed;top:78px;right:28px;z-index:40;width:290px;max-width:90vw;background:#fffaff;border:1px solid #dfc7f0;box-shadow:0 10px 40px #8455a320;border-radius:13px;padding:20px;font-size:12px}
+#anime-space .ac-notification h3{font-size:15px;margin-bottom:8px}
+#anime-space .ac-notification .ac-btn{margin-top:12px}
+#anime-space .ac-toast{position:fixed;bottom:28px;left:50%;transform:translateX(-50%);z-index:50;background:#584168ed;color:white;border:1px solid #b192c6;padding:10px 20px;border-radius:30px;font-size:12px;max-width:80vw;box-shadow:0 5px 25px #77519930;pointer-events:none}
+#anime-space .ac-search-results .ac-posters,#anime-space .ac-library-grid{grid-template-columns:repeat(6,minmax(0,1fr));gap:22px 17px}
+#anime-space .ac-page-heading{display:flex;align-items:center;justify-content:space-between;margin:5px 0 23px}
+#anime-space .ac-page-heading h1{font-size:23px}
+#anime-space .ac-page-heading p{color:#a18aa9;font-size:12px;margin-top:5px}
+#anime-space .ac-calendar-page .ac-weekdays{max-width:600px;margin-bottom:25px}
+#anime-space .ac-library-status{display:flex;gap:8px;align-items:center;justify-content:space-between}
+#anime-space .ac-library-status select{font-size:11px;border-color:#e8d7f4;padding:3px 5px;max-width:85px;margin-top:5px}
+#anime-space .ac-empty{padding:55px 15px;text-align:center;color:#9e84ac}
+#anime-space .ac-empty img{width:110px;height:130px;object-fit:contain;display:block;margin:0 auto 20px}
+#anime-space .ac-empty h2{font-size:18px;margin-bottom:7px}
+#anime-space .ac-empty p{font-size:12px;margin-bottom:20px}
+/* Playback is intentionally rail-only. */
+#anime-space.ac-watching{grid-template-columns:3.5rem minmax(0,1fr)}
+#anime-space.ac-watching .ac-sidebar{display:none}
+#anime-space.ac-watching .ac-page{max-width:1800px;padding-top:17px}
+#anime-space .ac-breadcrumb{display:flex;align-items:center;gap:7px;color:#a087ac;font-size:11px;margin:0 0 16px}
+#anime-space .ac-breadcrumb button{display:flex;align-items:center;gap:4px;color:#9b73b3;background:#f5ebfc;border-radius:20px;padding:3px 9px}
+#anime-space .ac-breadcrumb .ac-icon{width:12px;height:12px}
+#anime-space .ac-watch-layout{display:grid;grid-template-columns:minmax(0,1fr) 292px;gap:20px;align-items:start}
+#anime-space .ac-watch-primary,#anime-space .ac-watch-aside{min-width:0}
+#anime-space .ac-watch-heading{display:flex;align-items:center;gap:12px;margin-bottom:14px;min-height:56px}
+#anime-space .ac-watch-heading h1{font-size:23px;font-weight:650;display:flex;align-items:center;gap:8px}
+#anime-space .ac-watch-heading h1 .ac-icon{color:#efa3c9;fill:#f9d9e8;width:21px;height:21px}
+#anime-space .ac-watch-heading p{font-size:12px;color:#9d80a5;margin-top:3px}
+#anime-space .ac-watch-heading>div:last-child{margin-left:auto;display:flex;gap:8px}
+#anime-space .ac-watch-heading .ac-btn{min-height:29px;padding:4px 13px;font-size:11px;border-radius:20px}
+#anime-space .ac-watch-heading .ac-btn .ac-icon{color:#ed8fb7;width:14px;height:14px}
+#anime-space .ac-player{position:relative;aspect-ratio:16/9;background:#211b2c;border-radius:12px;overflow:hidden;isolation:isolate;outline:none}
+#anime-space .ac-player video{width:100%;height:100%;object-fit:contain;display:block;background:#211b2c}
+#anime-space .ac-player .ac-video-poster{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:-1}
+#anime-space .ac-player.ac-no-src video{background:transparent}
+#anime-space .ac-video-message{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;background:#28203670;color:#fff;text-align:center;gap:14px;z-index:2;padding:25px}
+#anime-space .ac-video-message[hidden]{display:none}
+#anime-space .ac-video-message p{font-size:12px;max-width:320px;text-shadow:0 1px 3px #0007}
+#anime-space .ac-video-message .ac-btn{color:#fff}
+#anime-space .ac-video-message .ac-icon{width:24px;height:24px;fill:currentColor}
+#anime-space .ac-video-message:has(.ac-start-play){gap:9px;background:#28203658}
+#anime-space .ac-start-play{display:grid;justify-items:center;gap:9px;padding:4px 12px;border:0;background:transparent;color:#fff;cursor:pointer}
+#anime-space .ac-start-play-icon{display:grid;place-items:center;width:64px;height:64px;border:1px solid #fff9;border-radius:50%;background:linear-gradient(150deg,#cda5fa,#8853cb);box-shadow:0 8px 28px #28174380;transition:transform .18s,box-shadow .18s}
+#anime-space .ac-start-play-icon .ac-icon{margin-left:3px;width:26px;height:26px}
+#anime-space .ac-start-play:hover .ac-start-play-icon,#anime-space .ac-start-play:focus-visible .ac-start-play-icon{transform:scale(1.08);box-shadow:0 9px 30px #a467f380}
+#anime-space .ac-start-play:active .ac-start-play-icon{transform:scale(.92)}
+#anime-space .ac-start-play-label{font-size:14px;font-weight:700;text-shadow:0 2px 5px #1c1028}
+#anime-space .ac-video-message .ac-start-position{margin:0;font-variant-numeric:tabular-nums;color:#f5eaff}
+@media(prefers-reduced-motion:reduce){#anime-space .ac-start-play-icon{transition:none}}
+#anime-space .ac-controls{position:absolute;bottom:0;left:0;right:0;padding:27px 14px 10px;background:linear-gradient(transparent,#15101bbf 50%);color:white;z-index:5;transition:opacity .2s}
+#anime-space .ac-player.ac-idle:not(:hover):not(:focus-within) .ac-controls{opacity:0;pointer-events:none}
+#anime-space .ac-seek{display:block;width:100%;height:4px;border:0!important;border-radius:3px!important;appearance:none;margin:0 0 12px;cursor:pointer;background:linear-gradient(to right,#bd8df7 var(--played,0%),#ffffff54 var(--played,0%))!important}
+#anime-space input[type=range]::-webkit-slider-thumb{appearance:none;width:10px;height:10px;border-radius:50%;background:#d4acf8;border:1px solid #efdfff}
+#anime-space input[type=range]::-moz-range-thumb{width:9px;height:9px;border:1px solid #efdfff;border-radius:50%;background:#d4acf8}
+#anime-space .ac-control-row{display:flex;align-items:center;gap:11px;font-size:11px;line-height:1}
+#anime-space .ac-control-row button{display:grid;place-items:center;color:white;padding:0;flex-shrink:0;width:21px;height:22px}
+#anime-space .ac-control-row button[data-player=mpv]{width:auto;padding:0 5px;font-size:11px}
+#anime-space .ac-control-row button[hidden]{display:none}
+#anime-space .ac-control-row .ac-icon{width:18px;height:18px}
+#anime-space .ac-control-row .ac-time{white-space:nowrap;font-size:11px;font-variant-numeric:tabular-nums;margin-right:auto}
+#anime-space .ac-volume{width:55px;height:3px;border:0!important;appearance:none;background:#fff6!important;cursor:pointer}
+#anime-space .ac-control-row select{border:0;background:transparent;color:white;font-size:10px;padding:0;width:auto;cursor:pointer;border-radius:0}
+#anime-space .ac-control-row select option{background:#302638;color:white}
+#anime-space .ac-danmaku-layer{position:absolute;inset:0 0 65px;pointer-events:none;overflow:hidden;z-index:3;color:#fff;font-size:17px;text-shadow:1px 1px 2px #000,0 0 2px #333}
+#anime-space .ac-danmaku-text{position:absolute;left:100%;white-space:nowrap;animation:ac-danmaku 10s linear forwards;will-change:transform}
+@keyframes ac-danmaku{from{transform:translateX(0)}to{transform:translateX(calc(-100% - var(--ac-travel,1000px)))}}
+#anime-space .ac-danmaku-bar{display:flex;gap:12px;align-items:center;margin-top:9px;padding:8px 9px;background:#f5ebfb;border:1px solid #ebdaf7;border-radius:9px;font-size:10px;color:#a087aa}
+#anime-space .ac-danmaku-bar form{display:flex;flex:1;gap:7px;min-width:0}
+#anime-space .ac-danmaku-bar input{height:29px;border-radius:18px;flex:1;font-size:11px;padding:4px 13px;width:0}
+#anime-space .ac-danmaku-bar .ac-btn{min-height:28px;padding:3px 14px;font-size:11px;border-radius:17px}
+#anime-space .ac-toggle{display:inline-flex;gap:6px;align-items:center;cursor:pointer;white-space:nowrap;font-size:11px}
+#anime-space .ac-toggle input{appearance:none;width:27px;height:15px;border-radius:20px;border:1px solid #d5bfe6;background:#ded2e9;position:relative;cursor:pointer;margin:0;flex-shrink:0;box-shadow:none}
+#anime-space .ac-toggle input:after{content:"";position:absolute;left:2px;top:2px;width:9px;height:9px;border-radius:50%;background:white;box-shadow:0 1px 3px #6d438530;transition:transform .15s}
+#anime-space .ac-toggle input:checked{background:linear-gradient(90deg,#ca9cfa,#a26aef);border-color:#bd8df3}
+#anime-space .ac-toggle input:checked:after{transform:translateX(12px)}
+#anime-space .ac-player-actions{display:flex;align-items:center;gap:12px;padding:14px 4px 18px;border-bottom:1px solid var(--ac-line);margin-bottom:18px;font-size:11px;flex-wrap:wrap}
+#anime-space .ac-player-actions .ac-btn{font-size:11px;min-height:27px;padding:3px 12px}
+#anime-space .ac-player-actions>span:last-child{margin-left:auto;font-size:10px;color:#9c83a8}
+#anime-space .ac-player-actions>span:last-child .ac-icon{color:#8fc89b;width:14px;height:14px}
+#anime-space .ac-watch-aside{padding-top:70px}
+#anime-space .ac-episode-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;font-size:11px;color:#987aa5}
+#anime-space .ac-episode-tabs{display:flex;background:#f2e6fb;border-radius:7px;overflow:hidden;margin-bottom:15px}
+#anime-space .ac-episode-tabs button{flex:1;font-size:12px;padding:5px;border-radius:7px}
+#anime-space .ac-episode-tabs button.active{background:linear-gradient(100deg,#c092f9,#a777ec);color:white}
+#anime-space .ac-episode-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:7px;max-height:340px;overflow-y:auto;scrollbar-width:thin}
+#anime-space .ac-episode-grid button{padding:5px 0;border:1px solid #e7d7f3;border-radius:5px;background:#fffaff;font-size:11px;display:flex;justify-content:center;align-items:center;gap:3px;min-height:29px}
+#anime-space .ac-episode-grid button.active{background:linear-gradient(110deg,#bf8ffd,#9c68e9);border-color:transparent;color:#fff}
+#anime-space .ac-episode-grid .ac-icon{width:10px;height:10px;color:#b288df}
+#anime-space .ac-episode-grid button.active .ac-icon{color:white}
+#anime-space .ac-episode-caption{font-size:12px;margin-top:16px;border-bottom:1px solid #edddf5;padding-bottom:14px}
+#anime-space .ac-episode-caption p{color:#9c84a5;font-size:11px;margin-top:4px}
+#anime-space .ac-next-preview{display:block;width:100%;margin-top:13px;padding:0;text-align:left}
+#anime-space .ac-next-preview img{width:100%;aspect-ratio:2.5;object-fit:cover;border-radius:7px}
+#anime-space .ac-next-preview strong{display:block;font-size:11px;margin-top:5px}
+#anime-space .ac-source-panel{margin-top:0}
+#anime-space .ac-source-panel .ac-section-head h2{font-size:15px}
+#anime-space .ac-source-options{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+#anime-space .ac-source-options button{font-size:11px;padding:4px 13px;border:1px solid #e2ceef;border-radius:6px;background:#fbf3ff}
+#anime-space .ac-source-options button.active{background:linear-gradient(90deg,#bf8cfa,#a26deb);color:white;border-color:transparent}
+#anime-space .ac-source-options small{margin-left:auto;font-size:10px;color:#9e85a9}
+#anime-space .ac-source-details{border-top:1px solid #ecddf5;padding-top:12px;display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:11px;color:#90739e}
+#anime-space .ac-source-details .ac-icon{width:15px;height:15px;margin-right:4px}
+#anime-space .ac-source-details a{color:#a06dbb;font-size:10px}
+#anime-space .ac-synopsis{display:flex;gap:18px}
+#anime-space .ac-synopsis>img{width:110px;height:157px;object-fit:cover;border-radius:7px}
+#anime-space .ac-synopsis>div{min-width:0;flex:1}
+#anime-space .ac-synopsis h2{font-size:19px;line-height:1.3;margin-bottom:10px}
+#anime-space .ac-synopsis-meta{display:flex;align-items:center;flex-wrap:wrap;gap:7px;margin-bottom:7px;font-size:11px}
+#anime-space .ac-synopsis-meta b{color:#eeb044;font-size:15px;margin-right:5px}
+#anime-space .ac-tag{font-size:10px;border-radius:15px;background:#f0e2fc;color:#a17abd;padding:1px 8px}
+#anime-space .ac-synopsis-text{font-size:12px;color:#8e7698;line-height:1.9;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;margin:6px 0!important;white-space:pre-line}
+#anime-space .ac-synopsis-text.expanded{-webkit-line-clamp:unset}
+#anime-space .ac-synopsis .ac-more{font-size:11px;display:inline-block}
+#anime-space .ac-progress-track{height:6px;border-radius:4px;background:#eadcf5;overflow:hidden;margin:13px 0}
+#anime-space .ac-progress-track i{height:100%;display:block;background:linear-gradient(90deg,#bf91f7,#a26be9);border-radius:4px}
+#anime-space .ac-comments{margin-top:8px;padding:18px 20px}
+#anime-space .ac-comment-filters{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
+#anime-space .ac-composer{display:flex;gap:12px;padding:0 0 15px;border-bottom:1px solid var(--ac-line);align-items:flex-start}
+#anime-space .ac-composer form{flex:1;min-width:0}
+#anime-space .ac-composer textarea{display:block;width:100%;resize:vertical;min-height:65px;max-height:220px;padding:10px 13px;background:#fffaff;font-size:12px}
+#anime-space .ac-composer-footer{display:flex;align-items:center;gap:12px;margin-top:8px;font-size:10px;color:#9a83a5}
+#anime-space .ac-composer-footer .ac-btn{margin-left:auto;min-height:28px;font-size:11px;padding:4px 20px}
+#anime-space .ac-comment{display:flex;gap:13px;padding:17px 0;border-bottom:1px solid #eee0f6;font-size:12px}
+#anime-space .ac-comment:last-child{border-bottom:0;padding-bottom:4px}
+#anime-space .ac-comment>div{min-width:0;flex:1}
+#anime-space .ac-comment-meta{display:flex;gap:13px;align-items:center;margin-bottom:6px}
+#anime-space .ac-comment-meta strong{font-size:12px;font-weight:600}
+#anime-space .ac-comment-meta time{font-size:10px;color:#ac95b2}
+#anime-space .ac-comment p{white-space:pre-wrap;overflow-wrap:anywhere;color:#795f86;font-size:12px}
+#anime-space .ac-comment-like{margin-top:9px;display:flex;align-items:center;gap:5px;font-size:10px;color:#ad94b6!important}
+#anime-space .ac-comment-like.liked{color:#b46be2!important}
+#anime-space .ac-comment-like .ac-icon{width:13px;height:13px}
+#anime-space .ac-spoiler{display:flex;align-items:center;justify-content:center;gap:7px;width:100%;padding:10px;border-radius:6px;background:linear-gradient(100deg,#e4d0f2,#f3dced,#e5d5f0)!important;color:#a071ba!important;font-size:11px}
+#anime-space .ac-related{margin-top:23px}
+#anime-space .ac-related .ac-posters{grid-template-columns:repeat(5,minmax(0,1fr));gap:20px}
+#anime-space .ac-related .ac-poster-art{aspect-ratio:3/2}
+#anime-space .ac-dialog{position:fixed;inset:0;background:#55406240;backdrop-filter:blur(3px);display:grid;place-items:center;z-index:45;padding:20px}
+#anime-space .ac-dialog-box{background:#fffaff;border:1px solid #dfc8ef;box-shadow:0 20px 80px #6d398d30;max-width:430px;width:100%;padding:25px;border-radius:17px}
+#anime-space .ac-dialog-box h2{font-size:18px;margin-bottom:12px}
+#anime-space .ac-dialog-box p{font-size:12px;color:#93779e;margin-bottom:14px;line-height:1.8}
+#anime-space .ac-dialog-box .ac-dialog-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:18px}
+#anime-space .ac-dialog-box label{font-size:12px;display:block;margin:13px 0}
+#anime-space .ac-dialog-box a{color:#a06cce;text-decoration:underline}
+#anime-space .ac-special-episode{padding:6px 8px;border:1px solid #e7d7f3;border-radius:5px;background:#fffaff;font-size:11px}
+#anime-space .ac-episode-grid>.ac-summary{grid-column:1/-1}
+#anime-space.ac-theatre .ac-watch-layout{grid-template-columns:minmax(0,1fr)}
+#anime-space.ac-theatre .ac-watch-aside{display:none}
+#anime-space.ac-theatre .ac-player{max-height:calc(100vh - 155px);aspect-ratio:16/9;margin:auto}
+#anime-space .ac-player:fullscreen{border-radius:0;aspect-ratio:auto;width:100%;height:100%;background:#000}
+#anime-space .ac-player:fullscreen video{width:100%;height:100%;object-fit:contain}
+@media(min-width:1700px){#anime-space{grid-template-columns:3.5rem 244px minmax(0,1fr)}#anime-space.ac-watching{grid-template-columns:3.5rem minmax(0,1fr)}#anime-space .ac-page{padding:25px 34px 0}#anime-space .ac-home-grid{gap:27px}#anime-space .ac-landscapes,#anime-space .ac-posters{gap:18px}#anime-space .ac-watch-layout{grid-template-columns:minmax(0,1fr) 320px;gap:25px}}
+@media(max-width:1150px){#anime-space{grid-template-columns:3.5rem 185px minmax(0,1fr)}#anime-space.ac-watching{grid-template-columns:3.5rem minmax(0,1fr)}#anime-space .ac-sidebar{padding:14px 12px}#anime-space .ac-nav button{gap:10px;padding:9px 10px;font-size:12px}#anime-space .ac-brand strong{font-size:22px}#anime-space .ac-home-grid{grid-template-columns:minmax(0,1fr) 230px;gap:17px}#anime-space .ac-page{padding:20px 20px 0}#anime-space .ac-toolbar{padding:0 20px;gap:15px}#anime-space .ac-toolbar-title{min-width:90px;font-size:20px}#anime-space .ac-search{width:52%}#anime-space .ac-section-head h2{font-size:18px}#anime-space .ac-flourish{display:none}#anime-space .ac-section-head .ac-tabs{margin-left:auto;gap:4px}#anime-space .ac-tabs button{padding:3px 8px}#anime-space .ac-watch-layout{grid-template-columns:minmax(0,1fr) 252px;gap:15px}#anime-space .ac-control-row{gap:8px}#anime-space .ac-volume{width:35px}#anime-space .ac-hero-copy{width:65%}#anime-space .ac-panel{padding:14px}#anime-space .ac-synopsis>img{width:90px;height:135px}#anime-space .ac-search-results .ac-posters,#anime-space .ac-library-grid{grid-template-columns:repeat(5,minmax(0,1fr))}}
+@media(max-width:960px){#anime-space .ac-home-grid{grid-template-columns:minmax(0,1fr)}#anime-space .ac-home-aside{display:grid;grid-template-columns:1fr 1fr;gap:15px}#anime-space .ac-home-aside .ac-panel{margin:0}#anime-space .ac-home-aside .ac-home-ranks{display:none}#anime-space .ac-note-panel{display:none}#anime-space .ac-posters{gap:10px}#anime-space .ac-hero h1{font-size:29px}#anime-space .ac-watch-layout{grid-template-columns:minmax(0,1fr) 220px;gap:12px}#anime-space .ac-watch-heading{flex-wrap:wrap}#anime-space .ac-watch-heading h1{font-size:20px}#anime-space .ac-watch-heading>div:last-child{gap:5px}#anime-space .ac-watch-heading .ac-btn{padding:3px 8px;font-size:10px}#anime-space .ac-watch-aside{padding-top:70px}#anime-space .ac-danmaku-count{display:none}#anime-space .ac-source-details{flex-wrap:wrap}#anime-space .ac-control-row .ac-volume{display:none}#anime-space .ac-control-row{gap:7px}#anime-space .ac-comment-filters{gap:12px}}
+@media(max-width:760px){#anime-space{grid-template-columns:3.5rem minmax(0,1fr)}#anime-space .ac-sidebar{display:none}#anime-space.ac-watching{grid-template-columns:3.5rem minmax(0,1fr)}#anime-space .ac-rail{gap:12px}#anime-space .ac-rail-btn{width:40px;height:40px}#anime-space .ac-rail-btn.active:before{left:-5px}#anime-space .ac-toolbar{height:59px;padding:0 15px;gap:12px}#anime-space .ac-toolbar-title{font-size:18px;min-width:0}#anime-space .ac-toolbar-title>.ac-icon{display:none}#anime-space .ac-search{width:auto;flex:1}#anime-space .ac-search input{font-size:11px;height:32px;padding-left:30px;padding-right:10px}#anime-space .ac-search>.ac-icon{left:10px;width:15px}#anime-space .ac-user-actions{gap:8px}#anime-space .ac-notice{display:none}#anime-space .ac-avatar{width:27px;height:27px}#anime-space .ac-page{padding:17px 15px 0}#anime-space .ac-hero{height:260px}#anime-space .ac-hero-copy{padding:20px;width:73%}#anime-space .ac-hero h1{font-size:27px}#anime-space .ac-hero-meta{font-size:10px;gap:5px}#anime-space .ac-hero-desc{font-size:11px;max-width:220px}#anime-space .ac-hero-bg{object-position:67% center}#anime-space .ac-btn{padding:6px 11px;font-size:11px;min-height:31px}#anime-space .ac-hero-buttons{gap:7px}#anime-space .ac-landscapes{gap:10px}#anime-space .ac-card-title{font-size:12px}#anime-space .ac-card-sub{font-size:10px}#anime-space .ac-posters{grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}#anime-space .ac-card-title{font-size:11px}#anime-space .ac-rating{font-size:9px;right:3px;padding:0 3px;top:4px;line-height:16px}#anime-space .ac-rating b{font-size:9px}#anime-space .ac-section{margin-bottom:22px}#anime-space .ac-feature{height:170px}#anime-space .ac-feature h2{font-size:20px}#anime-space .ac-feature-copy{padding:22px 18px;width:65%}#anime-space .ac-collections{gap:10px}#anime-space .ac-collection small{display:none}#anime-space .ac-collection>span{left:10px;bottom:10px;font-size:11px}#anime-space .ac-watch-layout{grid-template-columns:minmax(0,1fr)}#anime-space .ac-watch-aside{padding-top:0;display:grid;grid-template-columns:1fr 1fr;gap:15px}#anime-space .ac-watch-aside .ac-episodes{grid-column:1/-1}#anime-space .ac-watch-aside .ac-panel{margin-bottom:0}#anime-space .ac-watch-aside .ac-next-preview{display:none}#anime-space .ac-episode-grid{grid-template-columns:repeat(7,minmax(0,1fr));max-height:190px}#anime-space .ac-episode-caption{display:none}#anime-space .ac-watch-heading{min-height:55px}#anime-space .ac-watch-heading>div:last-child{margin-left:auto}#anime-space .ac-related .ac-posters{gap:10px}#anime-space .ac-source-panel{margin-bottom:15px}#anime-space .ac-comments{margin-top:20px;padding:15px}#anime-space .ac-search-results .ac-posters,#anime-space .ac-library-grid{grid-template-columns:repeat(4,minmax(0,1fr))}#anime-space .ac-synopsis h2{font-size:17px}#anime-space .ac-footer{font-size:9px;gap:9px}}
+@media(max-width:480px){#anime-space .ac-hero-copy{width:85%;gap:9px}#anime-space .ac-hero h1{font-size:24px}#anime-space .ac-hero:after{background:linear-gradient(90deg,#fff8fdf2,#fff8fdb0 53%,transparent)}#anime-space .ac-hero-buttons{flex-wrap:wrap}#anime-space .ac-section-head{gap:6px}#anime-space .ac-section-head h2{font-size:16px}#anime-space .ac-section-head>.ac-icon{width:18px}#anime-space .ac-tabs button{font-size:10px;padding:2px 8px}#anime-space .ac-landscapes{grid-template-columns:repeat(2,minmax(0,1fr))}#anime-space .ac-landscape:nth-child(3){display:none}#anime-space .ac-posters{grid-template-columns:repeat(3,minmax(0,1fr));gap:13px 10px}#anime-space .ac-home-aside{grid-template-columns:1fr}#anime-space .ac-home-aside .ac-home-progress{display:none}#anime-space .ac-feature-copy{width:78%;padding:18px 15px}#anime-space .ac-feature h2{font-size:18px}#anime-space .ac-feature p{font-size:10px}#anime-space .ac-collections{grid-template-columns:1fr;gap:12px}#anime-space .ac-collection{aspect-ratio:2.8}#anime-space .ac-collection small{display:block}#anime-space .ac-toolbar-title{font-size:15px}#anime-space .ac-watch-heading h1{font-size:18px}#anime-space .ac-watch-heading>div:last-child{display:none}#anime-space .ac-danmaku-bar{gap:5px;padding:6px}#anime-space .ac-danmaku-bar .ac-toggle{font-size:0;gap:0}#anime-space .ac-danmaku-bar input{padding:3px 9px;font-size:10px}#anime-space .ac-danmaku-bar .ac-btn{padding:3px 10px;font-size:10px}#anime-space .ac-control-row{gap:6px}#anime-space .ac-control-row .ac-time{font-size:9px}#anime-space .ac-control-row .ac-icon{width:14px;height:14px}#anime-space .ac-control-row button{width:15px}#anime-space .ac-control-row [data-player=pip],#anime-space .ac-control-row [data-player=mute]{display:none}#anime-space .ac-control-row select{font-size:9px}#anime-space .ac-controls{padding:20px 8px 7px}#anime-space .ac-player-actions{gap:7px}#anime-space .ac-player-actions>span:last-child{width:100%;margin:0}#anime-space .ac-watch-aside{grid-template-columns:1fr}#anime-space .ac-watch-aside .ac-recommend-panel{display:none}#anime-space .ac-episode-grid{grid-template-columns:repeat(5,minmax(0,1fr))}#anime-space .ac-synopsis{gap:12px}#anime-space .ac-synopsis>img{width:70px;height:110px}#anime-space .ac-synopsis h2{font-size:16px}#anime-space .ac-synopsis-text{font-size:11px}#anime-space .ac-synopsis-meta .ac-tag:nth-last-child(-n+2){display:none}#anime-space .ac-comment-filters{flex-wrap:wrap}#anime-space .ac-comment .ac-avatar{width:25px;height:25px}#anime-space .ac-comment{gap:9px}#anime-space .ac-comment-meta{gap:8px}#anime-space .ac-composer{gap:9px}#anime-space .ac-composer-footer{flex-wrap:wrap}#anime-space .ac-related .ac-posters{grid-template-columns:repeat(3,minmax(0,1fr))}#anime-space .ac-related .ac-poster:nth-child(n+4){display:none}#anime-space .ac-search-results .ac-posters,#anime-space .ac-library-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(prefers-reduced-motion:reduce){#anime-space *,#anime-space *:before,#anime-space *:after{animation-duration:.01ms!important;transition-duration:.01ms!important}#anime-space .ac-danmaku-text{animation-duration:10s!important}}
+@media(min-width:1151px){#anime-space{grid-template-columns:3.5rem 15vw minmax(0,1fr)}#anime-space.ac-watching{grid-template-columns:3.5rem minmax(0,1fr)}#anime-space .ac-rail-btn.active:before{left:calc((44px - 3.5rem)/2)}}
+@media(max-width:480px){#anime-space .ac-watch-heading>div:last-child{display:flex}#anime-space .ac-watch-heading [data-action=share]{display:none}}
+
+/* Sakura finish: light paper, illustrated corners and small ink flourishes. */
+#anime-space {
+  --ac-spring: cubic-bezier(.21, 1.55, .49, 1);
+  --ac-petal-ink: #745783;
+  --ac-blossoms: url('/img/anime/sakura-branch.webp');
+}
+#anime-space .ac-main {
+  background: radial-gradient(ellipse at top left,#f6e8ff80,transparent 55%),
+    linear-gradient(145deg,#fffbff,#fbf3ff 58%,#fff7fc);
+}
+#anime-space .ac-toolbar:before { right:auto; left:95px; top:-14px; width:190px; opacity:.85; transform:scaleX(-1); }
+#anime-space.ac-watching .ac-toolbar:before { left:120px; }
+#anime-space .ac-search input { background:linear-gradient(100deg,#fcf2ff,#eee4fc); border-color:#b491e1; }
+#anime-space .ac-search input::placeholder { color:var(--ac-petal-ink); }
+#anime-space .ac-flourish {
+  width:66px; height:20px; border:0; transform:none; flex:none; color:#d298d3;
+}
+#anime-space .ac-panel .ac-flourish { width:47px; }
+#anime-space .ac-hero {
+  border-color:#e8d4f1;
+  box-shadow:0 0 0 3px #fffaff,0 0 0 5px #ead7f4,0 8px 22px #ae80c416;
+}
+#anime-space .ac-hero:after { background:linear-gradient(90deg,#fff2fcf5,#fff3fcd6 24%,#fff4fb60 46%,transparent 64%); }
+#anime-space .ac-hero-copy { gap:10px; }
+#anime-space .ac-hero-buttons .ac-btn { border-radius:10px; }
+#anime-space .ac-btn-primary,
+#anime-space .ac-tabs button.active,
+#anime-space .ac-episode-grid button.active {
+  background:linear-gradient(175deg,#be91fc,#8d56e5);
+  box-shadow:inset 0 1px 0 #ffffff75,0 3px 7px #a36add35;
+}
+#anime-space .ac-btn-primary .ac-icon { stroke-width:2; }
+#anime-space .ac-discover-section { padding-top:15px; border-top:1px solid var(--ac-line); }
+#anime-space .ac-panel {
+  background:linear-gradient(145deg,#fffbffdf,#faf0fbd6);
+  border-color:#e6d4f2;
+  box-shadow:inset 0 0 0 2px #ffffff93,0 3px 11px #a978c410;
+}
+#anime-space .ac-panel:after {
+  content:""; top:-8px; right:-3px; width:92px; height:39px;
+  background:var(--ac-blossoms) right top/contain no-repeat;
+  opacity:.65; transform:none;
+}
+#anime-space .ac-section-head :is(.ac-more,h2) { position:relative; z-index:1; }
+#anime-space .ac-home-progress { min-height:128px; }
+#anime-space .ac-tiny-mascot { right:13px; bottom:2px; width:72px; opacity:.88; }
+#anime-space .ac-home-ranks .ac-schedule-item img,
+#anime-space .ac-recommend-panel .ac-schedule-item img {
+  width:62px; height:43px;
+}
+#anime-space .ac-rank {
+  display:grid; place-items:center; width:19px; aspect-ratio:1; border-radius:50%;
+  background:#ebdcfa; color:#6f4697; font-size:10px;
+}
+#anime-space .ac-home-ranks button:nth-of-type(1) .ac-rank { background:#ffe09a; color:#80500d; }
+#anime-space .ac-home-ranks button:nth-of-type(2) .ac-rank { background:#e4deeb; color:#625672; }
+#anime-space .ac-home-ranks button:nth-of-type(3) .ac-rank { background:#ffd1ae; color:#844a22; }
+#anime-space :is(.ac-card-sub,.ac-schedule-item small,.ac-episode-caption p,.ac-summary,.ac-note) { color:var(--ac-petal-ink); }
+#anime-space .ac-rating { background:#39254fc9; border-color:#fff6; }
+#anime-space .ac-rating b { color:#ffd56d; }
+#anime-space .ac-footer { padding-block:31px; background:radial-gradient(ellipse at 50% 100%,#eddaf6,transparent 77%); }
+#anime-space .ac-footer:before {
+  content:""; position:absolute; left:0; bottom:0; width:165px; height:52px;
+  background:var(--ac-blossoms) center/contain no-repeat; transform:scaleY(-1); opacity:.4; pointer-events:none;
+}
+#anime-space .ac-collection>span { padding-right:12px; }
+#anime-space .ac-episode-grid button { background:linear-gradient(#fffaff,#f3e9fa); }
+#anime-space .ac-danmaku-bar { background:linear-gradient(90deg,#f8edf9,#f2e9fb); }
+#anime-space .ac-mascot p { background:#fffaff; box-shadow:0 3px 9px #be8ad62b; }
+#anime-space .ac-mascot.is-greeting p { border-color:#cc88da; color:#754592; }
+
+@media(prefers-reduced-motion:no-preference) {
+  #anime-space :is(.ac-btn,.ac-rail-btn,.ac-nav button,.ac-tabs button,.ac-episode-grid button,.ac-collection,.ac-landscape,.ac-poster-art,.ac-mascot p) {
+    transition:transform .34s var(--ac-spring),box-shadow .22s ease,background-color .2s,color .2s;
+  }
+  #anime-space :is(.ac-btn,.ac-tabs button,.ac-episode-grid button,.ac-rail-btn):active:not(:disabled) { transform:scale(.94); }
+  #anime-space .ac-mascot.is-greeting p { animation:ac-bubble-pop .48s var(--ac-spring); }
+  #anime-space .ac-hero-copy { animation:ac-copy-in .32s ease-out both; }
+}
+@media(hover:hover) and (pointer:fine) and (prefers-reduced-motion:no-preference) {
+  #anime-space :is(.ac-rail-btn,.ac-nav button,.ac-tabs button,.ac-episode-grid button):hover:not(:disabled) { transform:translateY(-2px); }
+  #anime-space :is(.ac-collection,.ac-landscape):hover,
+  #anime-space .ac-poster button:hover .ac-poster-art { transform:translateY(-4px); }
+  #anime-space :is(.ac-collection:hover,.ac-landscape:hover .ac-thumb,.ac-poster button:hover .ac-poster-art) {
+    box-shadow:0 7px 16px #8954b62d;
+  }
+  #anime-space .ac-mascot-hello:hover .ac-mascot-art { filter:drop-shadow(0 4px 7px #bd8bdf4d); }
+}
+@keyframes ac-copy-in { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:none; } }
+@keyframes ac-bubble-pop { from { transform:rotate(-4deg) scale(.83); } to { transform:rotate(-4deg) scale(1); } }
+@media(min-width:1151px) {
+  #anime-space .ac-hero { height:clamp(255px,20vw,360px); }
+  #anime-space .ac-home-grid { margin-top:18px; gap:18px; grid-template-columns:minmax(0,1fr) minmax(245px,30%); }
+  #anime-space .ac-page { padding-top:16px; }
+  #anime-space .ac-watch-layout { grid-template-columns:minmax(0,1fr) clamp(292px,27%,390px); }
+}
+@media(max-width:760px) {
+  #anime-space .ac-toolbar:before { display:none; }
+  #anime-space .ac-flourish { display:none; }
+  #anime-space .ac-hero:after { background:linear-gradient(90deg,#fff2fcf5,#fff3fcb5 48%,transparent 95%); }
+}
+
+/* Each illustrated panel has its own vignette, as in the reference. */
+#anime-space .ac-home-progress,
+#anime-space .ac-note-panel,
+#anime-space .ac-synopsis { isolation:isolate; }
+#anime-space :is(.ac-home-progress,.ac-note-panel,.ac-synopsis)::before {
+  content:""; position:absolute; right:0; bottom:0; pointer-events:none; z-index:-1;
+  background:no-repeat right bottom / contain;
+}
+#anime-space .ac-home-progress { min-height:154px; padding-bottom:62px; }
+#anime-space .ac-home-progress::before {
+  width:158px; height:92px; background-image:url('/img/anime/deco-cat.webp');
+}
+#anime-space .ac-note-panel::before {
+  width:105px; height:65px; background-image:url('/img/anime/deco-notes.webp');
+}
+#anime-space .ac-note-panel .ac-tiny-mascot { display:none; }
+#anime-space .ac-note-panel .ac-note { min-height:110px; padding-bottom:41px; }
+#anime-space .ac-synopsis::before {
+  width:min(44%,260px); height:104px; opacity:.52; background-image:url('/img/anime/deco-ruins.webp');
+}
+#anime-space .ac-footer {
+  background: linear-gradient(90deg,transparent 18%,#fffaffb0 32%,#fffaffb0 68%,transparent 82%),radial-gradient(ellipse at 50% 100%,#ead7f5,transparent 80%);
+}
+#anime-space .ac-footer::before,
+#anime-space .ac-footer::after {
+  width:min(28%,270px); height:72px; opacity:.9; bottom:-3px; pointer-events:none;
+  background:url('/img/anime/deco-garden.webp') left bottom/contain no-repeat;
+}
+#anime-space .ac-footer::before { transform:none; }
+#anime-space .ac-footer::after { transform:scaleX(-1); right:0; }
+#anime-space .ac-feature { isolation:isolate; }
+#anime-space .ac-feature::before {
+  content:""; position:absolute; z-index:0; pointer-events:none;
+  top:13px; left:-19px; width:115px; height:21px; transform:rotate(-31deg);
+  background:linear-gradient(#a37bc24d,#a37bc24d) 0 4px/100% 13px no-repeat,
+    repeating-linear-gradient(90deg,transparent 0 4px,#a37bc27a 4px 7px) 0 0/100% 3px no-repeat,
+    repeating-linear-gradient(90deg,transparent 0 4px,#a37bc27a 4px 7px) 0 100%/100% 3px no-repeat;
+}
+#anime-space .ac-feature-copy { position:relative; }
+#anime-space .ac-feature-copy h2 .ac-icon { margin-right:5px; }
+#anime-space .ac-watch-kicker {
+  font-weight:700; font-size:19px; margin-bottom:8px; display:flex; align-items:center; gap:8px;
+}
+#anime-space .ac-watch-kicker .ac-icon { color:#e7a2ce; width:14px; }
+#anime-space .ac-progress-line { display:flex; align-items:center; gap:10px; font-size:11px; color:#745783; }
+#anime-space .ac-progress-line .ac-progress-track { flex:1; }
+#anime-space .ac-progress-caption {
+  border:1px solid #e4d3f1; background:#f6edf9; border-radius:7px; text-align:center;
+  padding:4px 8px; font-size:11px; color:#745783;
+}
+#anime-space .ac-progress-caption .ac-icon { width:13px; margin-right:5px; color:#915ad9; }
+#anime-space .ac-next-preview { position:relative; }
+#anime-space .ac-next-preview .ac-play-dot { top:8px; bottom:auto; }
+#anime-space .ac-source-options button .ac-icon { width:12px; }
+#anime-space .ac-stream-format { font-size:11px; color:#745783; margin-left:auto; }
+#anime-space .ac-collection-arrow {
+  position:absolute; z-index:2; right:12px; bottom:15px; color:white; width:14px; height:14px;
+}
+#anime-space .ac-collection>span { right:18px; }
+#anime-space .ac-collections { position:relative; }
+#anime-space .ac-collections::before {
+  content:""; position:absolute; right:0; top:-38px; width:160px; height:45px;
+  background:var(--ac-blossoms) right center/contain no-repeat; pointer-events:none; opacity:.65;
+}
+@media(max-width:480px) {
+  #anime-space .ac-watch-kicker { font-size:16px; }
+  #anime-space .ac-footer { flex-wrap:wrap; }
+  #anime-space .ac-footer::before,#anime-space .ac-footer::after { opacity:.35; }
+}
+
+#anime-space .ac-player.ac-mpv-active{background:#000}
+#anime-space .ac-player.ac-mpv-active :is(video,.ac-video-poster){visibility:hidden}
+#anime-space .ac-player.ac-mpv-active .ac-controls{
+  background:linear-gradient(transparent,#15101bbf 65%);
+  opacity:0;
+  pointer-events:auto;
+  transition:opacity .15s;
+}
+#anime-space .ac-player.ac-mpv-active:not(.ac-mpv-controls-visible) .ac-controls > *{visibility:hidden}
+#anime-space .ac-player.ac-mpv-active.ac-mpv-controls-visible .ac-controls{opacity:1;pointer-events:auto}
+#anime-space .ac-player.ac-mpv-active :is(.ac-quality,[data-player=pip],[data-player=mpv]),
+#anime-space .ac-player.ac-mpv-active .ac-danmaku-layer{visibility:hidden}
+
+#anime-space .ac-player.ac-mpv-overlay .ac-controls{visibility:hidden;pointer-events:none}

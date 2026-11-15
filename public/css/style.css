@@ -18,7 +18,7 @@
 @import url('/css/style-thread-unread.css?v=4.26.8');
 @import url('/css/style-tags-uploads-search.css?v=4.29.42');
 @import url('/css/style-e2e-spoilers.css?v=4.26.17');
-@import url('/css/style-settings.css?v=4.27.29');
+@import url('/css/style-settings.css?v=20261114-client');
 @import url('/css/style-mobile.css?v=4.26.10');
 @import url('/css/style-streams-markdown.css?v=4.27.56');
 @import url('/css/style-presence-connections.css?v=4.29.30');
@@ -37,8 +37,3 @@
 /* The rules themselves live in the files imported above, in this order. Later
    files win over earlier ones on equal specificity, as they did when this was
    one file, so keep the order and add new rules to the file for their area. */
-
-}
-
-.remote-control-video.remote-control-cursor-hidden {
-  cursor: none;

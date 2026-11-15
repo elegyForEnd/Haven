@@ -1,6 +1,6 @@
 {
-  "name": "Haven",
-  "short_name": "Haven",
+  "name": "Ciacord",
+  "short_name": "Ciacord",
   "id": "/app",
   "description": "Private chat, your rules",
   "start_url": "/app",

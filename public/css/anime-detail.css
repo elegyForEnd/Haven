@@ -1,0 +1,54 @@
+#anime-space .ac-back-link{position:absolute;top:16px;left:var(--detail-gutter);display:inline-flex;align-items:center;gap:6px;color:#7752ac}
+#anime-space .ac-back-link .ac-icon{width:15px}
+#anime-space .ac-page:has(>.ac-detail){padding:0;max-width:none}
+#anime-space .ac-detail{--detail-gutter:clamp(15px,2.6vw,34px);--detail-toolbar-height:66px;--detail-screen:calc(100dvh - var(--detail-toolbar-height));position:relative;isolation:isolate;display:grid;gap:18px}
+#anime-space .ac-detail-backdrop{position:absolute;inset:0 0 auto;height:calc(var(--detail-screen) + 96px);z-index:-1;pointer-events:none}
+#anime-space .ac-detail-backdrop-frame{position:sticky;top:var(--detail-toolbar-height);height:var(--detail-screen);background:url('/img/anime/sakura-branch.webp') center/cover no-repeat}
+#anime-space .ac-detail-backdrop-frame img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity .65s ease}
+#anime-space .ac-detail-backdrop-frame img.active{opacity:1}
+#anime-space .ac-detail-backdrop-frame::after{content:"";position:absolute;inset:0;background:linear-gradient(0deg,#fcf9ff 0%,#fcf9ffdc 24%,#fcf9ff10 67%),linear-gradient(90deg,#f8effffb 0%,#f8efffe8 29%,#f8efff69 62%,#f8efff20)}
+@media(prefers-reduced-motion:reduce){#anime-space .ac-detail-backdrop-frame img{transition:none}}
+#anime-space .ac-detail>.ac-detail-hero{position:relative;display:grid;grid-template-columns:clamp(108px,22%,228px) minmax(0,1fr);align-items:end;gap:clamp(14px,3vw,36px);min-height:calc(var(--detail-screen) - 52px);padding:60px var(--detail-gutter) 32px}
+#anime-space .ac-detail>:not(.ac-detail-hero,.ac-detail-backdrop){margin-inline:var(--detail-gutter);border-radius:12px;background:#fcf9fff2}
+#anime-space .ac-detail-hero>img{width:100%;aspect-ratio:2/3;object-fit:cover;border:2px solid white;border-radius:11px;box-shadow:0 4px 12px #794b9b30}
+#anime-space .ac-detail-hero h1{font-size:clamp(21px,3.4vw,44px);line-height:1.2}
+#anime-space .ac-detail-original{color:#715687;margin-top:5px;overflow-wrap:anywhere}
+#anime-space :is(.ac-detail-meta,.ac-detail-tags){display:flex;flex-wrap:wrap;gap:6px 14px;margin:12px 0}
+#anime-space .ac-detail-meta strong{color:#986300}
+#anime-space .ac-detail-info{display:grid;grid-template-columns:1.3fr 1fr;gap:18px;margin:0}
+#anime-space .ac-detail-info p{white-space:pre-line;overflow-wrap:anywhere}
+#anime-space .ac-detail-info section+section{border-left:1px solid var(--ac-line);padding-left:16px}
+#anime-space .ac-detail-info dl{margin:0 0 8px}
+#anime-space .ac-detail-info dl div{display:grid;grid-template-columns:5em 1fr;border-bottom:1px solid var(--ac-line);padding:4px 0}
+#anime-space .ac-detail-info dd{margin:0;overflow-wrap:anywhere}
+#anime-space .ac-detail-info a{color:#7752ac}
+#anime-space .ac-detail-episodes{margin:0}
+#anime-space .ac-detail-episodes .ac-tabs{margin-bottom:10px}
+#anime-space .ac-detail-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:7px}
+#anime-space .ac-detail-expand{width:100%;margin-top:10px;justify-content:center;color:#633c9a}
+#anime-space .ac-detail-episode,#anime-space .ac-episode-grid button.ac-detail-episode{display:flex;align-items:center;justify-content:flex-start;gap:7px;min-width:0;min-height:34px;padding:5px 7px;border:1px solid #e4d1f4;border-radius:8px;background:#fbf4ff;color:var(--ac-ink);font-size:12px;text-decoration:none;text-align:left}
+#anime-space .ac-detail-episode span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#anime-space .ac-detail-episode b{color:#6d38ba}
+#anime-space .ac-detail-episode[aria-current="true"],#anime-space .ac-detail-episode:hover{background:#ead6ff;border-color:#bb90ef}
+#anime-space .ac-episode-grid:has(.ac-detail-episode){grid-template-columns:repeat(auto-fit,minmax(100px,1fr))}
+#anime-space .ac-episode-tooltip{position:fixed;z-index:80;width:min(330px,calc(100vw - 16px));max-height:48vh;overflow:hidden;padding:12px 14px;border:1px solid #d9c0ed;border-radius:10px;background:#fffaff;color:var(--ac-ink);box-shadow:0 6px 20px #48235f2b;white-space:pre-line;overflow-wrap:anywhere;font-size:12px;pointer-events:none}
+#anime-space .ac-detail-cast{display:grid;grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:9px}
+#anime-space .ac-detail-cast a{display:flex;align-items:center;gap:9px;min-width:0;border:1px solid var(--ac-line);border-radius:9px;overflow:hidden;color:inherit;text-decoration:none}
+#anime-space .ac-detail-cast img{width:54px;height:62px;object-fit:cover;background:#eee0f8}
+#anime-space .ac-detail-cast small{display:block;color:#715687}
+#anime-space .ac-detail-gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(105px,1fr));gap:12px}
+#anime-space .ac-detail-gallery :is(a,button){display:block;min-width:0;padding:0;text-align:left;color:inherit;text-decoration:none}
+#anime-space .ac-detail-gallery [hidden]{display:none}
+#anime-space .ac-detail-gallery img{width:100%;aspect-ratio:2/3;object-fit:cover;border-radius:8px;background:#efe4f8}
+#anime-space .ac-detail-gallery strong{display:block;font-size:12px}
+#anime-space .ac-detail [data-detail-artwork]:empty{display:none}
+@media(max-width:760px){
+  #anime-space .ac-detail{--detail-toolbar-height:59px}
+  #anime-space .ac-detail>.ac-detail-hero{padding-bottom:18px}
+}
+@media(max-width:560px){
+  #anime-space .ac-detail-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  #anime-space .ac-detail-info{grid-template-columns:1fr}
+  #anime-space .ac-detail-info section+section{border-left:0;border-top:1px solid var(--ac-line);padding:10px 0 0}
+}
+#anime-space .ac-episode-tooltip p{margin-top:4px}

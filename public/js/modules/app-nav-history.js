@@ -82,6 +82,7 @@ _setupNavHistory() {
   window.addEventListener('mouseup', (e) => {
     if (!side(e)) return;
     e.preventDefault();
+    if (e.target?.closest?.('.remote-control-overlay')) return;
     this._navFromMouse(e.button);
   }, true);
 },

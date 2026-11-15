@@ -120,6 +120,11 @@ class VoiceManager {
     // Noise mode: 'off' | 'gate' | 'suppress'
     const savedMode = localStorage.getItem('haven_noise_mode');
     this.noiseMode = savedMode || 'gate';
+    const clearBridge = (window.ciacordDesktop || window.havenDesktop)?.clearAudio;
+    this.noiseEngine = clearBridge?.version === 1 && localStorage.getItem('ciacord_noise_engine') !== 'original' ? 'clear' : 'original';
+    this._clearMicrophone = null;
+    this._noiseGeneration = 0;
+    this.noiseEngineStatus = { requested: this.noiseEngine, actual: 'idle' };
     // Stereo mic is an opt-in capture profile. It preserves channel layout by
     // bypassing mono-oriented browser processing and RNNoise.
     this.microphoneStereo = localStorage.getItem('haven_mic_stereo') === '1';
@@ -2289,7 +2294,7 @@ class VoiceManager {
     const constraints = {
       channelCount: { ideal: stereo ? 2 : 1 },
       echoCancellation: !stereo,
-      noiseSuppression: !stereo,
+      noiseSuppression: !stereo && this.noiseEngine !== 'clear',
       autoGainControl: !stereo
     };
     if (deviceId) constraints.deviceId = { exact: deviceId };
@@ -2461,32 +2466,9 @@ class VoiceManager {
         this.localStream = this._buildMicrophonePipeline(this.rawStream);
         this._startNoiseGate();
 
-        // Stereo mode preserves the original channel layout, so mono-only
-        // RNNoise and browser voice processing remain disabled.
-        if (this.microphoneStereo) {
-          this.setNoiseSensitivity(0);
-        } else {
-          const rnnoiseAvailable = await this._initRNNoise();
-          if (abandoned()) return false;
-          if (this.noiseMode === 'suppress' && rnnoiseAvailable && this._rnnoiseWasmBytes) {
-            // Keep a gentle post-RNNoise expander active. RNNoise removes
-            // background noise but intentionally preserves transients; a
-            // short, conservative gate catches residual breaths/clicks in
-            // the pauses without chopping speech.
-            this.setNoiseSensitivity(18);
-            this._enableRNNoise();
-          } else if (this.noiseMode === 'off') {
-            this.setNoiseSensitivity(0);
-          } else if (this.noiseMode === 'gate') {
-            const saved = parseInt(localStorage.getItem('haven_ns_value') || '10', 10);
-            this.setNoiseSensitivity(saved);
-          } else if (this.noiseMode === 'suppress') {
-            // Keep the residual gate even if the WASM worklet is unavailable;
-            // this is safer than sending a permanently open raw mic.
-            this.setNoiseSensitivity(18);
-            console.warn('[Voice] AI suppression unavailable');
-          }
-        }      }
+        await this._applyNoiseProcessing();
+        if (abandoned()) return false;
+      }
 
       // Do not let Socket.IO buffer a stale voice-join if the connection
       // dropped while microphone and noise processing were being prepared.
@@ -5041,24 +5023,8 @@ class VoiceManager {
     this._startNoiseGate();
     this._startLocalTalkDetection();
 
-    // Stereo mode intentionally bypasses mono-oriented processing. Mono mode
-    // restores the user's saved noise profile after rebuilding the graph.
-    if (this.microphoneStereo) {
-      this.setNoiseSensitivity(0);
-    } else if (this.noiseMode === 'suppress') {
-      const rnnoiseAvailable = await this._initRNNoise();
-      this.setNoiseSensitivity(0);
-      if (rnnoiseAvailable && this._rnnoiseWasmBytes) {
-        this._enableRNNoise();
-      } else {
-        console.warn('[Voice] AI suppression unavailable after input switch');
-      }
-    } else if (this.noiseMode === 'gate') {
-      const saved = parseInt(localStorage.getItem('haven_ns_value') || '10', 10);
-      this.setNoiseSensitivity(saved);
-    } else if (this.noiseMode === 'off') {
-      this.setNoiseSensitivity(0);
-    }
+    await this._applyNoiseProcessing();
+    if (!this.inVoice || !this.localStream) return false;
     // Replace the audio track on every peer connection
     const newTrack = this.localStream.getAudioTracks()[0];
     const swaps = [];
@@ -5298,49 +5264,100 @@ class VoiceManager {
   // ── Noise Gate ───────────────────────────────────────────
 
   setNoiseMode(mode) {
-    // mode: 'off' | 'gate' | 'suppress'
+    if (!['off', 'gate', 'suppress'].includes(mode)) return;
     this.noiseMode = mode;
     localStorage.setItem('haven_noise_mode', mode);
+    return this._applyNoiseProcessing();
+  }
 
-    // Stereo microphone mode preserves L/R and therefore cannot pass through
-    // the mono RNNoise processor or gate profile.
-    if (this.microphoneStereo) {
-      this._disableRNNoise();
-      this.setNoiseSensitivity(0);
+  setNoiseEngine(engine) {
+    this.noiseEngine = engine === 'clear' && (window.ciacordDesktop || window.havenDesktop)?.clearAudio?.version === 1 ? 'clear' : 'original';
+    localStorage.setItem('ciacord_noise_engine', this.noiseEngine);
+    return this._applyNoiseProcessing();
+  }
+
+  async setClearSettings(values) {
+    const { saveClearSettings } = await import('/js/clear-microphone.js');
+    const settings = saveClearSettings(values);
+    const clear = this._clearMicrophone;
+    return clear && !clear.stopped ? clear.setSettings(settings) : null;
+  }
+
+  _setNoiseEngineStatus(actual, error = '', info = {}) {
+    this.noiseEngineStatus = { requested: this.noiseEngine, actual, error, ...info };
+    if (typeof window !== 'undefined' && window.dispatchEvent && typeof CustomEvent !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('ciacord:noise-engine-status', { detail: this.noiseEngineStatus }));
+    }
+  }
+
+  _stopClearMicrophone() {
+    const clear = this._clearMicrophone;
+    this._clearMicrophone = null;
+    if (!clear) return;
+    try { this._rnnoiseSource?.disconnect(clear.node); } catch {}
+    clear.stop();
+    try { if (this._rnnoiseSource && this._noiseGateAnalyser) this._rnnoiseSource.connect(this._noiseGateAnalyser); } catch {}
+  }
+
+  async _createClearMicrophone(context, onError) {
+    const { ClearMicrophone } = await import('/js/clear-microphone.js');
+    return ClearMicrophone.create(context, onError);
+  }
+
+  async _applyNoiseProcessing(skipClear = false, failure = '') {
+    const generation = this._noiseGeneration = (this._noiseGeneration || 0) + 1;
+    this._stopClearMicrophone();
+    this._disableRNNoise();
+    const context = this.audioCtx;
+    if (!context || !this._rnnoiseSource || !this._noiseGateAnalyser) {
+      this._setNoiseEngineStatus('idle');
       return;
     }
-
-    if (mode === 'suppress') {
-      // Enable RNNoise plus a conservative residual gate. The gate is
-      // deliberately much gentler than the user-facing Gate profile.
-      if (this.noiseSensitivity !== 18) this.setNoiseSensitivity(18);
-      const context = this.audioCtx;
-      if (!this._rnnoiseWasmBytes || this._rnnoiseContext !== context) {
-        this._initRNNoise().then((available) => {
-          if (
-            available
-            && this.noiseMode === 'suppress'
-            && !this.microphoneStereo
-            && this.audioCtx === context
-          ) {
-            this._enableRNNoise();
-          } else if (!available) {
-            console.warn('[Voice] AI suppression unavailable (WASM failed to load)');
-          }
+    if (this.microphoneStereo) {
+      this.setNoiseSensitivity(0);
+      this._setNoiseEngineStatus('stereo-bypass');
+      return;
+    }
+    const current = () => generation === this._noiseGeneration && this.audioCtx === context;
+    // Echo cancellation remains enabled; only the noise suppressors are exclusive.
+    const track = this.rawStream?.getAudioTracks?.()[0];
+    if (track?.applyConstraints) {
+      try { await track.applyConstraints({ noiseSuppression: this.noiseEngine !== 'clear' || skipClear }); } catch {}
+    }
+    if (!current()) return;
+    if (this.noiseEngine === 'clear' && !skipClear) {
+      this.setNoiseSensitivity(0);
+      this._setNoiseEngineStatus('loading');
+      try {
+        const clear = await this._createClearMicrophone(context, error => {
+          if (current()) this._applyNoiseProcessing(true, error.message);
         });
-      } else {
-        this._enableRNNoise();
+        if (!current()) { clear.stop(); return; }
+        this._clearMicrophone = clear;
+        this._rnnoiseSource.disconnect(this._noiseGateAnalyser);
+        this._rnnoiseSource.connect(clear.node);
+        clear.node.connect(this._noiseGateAnalyser);
+        this._setNoiseEngineStatus('clear', '', { latencyMs: clear.info.latencySamples / context.sampleRate * 1000 });
+        return;
+      } catch (error) {
+        if (!current()) return;
+        this._stopClearMicrophone();
+        failure = error.message;
+        try { await track?.applyConstraints?.({ noiseSuppression: true }); } catch {}
+        if (!current()) return;
       }
-    } else if (mode === 'gate') {
-      // Disable RNNoise, enable noise gate with saved sensitivity
-      this._disableRNNoise();
-      const saved = parseInt(localStorage.getItem('haven_ns_value') || '10', 10);
-      this.setNoiseSensitivity(saved);
+    }
+    if (this.noiseMode === 'suppress') {
+      this.setNoiseSensitivity(18);
+      const available = this._rnnoiseWasmBytes && this._rnnoiseContext === context ? true : await this._initRNNoise();
+      if (!current()) return;
+      if (available) this._enableRNNoise();
+    } else if (this.noiseMode === 'gate') {
+      this.setNoiseSensitivity(parseInt(localStorage.getItem('haven_ns_value') || '10', 10));
     } else {
-      // Off: disable both
-      this._disableRNNoise();
       this.setNoiseSensitivity(0);
     }
+    this._setNoiseEngineStatus(this.noiseEngine === 'clear' ? 'fallback' : 'original', failure);
   }
 
   async _initRNNoise() {
@@ -5568,6 +5585,8 @@ class VoiceManager {
   }
 
   _stopNoiseGate() {
+    ++this._noiseGeneration;
+    this._stopClearMicrophone();
     if (this._noiseGateInterval) {
       clearInterval(this._noiseGateInterval);
       this._noiseGateInterval = null;

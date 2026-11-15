@@ -971,6 +971,7 @@
     "subtitle": "使用好友提供的代码加入频道，\n或由管理员创建一个。"
   },
   "header": {
+    "download_client": "客户端下载",
     "select_channel": "选择频道",
     "mobile_menu": "菜单",
     "mobile_servers": "服务器",
@@ -1452,6 +1453,28 @@
     "performance_hud": "FPS：{{fps}}  堆：{{memory}} MB  DOM：{{dom}}{{rgb}}"
   },
   "voice_settings": {
+    "clear_params_title": "Clear 参数",
+    "clear_voice": "人声",
+    "clear_ambience": "环境声",
+    "clear_reverb": "人声混响",
+    "clear_mute": "静音",
+    "clear_bypass": "旁通 Clear（使用原始音频）",
+    "clear_reset": "恢复默认",
+    "clear_params_hint": "参数自动保存，通话中调整会实时生效。",
+    "clear_params_saved": "已保存，下次启用 Clear 时生效。",
+    "clear_params_applying": "正在应用…",
+    "clear_params_applied": "已应用到 Clear。",
+    "clear_params_failed": "应用失败，已保存供下次启用时使用。",
+    "clear_params_upgrade": "升级桌面客户端后可调整 Clear 参数。",
+    "noise_engine": "降噪引擎",
+    "clear_engine": "Clear（默认）",
+    "original_engine": "原有降噪",
+    "clear_active": "Clear 已启用 · 插件延迟",
+    "clear_loading": "正在加载 Clear…",
+    "clear_fallback": "Clear 不可用，已回退到原有降噪",
+    "clear_stereo_bypass": "立体声麦克风模式：已跳过降噪处理",
+    "original_active": "正在使用原有降噪",
+    "clear_ready": "加入语音时自动启用 Clear",
     "audio_devices": "音频设备",
     "input": "输入",
     "default_mic": "默认麦克风",
@@ -4992,12 +5015,18 @@
     "connection_failed": "无法建立 Moonlight 远程协助会话。"
   },
   "mesh": {
+    "desktop_required": "请下载客户端使用组网功能（目前支持 Windows）。",
     "title": "组网",
     "join": "加入组网",
     "leave": "退出组网",
     "joining": "等待 Windows 授权…",
     "failed": "加入组网失败",
     "empty": "暂无在线组网成员",
-    "unavailable": "当前频道无法组网"
+    "unavailable": "当前频道无法组网",
+    "self": "本机",
+    "direct": "直连",
+    "relay": "中继",
+    "unknown": "状态未知",
+    "route_hint": "此成员与你之间的实际组网连接方式"
   }
 }

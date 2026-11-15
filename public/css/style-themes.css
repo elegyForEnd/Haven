@@ -169,6 +169,10 @@
   user-select: none;
 }
 
+.remote-control-video.remote-control-cursor-hidden {
+  cursor: none;
+}
+
 .remote-control-video:focus {
   box-shadow: inset 0 0 0 2px var(--accent, #7866e6);
 }

@@ -1,0 +1,118 @@
+{
+  "mode": "built-in imagegen reference-image extraction",
+  "referenceImages": [
+    "docs/design/anime-home-reference.webp",
+    "docs/design/anime-watch-reference.webp"
+  ],
+  "notes": "Text and UI obscured areas are generated reconstructions. Image-to-image results cannot be asserted pixel-identical to the source. The source-crops directory preserves original reference pixels for comparison.",
+  "assets": [
+    {
+      "name": "hero",
+      "formats": [
+        "png",
+        "webp"
+      ],
+      "sourceCrop": "source-crops/hero-source.png",
+      "prompt": "Edit the attached crop directly, treating every visible illustration pixel as invariant. Extract the exact existing Frieren banner background from this UI screenshot. Remove only all text, numbers, icons, buttons, labels, pagination dots, borders and rounded corner clipping, reconstruct those covered small areas to blend with adjacent scenery. Preserve the reference's exact original character face, pose, proportions, position, anime linework, color temperature, flowers, objects and composition. No redesign, no recoloring, no new ornaments, no zooming. Output same very wide 4:1 rectangular composition edge to edge. This is image restoration and UI removal, as close to pixel-identical as possible to the supplied illustration."
+    },
+    {
+      "name": "weekend",
+      "formats": [
+        "png",
+        "webp"
+      ],
+      "sourceCrop": "source-crops/weekend-source.png",
+      "prompt": "Edit the attached crop directly, treating every visible illustration pixel as invariant. Extract the exact existing lavender-haired girl's desk banner background from this UI screenshot. Remove only all text, numbers, icons, buttons, labels, pagination dots, borders and rounded corner clipping, reconstruct those covered small areas to blend with adjacent scenery. Preserve the reference's exact original character face, pose, proportions, position, anime linework, color temperature, flowers, objects and composition. No redesign, no recoloring, no new ornaments, no zooming. Output same very wide 3.5:1 rectangular composition edge to edge. This is image restoration and UI removal, as close to pixel-identical as possible to the supplied illustration."
+    },
+    {
+      "name": "collection-cozy",
+      "formats": [
+        "png",
+        "webp"
+      ],
+      "sourceCrop": "source-crops/collection-cozy-source.png",
+      "prompt": "Restore this exact cropped illustration from the reference UI screenshot into a standalone usable website image asset. Remove only all superimposed text, symbols, arrows, text shadow and rounded corner clipping. Retain the exact original characters, faces, poses, objects, framing, colors, original daylight and purple shadows. Reconstruct only the region hidden by text using directly adjacent image content. Do not redesign or shift color temperature. No new decorations, no new scene, no labels or typography. Output clean rectangular 2:1 illustration with original composition."
+    },
+    {
+      "name": "collection-fantasy",
+      "formats": [
+        "png",
+        "webp"
+      ],
+      "sourceCrop": "source-crops/collection-fantasy-source.png",
+      "prompt": "Restore this exact cropped illustration from the reference UI screenshot into a standalone usable website image asset. Remove only all superimposed text, symbols, arrows, text shadow and rounded corner clipping. Retain the exact original characters, faces, poses, objects, framing, colors, original daylight and purple shadows. Reconstruct only the region hidden by text using directly adjacent image content. Do not redesign or shift color temperature. No new decorations, no new scene, no labels or typography. Output clean rectangular 2:1 illustration with original composition."
+    },
+    {
+      "name": "collection-youth",
+      "formats": [
+        "png",
+        "webp"
+      ],
+      "sourceCrop": "source-crops/collection-youth-source.png",
+      "prompt": "Restore this exact cropped illustration from the reference UI screenshot into a standalone usable website image asset. Remove only all superimposed text, symbols, arrows, text shadow and rounded corner clipping. Retain the exact original characters, faces, poses, objects, framing, colors, original daylight and purple shadows. Reconstruct only the region hidden by text using directly adjacent image content. Do not redesign or shift color temperature. No new decorations, no new scene, no labels or typography. Output clean rectangular 2:1 illustration with original composition."
+    },
+    {
+      "name": "cat-books",
+      "formats": [
+        "png",
+        "webp"
+      ],
+      "source": "Four close-up crops extracted from original references",
+      "prompt": "Extract the exact illustrated objects from these four tight crops. Image1 is a white sleeping kitten and lilac book stack with a star. Image2 is a tiny open journal with a pink flower. Image3 is a corner bed of tiny pastel flowers. Image4 is a tiny light-blue-gray stone arch ruin with meadow. Remove paper backgrounds, UI edges and text. Keep each object's very same pose, outline, orientation, relative shape, simple tiny details, original hues and original loose delicate linework. DO NOT embellish or redesign, add ornaments, shift warm/cool balance, glow or recolor. Enlarge their original drawing faithfully as if tracing it exactly. Output four separate transparent cutouts arranged in a 2x2 sprite sheet with huge fully transparent gutters: kitten top-left, book top-right, flowers bottom-left, ruin bottom-right. No text or labels. Completely transparent outside objects, no ambient glow or shadow vignette."
+    },
+    {
+      "name": "journal",
+      "formats": [
+        "png",
+        "webp"
+      ],
+      "source": "Four close-up crops extracted from original references",
+      "prompt": "Extract the exact illustrated objects from these four tight crops. Image1 is a white sleeping kitten and lilac book stack with a star. Image2 is a tiny open journal with a pink flower. Image3 is a corner bed of tiny pastel flowers. Image4 is a tiny light-blue-gray stone arch ruin with meadow. Remove paper backgrounds, UI edges and text. Keep each object's very same pose, outline, orientation, relative shape, simple tiny details, original hues and original loose delicate linework. DO NOT embellish or redesign, add ornaments, shift warm/cool balance, glow or recolor. Enlarge their original drawing faithfully as if tracing it exactly. Output four separate transparent cutouts arranged in a 2x2 sprite sheet with huge fully transparent gutters: kitten top-left, book top-right, flowers bottom-left, ruin bottom-right. No text or labels. Completely transparent outside objects, no ambient glow or shadow vignette."
+    },
+    {
+      "name": "flower-corner",
+      "formats": [
+        "png",
+        "webp"
+      ],
+      "source": "Four close-up crops extracted from original references",
+      "prompt": "Extract the exact illustrated objects from these four tight crops. Image1 is a white sleeping kitten and lilac book stack with a star. Image2 is a tiny open journal with a pink flower. Image3 is a corner bed of tiny pastel flowers. Image4 is a tiny light-blue-gray stone arch ruin with meadow. Remove paper backgrounds, UI edges and text. Keep each object's very same pose, outline, orientation, relative shape, simple tiny details, original hues and original loose delicate linework. DO NOT embellish or redesign, add ornaments, shift warm/cool balance, glow or recolor. Enlarge their original drawing faithfully as if tracing it exactly. Output four separate transparent cutouts arranged in a 2x2 sprite sheet with huge fully transparent gutters: kitten top-left, book top-right, flowers bottom-left, ruin bottom-right. No text or labels. Completely transparent outside objects, no ambient glow or shadow vignette."
+    },
+    {
+      "name": "ruins-corner",
+      "formats": [
+        "png",
+        "webp"
+      ],
+      "source": "Four close-up crops extracted from original references",
+      "prompt": "Extract the exact illustrated objects from these four tight crops. Image1 is a white sleeping kitten and lilac book stack with a star. Image2 is a tiny open journal with a pink flower. Image3 is a corner bed of tiny pastel flowers. Image4 is a tiny light-blue-gray stone arch ruin with meadow. Remove paper backgrounds, UI edges and text. Keep each object's very same pose, outline, orientation, relative shape, simple tiny details, original hues and original loose delicate linework. DO NOT embellish or redesign, add ornaments, shift warm/cool balance, glow or recolor. Enlarge their original drawing faithfully as if tracing it exactly. Output four separate transparent cutouts arranged in a 2x2 sprite sheet with huge fully transparent gutters: kitten top-left, book top-right, flowers bottom-left, ruin bottom-right. No text or labels. Completely transparent outside objects, no ambient glow or shadow vignette."
+    },
+    {
+      "name": "thumb-frieren",
+      "formats": [
+        "png",
+        "webp"
+      ],
+      "sourceCrop": "source-crops/thumb-frieren-source.png",
+      "prompt": "Extract this exact anime thumbnail illustration from the attached reference crop. Remove the white circular play button, the bottom progress bar and border and reconstruct only their covered pixels from adjoining image. Preserve exactly the original framing, character faces, expression, pose, linework, lighting and colors. Do not create a new scene or add details beyond those visibly present. Output clean rectangular 16:9 background illustration, no text, symbols, buttons or rounded corners."
+    },
+    {
+      "name": "thumb-dungeon",
+      "formats": [
+        "png",
+        "webp"
+      ],
+      "sourceCrop": "source-crops/thumb-dungeon-source.png",
+      "prompt": "Extract this exact anime thumbnail illustration from the attached reference crop. Remove the white circular play button, the bottom progress bar and border and reconstruct only their covered pixels from adjoining image. Preserve exactly the original framing, character faces, expression, pose, linework, lighting and colors. Do not create a new scene or add details beyond those visibly present. Output clean rectangular 16:9 background illustration, no text, symbols, buttons or rounded corners."
+    },
+    {
+      "name": "thumb-guitar",
+      "formats": [
+        "png",
+        "webp"
+      ],
+      "sourceCrop": "source-crops/thumb-guitar-source.png",
+      "prompt": "Extract this exact anime thumbnail illustration from the attached reference crop. Remove the white circular play button, the bottom progress bar and border and reconstruct only their covered pixels from adjoining image. Preserve exactly the original framing, character faces, expression, pose, linework, lighting and colors. Do not create a new scene or add details beyond those visibly present. Output clean rectangular 16:9 background illustration, no text, symbols, buttons or rounded corners."
+    }
+  ]
+}

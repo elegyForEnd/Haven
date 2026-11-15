@@ -1,0 +1,34 @@
+{
+  "generator": "built-in imagegen",
+  "directory": "public/img/anime",
+  "assets": [
+    {
+      "file": "deco-cat.webp",
+      "prompt": "Isolated transparent-background decorative asset, Japanese anime light watercolor and delicate cel shading, cream sakura-pink lilac palette, for a polished anime watching website. A tiny sleeping round white anime kitten curled on three lavender and cream hardcover books, little gold star and two pink cherry blossom petals. Side view, broad low silhouette. Keep the full vignette in frame, no opaque rectangular backdrop, no letters or interface."
+    },
+    {
+      "file": "deco-notes.webp",
+      "prompt": "Isolated transparent-background decorative asset, Japanese anime light watercolor and delicate cel shading, cream sakura-pink lilac palette, for a polished anime watching website. An open small anime journal with cream pages, pale pink cherry blossom bookmark, purple pen, and little gold star. Three quarter view. Quiet detailed drawn lines but NO legible marks or text. Keep the full vignette in frame, no opaque rectangular backdrop, no letters or interface."
+    },
+    {
+      "file": "deco-garden.webp",
+      "prompt": "Isolated transparent-background decorative asset, Japanese anime light watercolor and delicate cel shading, cream sakura-pink lilac palette, for a polished anime watching website. A wide horizontal floral border for the bottom corners of an anime website: miniature cream daisies, pink cherry petals and lavender wildflowers, concentrated on the left bottom corner and tapering to nothing on the right, no soil or background, low wide aspect ratio. Keep the full vignette in frame, no opaque rectangular backdrop, no letters or interface."
+    },
+    {
+      "file": "deco-ruins.webp",
+      "prompt": "Isolated transparent-background decorative asset, Japanese anime light watercolor and delicate cel shading, cream sakura-pink lilac palette, for a polished anime watching website. A delicate tiny anime landscape vignette of ivory ruined stone arches and a hillside of lavender and white wildflowers in sunlight, concentrated on right side, dissolving to transparent on left and above, broad low silhouette, for corner of an anime card. No characters. Keep the full vignette in frame, no opaque rectangular backdrop, no letters or interface."
+    },
+    {
+      "file": "collection-cozy.webp",
+      "prompt": "Wide 16:9 landscape anime editorial illustration for the cozy curated collection card on a pastel sakura anime website. Scene: quiet girl napping beside a white cat on a sofa, sunlit living room, soft cream and pink. Expressive Japanese anime film aesthetic, detailed yet soft, coherent luminous lavender-pink highlights, dark enough near bottom for a separate UI overlay. No captions, lettering, frame, watermark or interface."
+    },
+    {
+      "file": "collection-fantasy.webp",
+      "prompt": "Wide 16:9 landscape anime editorial illustration for the fantasy curated collection card on a pastel sakura anime website. Scene: distant medieval fantasy castle above a lush mountain valley, white wildflowers, blue sky, sweeping vista. Expressive Japanese anime film aesthetic, detailed yet soft, coherent luminous lavender-pink highlights, dark enough near bottom for a separate UI overlay. No captions, lettering, frame, watermark or interface."
+    },
+    {
+      "file": "collection-youth.webp",
+      "prompt": "Wide 16:9 landscape anime editorial illustration for the youth curated collection card on a pastel sakura anime website. Scene: two fully clothed teenage students in profile on a hill at sunset, cherry petals and peach clouds, wistful friendship. Expressive Japanese anime film aesthetic, detailed yet soft, coherent luminous lavender-pink highlights, dark enough near bottom for a separate UI overlay. No captions, lettering, frame, watermark or interface."
+    }
+  ]
+}

@@ -10,7 +10,8 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "test": "node --test --test-concurrency=1"
+    "test": "node --test --test-concurrency=1",
+    "manga:setup": "node scripts/setup-manga.js"
   },
   "dependencies": {
     "@ruffle-rs/ruffle": "0.6.0",
@@ -18,6 +19,7 @@
     "archiver": "^7.0.1",
     "bcryptjs": "^2.4.3",
     "better-sqlite3": "^12.11.1",
+    "cheerio": "^1.1.2",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "express-rate-limit": "^7.5.1",
@@ -28,10 +30,12 @@
     "multer": "^2.5.0",
     "music-metadata": "^11.16.0",
     "otpauth": "^9.5.0",
+    "playwright-core": "^1.65.1",
     "qrcode": "^1.5.4",
     "semver": "^7.7.4",
     "socket.io": "^4.8.1",
     "web-push": "^3.6.7",
+    "webtorrent": "^3.0.21",
     "ws": "^8.18.3",
     "yauzl": "^3.4.0"
   },
@@ -50,6 +54,7 @@
   },
   "allowScripts": {
     "better-sqlite3": true,
-    "esbuild": true
+    "esbuild": true,
+    "node-datachannel": true
   }
 }

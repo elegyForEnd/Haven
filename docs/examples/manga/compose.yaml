@@ -1,0 +1,19 @@
+# Overlay for the repository-root docker-compose.yml. Uses the current source.
+services:
+  haven:
+    build: .
+    environment:
+      - MANGA_ENGINE_URL=http://manga-engine:4567
+    depends_on:
+      - manga-engine
+  manga-engine:
+    image: ghcr.io/suwayomi/suwayomi-server:v2.4.2366
+    environment:
+      - BIND_IP=0.0.0.0
+      - BIND_PORT=4567
+      - AUTH_MODE=none
+    volumes:
+      - manga_data:/home/suwayomi/.local/share/Tachidesk
+    restart: unless-stopped
+volumes:
+  manga_data:

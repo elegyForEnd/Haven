@@ -519,6 +519,21 @@
   border-top: 1px solid var(--border);
   flex-shrink: 0;
 }
+.voice-settings-row[hidden] { display: none; }
+#voice-noise-engine-status { font-size: 0.75rem; line-height: 1.5; margin-bottom: 0.625rem; }
+.clear-settings-panel { margin: 0.5rem 0; padding: 0.5rem; border: 1px solid var(--border); border-radius: 6px; }
+.clear-settings-panel[hidden] { display: none; }
+.clear-settings-panel > summary { font-size: 0.75rem; font-weight: 600; cursor: pointer; }
+.clear-settings-panel fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
+.clear-settings-channel { margin-top: 0.625rem; }
+.clear-settings-heading, .clear-settings-level, .clear-settings-actions { display: flex; align-items: center; justify-content: space-between; gap: 0.375rem; font-size: 0.6875rem; }
+.clear-settings-heading output { font-variant-numeric: tabular-nums; }
+.clear-settings-level input[type="range"] { flex: 1; width: 0; min-width: 40px; accent-color: var(--accent); }
+.clear-settings-mute, .clear-settings-actions label { display: inline-flex; align-items: center; gap: 0.25rem; white-space: nowrap; }
+.clear-settings-actions { flex-wrap: wrap; margin-top: 0.5rem; }
+.clear-settings-actions .btn-sm { font-size: 0.6875rem; }
+.clear-settings-status { margin-top: 0.5rem; font-size: 0.6875rem; line-height: 1.5; }
+
 .voice-settings-row {
   display: flex;
   align-items: center;

@@ -1,7 +1,7 @@
 export async function setupManualNetwork(app) {
   const panel = document.getElementById('manual-network-panel');
   if (!panel) return;
-  const api = window.havenDesktop?.manualNetwork;
+  const api = (window.ciacordDesktop || window.havenDesktop)?.manualNetwork;
   const canJoin = await api?.available().catch(() => false);
   const button = document.getElementById('manual-network-toggle');
   const list = document.getElementById('manual-network-members');
@@ -16,10 +16,10 @@ export async function setupManualNetwork(app) {
     const key = pending ? 'mesh.joining' : joinedCode ? 'mesh.leave' : 'mesh.join';
     button.textContent = t(key);
     button.dataset.i18n = key;
-    button.disabled = pending || !available || !app.socket.connected || !app.currentChannel;
+    button.disabled = canJoin && (pending || !available || !app.socket.connected || !app.currentChannel);
   }
 
-  function renderMembers(members) {
+  function renderMembers(members, status) {
     list.replaceChildren();
     for (const member of members || []) {
       const row = document.createElement('div');
@@ -28,6 +28,16 @@ export async function setupManualNetwork(app) {
       name.textContent = member.name;
       ip.textContent = member.address;
       row.append(name, ip);
+      if (joinedCode) {
+        const route = member.address === status?.address ? 'self' :
+          status?.peers?.find(peer => peer.address === member.address)?.route;
+        const label = document.createElement('span');
+        const key = ['self', 'direct', 'relay'].includes(route) ? route : 'unknown';
+        label.className = `manual-network-route manual-network-route-${key}`;
+        label.textContent = t(`mesh.${key}`);
+        label.title = t('mesh.route_hint');
+        row.append(label);
+      }
       list.append(row);
     }
     if (!list.childElementCount) list.textContent = t(members ? 'mesh.empty' : 'mesh.unavailable');
@@ -50,11 +60,14 @@ export async function setupManualNetwork(app) {
       const ready = joinedCode === code && !!await api?.active().catch(() => false);
       if (joinedCode && !ready) await leave();
       if (panel.open || ready) {
-        const state = code && await send('manual-network', { code, ready });
+        const [state, status] = await Promise.all([
+          code && send('manual-network', { code, ready }),
+          ready && api?.status ? api.status().catch(() => null) : null,
+        ]);
         if (code !== app.currentChannel) return;
         available = !!state;
         if (ready && !state?.active) await leave();
-        renderMembers(state?.members);
+        renderMembers(state?.members, status);
       }
       renderButton();
     } finally {
@@ -62,8 +75,13 @@ export async function setupManualNetwork(app) {
     }
   }
 
-  button.hidden = !canJoin;
+  button.hidden = false;
   panel.hidden = false;
+  panel.querySelector('summary').addEventListener('click', event => {
+    if (canJoin) return;
+    event.preventDefault();
+    app._showToast(t('mesh.desktop_required'), 'info');
+  });
   panel.addEventListener('toggle', refresh);
   app.socket.on('disconnect', () => {
     available = false;
@@ -72,6 +90,10 @@ export async function setupManualNetwork(app) {
   });
   app.socket.on('connect', refresh);
   button.addEventListener('click', async () => {
+    if (!canJoin) {
+      app._showToast(t('mesh.desktop_required'), 'info');
+      return;
+    }
     if (pending) return;
     if (joinedCode) {
       await leave();

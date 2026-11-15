@@ -11,8 +11,14 @@
   <title>Ciacord</title>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDAgMTAwIj48cG9seWdvbiBwb2ludHM9IjUwLDMgOTMsMjggOTMsNzIgNTAsOTcgNyw3MiA3LDI4IiBmaWxsPSJub25lIiBzdHJva2U9IiM2YjRmZGIiIHN0cm9rZS13aWR0aD0iOCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPjx0ZXh0IHg9IjUwIiB5PSI2MyIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC1mYW1pbHk9IkFyaWFsLEhlbHZldGljYSxzYW5zLXNlcmlmIiBmb250LXdlaWdodD0iYm9sZCIgZm9udC1zaXplPSIzOCIgZmlsbD0iIzZiNGZkYiIgb3BhY2l0eT0iMC45NSI+SDwvdGV4dD48L3N2Zz4=">
   <link rel="stylesheet" href="/css/style.css?v=20261114">
+  <link rel="stylesheet" href="/css/anime.css?v=20261115-play-controls">
+  <link rel="stylesheet" href="/css/anime-reference.css?v=20261115-mikan-groups">
   <script src="/js/theme-compat.js?v=4.24.18"></script>
   <script src="/js/theme-init.js?v=4.27.19"></script>
+  <script src="/js/initial-view.js?v=20261114"></script>
+  <style>html[data-initial-view="anime"] #app, html[data-initial-view="manga"] #app { display: none !important; }</style>
+  <link rel="stylesheet" href="/css/anime-detail.css?v=20261114">
+  <link rel="stylesheet" href="/css/manga.css?v=20261115-1">
 </head>
 <body data-haven-page="app">
 
@@ -44,7 +50,7 @@
         <div class="sidebar-header">
           <div class="brand">
             <span class="logo-sm">⬡</span>
-            <span class="brand-text">HAVEN</span>
+            <span class="brand-text">Ciacord</span>
           </div>
           <button id="mobile-sidebar-close" class="mobile-panel-close" data-i18n-title="modals.common.close" data-i18n-aria-label="app.actions.close_sidebar" title="Close" aria-label="Close sidebar">&times;</button>
           <div class="user-bar" data-haven-region="account">
@@ -429,12 +435,11 @@
                out, so clicking the X activated the anchor and opened the
                download page instead of dismissing. Same trap as the Android
                banner below, which hit it with nested <button>s. -->
-          <span id="desktop-app-banner" class="desktop-app-banner" style="display:none">
-            <a class="desktop-app-link" href="https://haven-app.com/#download" target="_blank" rel="noopener">
+          <span id="desktop-app-banner" class="desktop-client-download" style="display:none">
+            <a class="btn-voice desktop-client-download-link" href="/downloads/ciacord/latest/windows-x64" download title="Ciacord · Windows x64">
               <span class="desktop-app-icon">🖥️</span>
-              <span class="desktop-app-text" data-i18n="header.get_desktop_app">Get the Desktop App</span>
+              <span data-i18n="header.download_client">Download client</span>
             </a>
-            <button type="button" class="desktop-app-dismiss" id="desktop-app-dismiss" data-i18n-title="modals.common.dismiss" data-i18n-aria-label="modals.common.dismiss" title="Dismiss" aria-label="Dismiss">&times;</button>
           </span>
           <!-- Spacer pushes voice controls to the right -->
           <div style="flex:1"></div>
@@ -459,7 +464,7 @@
         </header>
 
         <!-- Welcome Screen -->
-        <div id="no-channel-msg" class="welcome-screen" data-haven-region="welcome">
+        <div id="no-channel-msg" class="welcome-screen" data-haven-region="welcome" style="display:none">
           <div class="welcome-content">
             <div class="welcome-icon">⬡</div>
             <h2 data-i18n="welcome.title">Welcome to Ciacord</h2>
@@ -796,7 +801,10 @@
           </div>
         </div>
         <details id="manual-network-panel" class="panel manual-network-panel" hidden>
-          <summary data-i18n="mesh.title">Network</summary>
+          <summary class="panel-title collapsible-section-toggle">
+            <span class="collapse-toggle-arrow" aria-hidden="true">▾</span>
+            <span data-i18n="mesh.title">Network</span>
+          </summary>
           <button id="manual-network-toggle" type="button" class="btn-voice" data-i18n="mesh.join">Join network</button>
           <div id="manual-network-members" class="manual-network-members"></div>
         </details>
@@ -852,6 +860,33 @@
             </select>
           </div>
           <div class="voice-settings-divider"></div>
+          <div class="voice-settings-row" hidden>
+            <label class="voice-settings-label" for="voice-noise-engine" data-i18n="voice_settings.noise_engine">Noise processor</label>
+            <select id="voice-noise-engine" class="voice-settings-select">
+              <option value="clear" data-i18n="voice_settings.clear_engine">Clear (default)</option>
+              <option value="original" data-i18n="voice_settings.original_engine">Original noise reduction</option>
+            </select>
+          </div>
+          <div id="voice-noise-engine-status" class="muted-text" role="status" aria-live="polite" hidden></div>
+          <details id="voice-clear-panel" class="clear-settings-panel" hidden>
+            <summary data-i18n="voice_settings.clear_params_title">Clear parameters</summary>
+            <fieldset>
+              <div class="clear-settings-channel">
+                <div class="clear-settings-heading"><label for="voice-clear-voice-gain" data-i18n="voice_settings.clear_voice">Voice</label><output id="voice-clear-voice-gain-value" for="voice-clear-voice-gain">0.0 dB</output></div>
+                <div class="clear-settings-level"><input id="voice-clear-voice-gain" type="range" min="-60" max="12" step="0.5" value="0" data-clear-parameter="Voice Gain"><label class="clear-settings-mute"><input type="checkbox" data-clear-parameter="Voice Mute"><span data-i18n="voice_settings.clear_mute">Mute</span></label></div>
+              </div>
+              <div class="clear-settings-channel">
+                <div class="clear-settings-heading"><label for="voice-clear-ambience-gain" data-i18n="voice_settings.clear_ambience">Ambience</label><output id="voice-clear-ambience-gain-value" for="voice-clear-ambience-gain">0.0 dB</output></div>
+                <div class="clear-settings-level"><input id="voice-clear-ambience-gain" type="range" min="-60" max="12" step="0.5" value="0" data-clear-parameter="Ambience Gain"><label class="clear-settings-mute"><input type="checkbox" data-clear-parameter="Ambience Mute" checked><span data-i18n="voice_settings.clear_mute">Mute</span></label></div>
+              </div>
+              <div class="clear-settings-channel">
+                <div class="clear-settings-heading"><label for="voice-clear-reverb-gain" data-i18n="voice_settings.clear_reverb">Voice reverb</label><output id="voice-clear-reverb-gain-value" for="voice-clear-reverb-gain">0.0 dB</output></div>
+                <div class="clear-settings-level"><input id="voice-clear-reverb-gain" type="range" min="-60" max="12" step="0.5" value="0" data-clear-parameter="Voice Reverb Gain"><label class="clear-settings-mute"><input type="checkbox" data-clear-parameter="Voice Reverb Mute" checked><span data-i18n="voice_settings.clear_mute">Mute</span></label></div>
+              </div>
+              <div class="clear-settings-actions"><label><input type="checkbox" data-clear-parameter="Bypass"><span data-i18n="voice_settings.clear_bypass">Bypass Clear (raw audio)</span></label><button type="button" class="btn-sm" data-clear-reset data-i18n="voice_settings.clear_reset">Reset</button></div>
+            </fieldset>
+            <div class="clear-settings-status muted-text" role="status" aria-live="polite"></div>
+          </details>
           <div class="voice-settings-row">
             <label class="voice-settings-label">🤫 <span data-i18n="voice_settings.noise_reduction">Noise Reduction</span></label>
             <select id="voice-noise-mode" class="voice-settings-select" data-i18n-title="voice_settings.noise_mode_hint" title="Off = no processing, Gate = silence below threshold, Suppress = AI noise removal (RNNoise)">
@@ -5629,9 +5664,10 @@
   <!-- Shared with the server (src/automod.js requires the same file) so both
        sides reach identical verdicts on a link. Must load before app.js. -->
   <script src="/js/automod-rules.js?v=4.29.8"></script>
-  <script type="module" src="/js/app.js?v=20261114"></script>
+  <script type="module" src="/js/app.js?v=20261114-brand"></script>
   <script src="/js/plugin-loader.js?v=4.27.52"></script>
   <script src="/js/modules/stream-debug.js?v=4.21.0"></script>
   <script src="/js/password-eye.js?v=4.21.0"></script>
+  <script type="module" src="/js/anime/index.js?v=20261115-manga"></script>
 </body>
 </html>

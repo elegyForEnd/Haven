@@ -1114,6 +1114,33 @@ console.log(haven);</code></pre></div></div>
             </select>
           </div>
           <div class="voice-settings-divider"></div>
+          <div class="voice-settings-row" hidden>
+            <label class="voice-settings-label" for="voice-noise-engine" data-i18n="voice_settings.noise_engine">Noise processor</label>
+            <select id="voice-noise-engine" class="voice-settings-select">
+              <option value="clear" data-i18n="voice_settings.clear_engine">Clear (default)</option>
+              <option value="original" data-i18n="voice_settings.original_engine">Original noise reduction</option>
+            </select>
+          </div>
+          <div id="voice-noise-engine-status" class="muted-text" role="status" aria-live="polite" hidden></div>
+          <details id="voice-clear-panel" class="clear-settings-panel" hidden>
+            <summary data-i18n="voice_settings.clear_params_title">Clear parameters</summary>
+            <fieldset>
+              <div class="clear-settings-channel">
+                <div class="clear-settings-heading"><label for="voice-clear-voice-gain" data-i18n="voice_settings.clear_voice">Voice</label><output id="voice-clear-voice-gain-value" for="voice-clear-voice-gain">0.0 dB</output></div>
+                <div class="clear-settings-level"><input id="voice-clear-voice-gain" type="range" min="-60" max="12" step="0.5" value="0" data-clear-parameter="Voice Gain"><label class="clear-settings-mute"><input type="checkbox" data-clear-parameter="Voice Mute"><span data-i18n="voice_settings.clear_mute">Mute</span></label></div>
+              </div>
+              <div class="clear-settings-channel">
+                <div class="clear-settings-heading"><label for="voice-clear-ambience-gain" data-i18n="voice_settings.clear_ambience">Ambience</label><output id="voice-clear-ambience-gain-value" for="voice-clear-ambience-gain">0.0 dB</output></div>
+                <div class="clear-settings-level"><input id="voice-clear-ambience-gain" type="range" min="-60" max="12" step="0.5" value="0" data-clear-parameter="Ambience Gain"><label class="clear-settings-mute"><input type="checkbox" data-clear-parameter="Ambience Mute" checked><span data-i18n="voice_settings.clear_mute">Mute</span></label></div>
+              </div>
+              <div class="clear-settings-channel">
+                <div class="clear-settings-heading"><label for="voice-clear-reverb-gain" data-i18n="voice_settings.clear_reverb">Voice reverb</label><output id="voice-clear-reverb-gain-value" for="voice-clear-reverb-gain">0.0 dB</output></div>
+                <div class="clear-settings-level"><input id="voice-clear-reverb-gain" type="range" min="-60" max="12" step="0.5" value="0" data-clear-parameter="Voice Reverb Gain"><label class="clear-settings-mute"><input type="checkbox" data-clear-parameter="Voice Reverb Mute" checked><span data-i18n="voice_settings.clear_mute">Mute</span></label></div>
+              </div>
+              <div class="clear-settings-actions"><label><input type="checkbox" data-clear-parameter="Bypass"><span data-i18n="voice_settings.clear_bypass">Bypass Clear (raw audio)</span></label><button type="button" class="btn-sm" data-clear-reset data-i18n="voice_settings.clear_reset">Reset</button></div>
+            </fieldset>
+            <div class="clear-settings-status muted-text" role="status" aria-live="polite"></div>
+          </details>
           <div class="voice-settings-row">
             <label class="voice-settings-label">🤫 <span data-i18n="voice_settings.noise_reduction">Noise Reduction</span></label>
             <select id="voice-noise-mode" class="voice-settings-select" data-i18n-title="voice_settings.noise_mode_hint" title="Off = no processing, Gate = silence below threshold, Suppress = AI noise removal (RNNoise)">

@@ -2,6 +2,9 @@
 // and camera device pickers, stream and webcam layout, noise suppression,
 // screen share quality, and the callbacks the voice engine reports through.
 
+import { desktopClearAudio, preferredNoiseEngine } from '../clear-microphone.js';
+import { initializeClearSettings } from '../clear-settings.js';
+
 export default {
 
 async _applyVoiceDeviceSelection(kind, deviceId) {
@@ -288,6 +291,12 @@ _bindVoiceControls() {
   const noiseGateRow = document.getElementById('noise-gate-row');
   const nsSlider = document.getElementById('voice-ns-slider');
   const micStereoSelect = document.getElementById('voice-mic-stereo');
+  const noiseEngineSelect = document.getElementById('voice-noise-engine');
+  const noiseEngineStatus = document.getElementById('voice-noise-engine-status');
+  const hasClear = desktopClearAudio()?.version === 1;
+  const clearControls = initializeClearSettings({ getVoice: () => this.voice, t });
+  noiseEngineSelect.closest('.voice-settings-row').hidden = !hasClear;
+  noiseEngineSelect.value = preferredNoiseEngine();
 
   // Restore saved profiles. Stereo capture and mono voice processing are
   // mutually exclusive because RNNoise is a single-channel processor.
@@ -297,18 +306,40 @@ _bindVoiceControls() {
   micStereoSelect.value = savedMicStereo ? '1' : '0';
 
   const applyMicProfileUI = (stereo) => {
+    const clear = hasClear && noiseEngineSelect.value === 'clear';
+    clearControls.update(clear, stereo, this.voice?.noiseEngineStatus);
     noiseModeSelect.disabled = stereo;
-    noiseGateRow.style.display = !stereo && noiseModeSelect.value === 'gate' ? '' : 'none';
-    const threshold = !stereo && noiseModeSelect.value === 'gate'
+    noiseEngineSelect.disabled = stereo;
+    noiseModeSelect.closest('.voice-settings-row').hidden = clear;
+    noiseGateRow.style.display = !stereo && !clear && noiseModeSelect.value === 'gate' ? '' : 'none';
+    const threshold = !stereo && !clear && noiseModeSelect.value === 'gate'
       ? parseInt(localStorage.getItem('haven_ns_value') || '10', 10)
       : 0;
     if (this._micMeterThreshold) this._updateMicMeterThreshold(threshold);
   };
   applyMicProfileUI(savedMicStereo);
+  const updateNoiseStatus = (status = this.voice?.noiseEngineStatus) => {
+    clearControls.update(hasClear && noiseEngineSelect.value === 'clear', micStereoSelect.value === '1', status);
+    noiseEngineStatus.hidden = !hasClear;
+    const state = micStereoSelect.value === '1' ? 'stereo-bypass' : status?.actual || 'idle';
+    const key = { clear: 'clear_active', loading: 'clear_loading', fallback: 'clear_fallback', 'stereo-bypass': 'clear_stereo_bypass', original: 'original_active' }[state];
+    noiseEngineStatus.textContent = t(`voice_settings.${key || (noiseEngineSelect.value === 'clear' ? 'clear_ready' : 'original_active')}`);
+    if (state === 'clear' && Number.isFinite(status?.latencyMs)) noiseEngineStatus.textContent += ` (${Math.round(status.latencyMs)} ms)`;
+    noiseEngineStatus.title = status?.error || '';
+  };
+  updateNoiseStatus();
+  window.addEventListener('ciacord:noise-engine-status', event => updateNoiseStatus(event.detail));
+  noiseEngineSelect.addEventListener('change', async () => {
+    localStorage.setItem('ciacord_noise_engine', noiseEngineSelect.value);
+    applyMicProfileUI(micStereoSelect.value === '1');
+    if (this.voice) await this.voice.setNoiseEngine(noiseEngineSelect.value);
+    updateNoiseStatus();
+  });
 
   micStereoSelect.addEventListener('change', async (e) => {
     const enabled = e.target.value === '1';
     applyMicProfileUI(enabled);
+    updateNoiseStatus();
     let result = null;
     if (this.voice) {
       result = await this.voice.setMicrophoneStereo(enabled);
@@ -322,6 +353,7 @@ _bindVoiceControls() {
 
   noiseModeSelect.addEventListener('change', (e) => {
     const mode = e.target.value;
+    localStorage.setItem('haven_noise_mode', mode);
     noiseGateRow.style.display = mode === 'gate' ? '' : 'none';
     if (this.voice) this.voice.setNoiseMode(mode);
     // Update mic meter threshold visibility

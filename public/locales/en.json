@@ -628,13 +628,19 @@
     "pinned_by": "Pinned by {{user}}"
   },
   "mesh": {
+    "desktop_required": "Please download the desktop client to use networking (currently Windows only).",
     "title": "Network",
     "join": "Join network",
     "leave": "Leave network",
     "joining": "Waiting for Windows permission…",
     "failed": "Could not join the network",
     "empty": "No network members online",
-    "unavailable": "Network unavailable in this channel"
+    "unavailable": "Network unavailable in this channel",
+    "self": "This device",
+    "direct": "Direct",
+    "relay": "Relay",
+    "unknown": "Unknown",
+    "route_hint": "Actual network route between this member and your device"
   },
   "voice": {
     "requesting_stream": "Requesting stream…",
@@ -1042,6 +1048,7 @@
     "subtitle": "Join a channel with a code from your friends,\nor create one if you're the admin."
   },
   "header": {
+    "download_client": "Download client",
     "select_channel": "Select a channel",
     "mobile_menu": "Menu",
     "mobile_servers": "Servers",
@@ -1523,6 +1530,28 @@
     "performance_hud": "FPS: {{fps}}  Heap: {{memory}} MB  DOM: {{dom}}{{rgb}}"
   },
   "voice_settings": {
+    "clear_params_title": "Clear parameters",
+    "clear_voice": "Voice",
+    "clear_ambience": "Ambience",
+    "clear_reverb": "Voice reverb",
+    "clear_mute": "Mute",
+    "clear_bypass": "Bypass Clear (raw audio)",
+    "clear_reset": "Reset",
+    "clear_params_hint": "Saved automatically. Changes apply live during voice calls.",
+    "clear_params_saved": "Saved. These settings will be used next time Clear starts.",
+    "clear_params_applying": "Applying…",
+    "clear_params_applied": "Applied to Clear.",
+    "clear_params_failed": "Could not apply. Saved for the next Clear session.",
+    "clear_params_upgrade": "Update the desktop client to adjust Clear parameters.",
+    "noise_engine": "Noise processor",
+    "clear_engine": "Clear (default)",
+    "original_engine": "Original noise reduction",
+    "clear_active": "Clear active · plug-in latency",
+    "clear_loading": "Loading Clear…",
+    "clear_fallback": "Clear unavailable — using original noise reduction",
+    "clear_stereo_bypass": "Stereo microphone: noise processing bypassed",
+    "original_active": "Using original noise reduction",
+    "clear_ready": "Clear will start when you join voice",
     "audio_devices": "Audio Devices",
     "input": "Input",
     "default_mic": "Default Microphone",

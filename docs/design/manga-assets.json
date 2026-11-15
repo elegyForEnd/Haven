@@ -1,0 +1,17 @@
+{
+  "tool": "built-in image_gen",
+  "theme": "薄荷庭院",
+  "assets": [
+    {
+      "path": "public/img/manga/courtyard.png",
+      "use": "Generic library illustration, never required for manga detail pages",
+      "prompt": "Create a production website banner asset only, NOT a UI screenshot. Wide 3:1 landscape anime illustration for ciacord light mint manga library. A beautiful original silver-white-haired elf girl with green ribbon quietly reading an unbranded manga book in right third of frame in sunlit glass greenhouse, white daisies and tiny ivy, pale mint foliage, gentle warm daylight, highly polished delicate Japanese anime aesthetic. Left half mostly luminous soft white and pale mint with very sparse out of focus foliage so UI text can be overlaid there. Right illustration detailed but calm, no words, no typography, no logos, no interface, no borders. Light airy wholesome relaxed reading atmosphere. Match previously chosen light mint courtyard theme."
+    },
+    {
+      "path": "public/img/manga/companion.png",
+      "transparent": true,
+      "use": "Sidebar companion and account fallback",
+      "prompt": "One original adorable chibi anime elf reading companion, full body seated, transparent background cutout. Silver white hair, green ribbon tied beside head, green eyes, small elf ears, white and pale mint simple dress, holding a green unbranded manga book. Seated on two small cream books with a tiny white daisy and a small leaf beside them. Gentle happy smiling expression, delicate clean anime linework and soft watercolor-like pastel shading, premium polished kawaii visual, no purple or pink palette. Small coherent compact composition entirely inside image, no clipped edges, no text, no logos, no frame. Asset for bottom of a pale mint manga website sidebar. Genuine transparent alpha background."
+    }
+  ]
+}

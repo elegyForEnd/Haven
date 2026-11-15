@@ -1,0 +1,247 @@
+/* Approved reference artwork and its final placement in the anime workspace. */
+#anime-space .ac-hero,
+#anime-space .ac-feature {
+  width: 100%;
+  min-width: 0;
+}
+
+#anime-space .ac-hero-bg {
+  object-position: center 30%;
+}
+
+#anime-space .ac-hero:after {
+  background: linear-gradient(90deg, #fff7fdf2, #fff7fdd9 25%, #fff7fd55 43%, transparent 62%);
+}
+
+#anime-space .ac-feature {
+  height: auto;
+  aspect-ratio: 3.5;
+  min-height: 175px;
+}
+
+#anime-space .ac-feature > img {
+  object-position: center;
+}
+
+#anime-space .ac-feature:before {
+  display: none;
+}
+
+#anime-space .ac-feature:after {
+  background: linear-gradient(90deg, #fff3fc55, transparent 66%);
+}
+
+#anime-space .ac-feature-copy {
+  width: 57%;
+  padding: 26px;
+}
+
+#anime-space .ac-feature h2 {
+  font-size: clamp(19px, 1.7vw, 25px);
+}
+
+#anime-space .ac-feature-copy .ac-btn {
+  background: #fffbffcc;
+}
+
+#anime-space .ac-collection img {
+  object-position: center;
+}
+
+#anime-space .ac-collection:after {
+  background: linear-gradient(transparent 34%, #795d9c9c);
+}
+
+#anime-space .ac-home-progress {
+  min-height: 166px;
+  padding-bottom: 74px;
+}
+
+#anime-space .ac-home-aside .ac-panel {
+  padding-inline: 14px;
+}
+
+#anime-space .ac-schedule-panel .ac-schedule-item {
+  padding-block: 8px;
+}
+
+#anime-space .ac-schedule-panel .ac-schedule-item img {
+  height: 42px;
+}
+
+#anime-space .ac-home-ranks .ac-schedule-item {
+  padding-block: 7px;
+}
+
+#anime-space .ac-note-panel .ac-note {
+  min-height: 92px;
+  line-height: 1.8;
+  padding-bottom: 34px;
+}
+
+#anime-space .ac-home-progress:before {
+  width: 182px;
+  height: 88px;
+  right: 7px;
+  bottom: 2px;
+  background-image: url('/img/anime/reference/cat-books.webp');
+}
+
+#anime-space .ac-note-panel:before {
+  width: 110px;
+  height: 68px;
+  right: 8px;
+  background-image: url('/img/anime/reference/journal.webp');
+}
+
+#anime-space .ac-synopsis:before {
+  width: min(43%, 280px);
+  height: 107px;
+  opacity: .6;
+  background-image: url('/img/anime/reference/ruins-corner.webp');
+}
+
+#anime-space .ac-footer:before,
+#anime-space .ac-footer:after {
+  width: min(29%, 295px);
+  height: 88px;
+  background-image: url('/img/anime/reference/flower-corner.webp');
+}
+
+#anime-space .ac-comment-actions {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  margin-top: 9px;
+}
+
+#anime-space .ac-comment-actions .ac-comment-like,
+#anime-space .ac-comment-reply {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
+  color: #987fa6;
+  font-size: 11px;
+}
+
+#anime-space .ac-comment-reply .ac-icon {
+  width: 13px;
+  height: 13px;
+}
+
+#anime-space .ac-source-details label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+#anime-space .ac-source-options { display:grid; gap:12px; }
+#anime-space .ac-source-toggle { display:flex; align-items:center; gap:8px; list-style:none; cursor:pointer; min-height:32px; }
+#anime-space .ac-source-toggle::-webkit-details-marker { display:none; }
+#anime-space .ac-source-toggle strong { font-size:15px; white-space:nowrap; }
+#anime-space .ac-source-toggle [data-source-caption] { margin-left:auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+#anime-space .ac-source-toggle > .ac-icon { color:#9363b7; }
+#anime-space .ac-source-panel[open] .ac-source-toggle > .ac-icon:last-child { transform:rotate(90deg); }
+#anime-space .ac-source-actions { display:flex; justify-content:flex-end; margin:4px 0 8px; }
+#anime-space .ac-source-toolbar,
+#anime-space .ac-source-row { display:flex; flex-wrap:wrap; align-items:center; gap:8px; min-width:0; }
+#anime-space .ac-source-toolbar { padding-bottom:10px; border-bottom:1px solid var(--ac-line); }
+#anime-space .ac-source-group h3 { margin:0 0 5px; font-size:12px; font-weight:650; }
+#anime-space .ac-source-subgroup { margin:8px 0 0; padding-inline-start:10px; }
+#anime-space .ac-source-subgroup h4 { margin:0 0 4px; font-size:12px; font-weight:600; }
+#anime-space .ac-source-options :is(button,select) {
+  max-width:100%; min-height:30px; padding:4px 10px; border:1px solid #e2ceef;
+  border-radius:8px; background:#fbf3ff; color:#634276; font:inherit; font-size:11px;
+}
+#anime-space .ac-source-options button { overflow-wrap:anywhere; }
+#anime-space .ac-source-options button.active { color:white; background:#8550c7; border-color:transparent; }
+#anime-space .ac-source-options button[data-search-web]:not(:disabled) { border-color:#ba8df2; }
+
+#anime-space .ac-source-details select {
+  max-width: 130px;
+  padding: 3px 6px;
+  border-color: #e9d9f4;
+  background: #fff9ff;
+  font-size: 11px;
+}
+
+#anime-space .ac-source-details select:disabled {
+  appearance: none;
+  border-color: transparent;
+  background: transparent;
+  color: #8d739c;
+  opacity: 1;
+}
+
+@media (min-width: 1151px) {
+  #anime-space .ac-hero {
+    height: auto;
+    aspect-ratio: 3.9;
+    min-height: 265px;
+    max-height: 360px;
+  }
+
+  #anime-space .ac-hero-copy {
+    padding-inline: 34px;
+  }
+}
+
+@media (max-width: 760px) {
+  #anime-space .ac-hero-bg {
+    object-position: 78% center;
+  }
+
+  #anime-space .ac-feature {
+    min-height: 168px;
+    aspect-ratio: 3;
+  }
+
+  #anime-space .ac-feature-copy {
+    width: 65%;
+    padding: 23px 17px;
+  }
+
+  #anime-space .ac-hero:after {
+    background: linear-gradient(90deg, #fff7fdef, #fff7fdbb 43%, #fff7fd20 90%);
+  }
+}
+
+@media (max-width: 480px) {
+  #anime-space .ac-feature-copy {
+    width: 75%;
+  }
+
+  #anime-space .ac-feature h2 {
+    font-size: 17px;
+  }
+
+  #anime-space .ac-source-details label {
+    flex: 1 1 42%;
+  }
+}
+
+@media (min-width: 761px) and (max-height: 800px) {
+  #anime-space .ac-brand {
+    margin-bottom: 14px;
+  }
+
+  #anime-space .ac-nav {
+    gap: 4px;
+  }
+
+  #anime-space .ac-nav button {
+    padding-block: 7px;
+    font-size: 13px;
+  }
+
+  #anime-space .ac-mascot {
+    padding-top: 10px;
+  }
+
+  #anime-space .ac-mascot img,
+  #anime-space .ac-mascot-live2d {
+    height: 132px;
+    margin-block: 6px 8px;
+  }
+}

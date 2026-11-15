@@ -1,0 +1,26 @@
+{
+  "Version": 3,
+  "FileReferences": {
+    "Moc": "ciacord-cat.moc3",
+    "Textures": [
+      "ciacord-cat.2048/texture_00.png"
+    ],
+    "DisplayInfo": "ciacord-cat.cdi3.json",
+    "Motions": {
+      "Idle": [
+        {
+          "File": "idle.motion3.json",
+          "FadeInTime": 0.15,
+          "FadeOutTime": 0.15
+        }
+      ],
+      "Tap": [
+        {
+          "File": "tap-wave.motion3.json",
+          "FadeInTime": 0.1,
+          "FadeOutTime": 0.1
+        }
+      ]
+    }
+  }
+}

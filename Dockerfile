@@ -21,7 +21,7 @@ FROM node:22-bookworm-slim
 #            and every photo format (src/privacyPass.js)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     openssl tini gosu wget ca-certificates \
-    libimage-exiftool-perl \
+    libimage-exiftool-perl chromium \
     make g++ python3 \
     && rm -rf /var/lib/apt/lists/*
 

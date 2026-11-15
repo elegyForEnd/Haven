@@ -1,6 +1,6 @@
 import { HavenRemoteControlManager } from './remote-control.js?v=20261113';
 import { GameStreamSession } from './modules/gamestream-session.js?v=20261113';
-import { setupManualNetwork } from './modules/manual-network.js?v=20261113';
+import { setupManualNetwork } from './modules/manual-network.js?v=20261114-client';
 // ═══════════════════════════════════════════════════════════
 // Haven: Main Client Application
 // Features: chat, voice, themes, images, multi-server,
@@ -10,7 +10,7 @@ import { setupManualNetwork } from './modules/manual-network.js?v=20261113';
 import DrawingMethods from './modules/app-drawing.js?v=20261114';
 import MusicPlayerMethods from './modules/app-music-player.js?v=20261114';
 import SocketMethods   from './modules/app-socket.js?v=20261114';
-import SocketChannelMethods from './modules/app-socket-channels.js?v=20261114';
+import SocketChannelMethods from './modules/app-socket-channels.js?v=20261114-initial-view';
 import SocketEventMethods from './modules/app-socket-events.js?v=20261114';
 import UIBindMethods   from './modules/app-ui.js?v=4.29.18';
 import ComposerMethods from './modules/app-composer.js?v=4.29.11';
@@ -47,7 +47,7 @@ import ChannelMethods  from './modules/app-channels.js?v=20261114';
 import ChannelContextMethods from './modules/app-channel-context.js?v=4.29.56';
 import ChannelTypeMethods from './modules/app-channel-types.js?v=4.27.42';
 import ChannelOrganizeMethods from './modules/app-channel-organize.js?v=4.27.52';
-import ChannelUnreadMethods from './modules/app-channel-unread.js?v=4.29.30';
+import ChannelUnreadMethods from './modules/app-channel-unread.js?v=20261114-brand';
 import DmPinMethods from './modules/app-dm-pins.js?v=4.29.30';
 import MessageMethods  from './modules/app-messages.js?v=4.29.13';
 import LinkPreviewMethods from './modules/app-link-previews.js?v=4.29.57';
@@ -70,7 +70,7 @@ import EmojiPickerMethods from './modules/app-emoji-picker.js?v=4.29.50';
 import GifPickerMethods from './modules/app-gif-picker.js?v=4.29.20';
 import ThreadMethods from './modules/app-threads.js?v=4.29.50';
 import AdminMethods    from './modules/app-admin.js?v=20261114';
-import BrandingMethods from './modules/app-branding.js?v=4.29.19';
+import BrandingMethods from './modules/app-branding.js?v=20261114-brand';
 import MembersAdminMethods from './modules/app-members-admin.js?v=4.27.52';
 import AutocompleteMethods from './modules/app-autocomplete.js?v=4.29.12';
 import StatusMethods from './modules/app-status.js?v=4.29.2';
@@ -78,7 +78,7 @@ import DiscordImportMethods from './modules/app-discord-import.js?v=4.27.52';
 import RoleMethods from './modules/app-roles.js?v=4.27.52';
 import RoleAssignMethods from './modules/app-role-assign.js?v=4.26.16';
 import ModerationMethods from './modules/app-moderation.js?v=4.27.9';
-import PlatformMethods from './modules/app-platform.js?v=20261114';
+import PlatformMethods from './modules/app-platform.js?v=20261114-client';
 import SearchMethods   from './modules/app-search.js?v=4.29.18';
 import FerryMethods    from './modules/app-ferry.js?v=4.27.52';
 import ForumMethods    from './modules/app-forum.js?v=4.29.55';
@@ -381,6 +381,7 @@ class HavenApp {
   // ── Initialization ────────────────────────────────────
 
   _init() {
+    this._initDesktopAppBanner();
     startGlyphIcons();
     startTooltips();
     // Kick this off before anything can render a message. Until it resolves,

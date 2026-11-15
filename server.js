@@ -760,6 +760,7 @@ if (RUFFLE_DIR) {
 app.use('/games/roms', express.static(GAMES_ROMS_DIR, { dotfiles: 'deny', maxAge: 0 }));
 
 // ── Static files with caching ────────────────────────────
+require('./src/routes/desktopClient')({ app, dataDir: DATA_DIR });
 app.use(express.static(path.join(__dirname, 'public'), {
   dotfiles: 'deny',       // block .env, .git, etc.
   etag: true,             // ETag for conditional requests
@@ -1262,6 +1263,9 @@ app.get('/api/donors', (req, res) => {
 });
 
 require('./src/routes/health')({ app });
+require('./src/routes/anime')({ app, dataDir: DATA_DIR, verifyToken: require('./src/auth').verifyTokenAsync, verifyAdmin: verifyAdminFromDb });
+const mangaWorkspace = require('./src/routes/manga')({ app, dataDir: DATA_DIR, verifyToken: require('./src/auth').verifyTokenAsync, verifyAdmin: verifyAdminFromDb });
+process.once('exit', () => mangaWorkspace.close());
 
 // ── Version endpoint (for update checker, authenticated users only) ──
 app.get('/api/version', (req, res) => {
