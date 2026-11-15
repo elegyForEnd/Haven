@@ -89,10 +89,14 @@ function createAnimeService({ fetchImpl = fetch } = {}) {
     };
   }
   async function calendar() {
-    return (await json(`${BANGUMI}/calendar`, {}, 1800000)).map(day => ({ weekday: day.weekday, items: day.items.filter(s => s.type === 2).map(normalizeSubject) }));
+    const days = (await json(`${BANGUMI}/calendar`, {}, 1800000)).map(day => ({ weekday: day.weekday, items: day.items.filter(s => s.type === 2).map(normalizeSubject) }));
+    if (homepage && days.length) homepage.data.calendar = days;
+    return days;
   }
   let homepage;
   let refreshing;
+  let calendarRefreshing;
+  let calendarRetryAfter = 0;
   async function refreshHome() {
     const [featured, days] = await Promise.all([
       trending(), calendar().catch(() => [])
@@ -131,7 +135,15 @@ function createAnimeService({ fetchImpl = fetch } = {}) {
     return { items, total, page, pages };
   }
   async function home() {
-    if (homepage?.until > Date.now()) return homepage.data;
+    if (homepage?.until > Date.now()) {
+      if (!homepage.data.calendar.length && Date.now() >= calendarRetryAfter) {
+        calendarRefreshing ||= calendar().catch(() => {
+          calendarRetryAfter = Date.now() + 15000;
+        }).finally(() => { calendarRefreshing = null; });
+        await calendarRefreshing;
+      }
+      return homepage.data;
+    }
     refreshing ||= refreshHome().then(data => {
       homepage = { data, until: Date.now() + 1800000 };
       return data;

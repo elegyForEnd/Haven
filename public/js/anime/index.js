@@ -392,6 +392,15 @@ class AnimeSpace {
         if (version === this.viewVersion) this.renderRankings(result);
         return;
       }
+      if (section === 'calendar') {
+        const [days] = await Promise.all([api('/calendar'), this.loadLibrary()]);
+        if (version !== this.viewVersion) return;
+        this.home ||= { featured: [], calendar: [] };
+        this.home.calendar = days;
+        days.flatMap(day => day.items).forEach(show => this.catalog.set(show.id, show));
+        this.renderCalendar();
+        return;
+      }
       await this.initData(); if (version !== this.viewVersion) return;
       if (route === 'discover') this.renderHome();
       else if (route.startsWith('watch/')) {
